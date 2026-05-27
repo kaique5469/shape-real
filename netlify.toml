@@ -1,0 +1,21 @@
+# Configuração Netlify — detectada automaticamente quando você conecta o repo
+# (você não precisa editar nada aqui)
+
+[build]
+  publish = "."         # raiz do repo é o site
+  command = ""          # sem build step (HTML estático)
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options       = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy        = "strict-origin-when-cross-origin"
+    Permissions-Policy     = "geolocation=(), camera=(), microphone=()"
+
+# Redirect www → root (opcional, ativa quando você conectar o domínio)
+[[redirects]]
+  from = "https://www.shapereal.com.br/*"
+  to   = "https://shapereal.com.br/:splat"
+  status = 301
+  force = true

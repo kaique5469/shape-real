@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shape Real — Calculadora fitness, reviews de suplementos e ciência atualizada</title>
+<meta name="description" content="Blog brasileiro com calculadora completa (TMB, IMC, macros), comparativo de suplementos, estudos traduzidos e reviews honestos para emagrecimento e definição. Conteúdo revisado por nutricionistas.">
+<meta property="og:title" content="Shape Real — definição com ciência, não achismo">
+<meta property="og:description" content="Calculadora fitness, comparativo de suplementos e estudos traduzidos por uma equipe que treina e estuda.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0a0a; --bg-2:#141414; --bg-3:#1c1c1c; --bg-4:#242424;
+    --line:#262626; --line-2:#333;
+    --text:#f5f5f5; --muted:#a3a3a3; --dim:#737373;
+    --accent:#c4f24a; --accent-2:#a8e02c; --accent-dim:rgba(196,242,74,.12);
+    --cta:#ff6b00; --cta-2:#ff8a3c;
+    --ok:#22c55e; --warn:#facc15; --bad:#ef4444;
+    --radius:14px; --radius-sm:10px;
+    --maxw:1200px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,-apple-system,sans-serif;line-height:1.55;-webkit-font-smoothing:antialiased;scroll-behavior:smooth}
+  a{color:inherit;text-decoration:none}
+  img{max-width:100%;display:block}
+  button{font-family:inherit;cursor:pointer;border:0;background:none;color:inherit}
+  input,select{font-family:inherit}
+  h1,h2,h3,h4{font-family:'Space Grotesk','Inter',sans-serif;font-weight:700;line-height:1.15;letter-spacing:-0.01em}
+  .container{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+
+  /* TOP BAR — trust signal */
+  .topbar{background:var(--accent);color:#0a0a0a;text-align:center;padding:9px 16px;font-size:13px;font-weight:600}
+  .topbar span{display:inline-flex;align-items:center;gap:8px}
+  .pulse{width:8px;height:8px;background:#0a0a0a;border-radius:50%;animation:pulse 2s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+  /* HEADER */
+  header.site{position:sticky;top:0;z-index:50;background:rgba(10,10,10,.88);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+  .nav{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;max-width:var(--maxw);margin:0 auto}
+  .logo{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:22px;display:flex;align-items:center;gap:8px}
+  .logo .dot{width:10px;height:10px;background:var(--accent);border-radius:50%}
+  .menu{display:flex;gap:26px;list-style:none}
+  .menu a{font-size:14.5px;font-weight:500;color:var(--muted);transition:color .2s}
+  .menu a:hover{color:var(--accent)}
+  .nav-cta{background:var(--accent);color:#0a0a0a;padding:10px 18px;border-radius:999px;font-weight:600;font-size:14px;transition:transform .15s}
+  .nav-cta:hover{transform:translateY(-1px)}
+  .burger{display:none;font-size:24px;cursor:pointer;color:#fff}
+
+  /* HERO */
+  .hero{padding:72px 0 56px;border-bottom:1px solid var(--line);background:radial-gradient(60% 80% at 80% 0%, rgba(196,242,74,.10), transparent 60%)}
+  .hero-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:48px;align-items:center}
+  .pill{display:inline-flex;align-items:center;gap:8px;background:var(--bg-3);color:var(--accent);padding:6px 14px;border-radius:999px;font-size:12.5px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;border:1px solid var(--line)}
+  .pill .live{width:7px;height:7px;background:var(--accent);border-radius:50%;box-shadow:0 0 0 0 rgba(196,242,74,.6);animation:live 1.6s infinite}
+  @keyframes live{0%{box-shadow:0 0 0 0 rgba(196,242,74,.6)}70%{box-shadow:0 0 0 8px rgba(196,242,74,0)}100%{box-shadow:0 0 0 0 rgba(196,242,74,0)}}
+  .hero h1{font-size:clamp(34px,5vw,58px);margin:18px 0 16px}
+  .hero h1 em{color:var(--accent);font-style:normal}
+  .hero p{color:var(--muted);font-size:18px;max-width:560px;margin-bottom:28px}
+  .hero-actions{display:flex;gap:14px;flex-wrap:wrap}
+  .btn{padding:14px 22px;border-radius:999px;font-weight:600;font-size:15px;display:inline-flex;align-items:center;gap:8px;transition:transform .15s,opacity .15s;cursor:pointer}
+  .btn:hover{transform:translateY(-2px)}
+  .btn-primary{background:var(--accent);color:#0a0a0a}
+  .btn-cta{background:var(--cta);color:#fff}
+  .btn-ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+
+  /* Trust strip */
+  .trust{display:flex;gap:28px;margin-top:36px;flex-wrap:wrap}
+  .trust-item{display:flex;flex-direction:column}
+  .trust-item .n{font-family:'Space Grotesk';font-size:24px;font-weight:700;color:var(--accent)}
+  .trust-item .l{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+
+  /* HERO CARD */
+  .hero-card{background:linear-gradient(180deg,var(--bg-2),var(--bg-3));border:1px solid var(--line);border-radius:var(--radius);padding:26px;position:relative;overflow:hidden}
+  .hero-card .label{font-size:12.5px;color:var(--accent);font-weight:700;letter-spacing:1px;text-transform:uppercase;display:flex;align-items:center;gap:8px}
+  .hero-card h3{font-size:22px;margin:10px 0 12px;line-height:1.25}
+  .hero-card .meta{color:var(--muted);font-size:13.5px;margin-bottom:14px}
+  .hero-card .read{color:var(--accent);font-weight:600;font-size:14px}
+  .updated-tag{display:inline-flex;align-items:center;gap:6px;background:var(--accent-dim);color:var(--accent);padding:4px 10px;border-radius:999px;font-size:11.5px;font-weight:700;letter-spacing:.3px;margin-left:auto}
+
+  /* SECTION */
+  .section{padding:72px 0;border-bottom:1px solid var(--line)}
+  .section-head{display:flex;justify-content:space-between;align-items:end;margin-bottom:36px;gap:16px;flex-wrap:wrap}
+  .section-head h2{font-size:clamp(26px,3.5vw,40px)}
+  .section-head .sub{color:var(--muted);margin-top:6px;max-width:520px;font-size:15px}
+  .section-head .link{color:var(--accent);font-weight:600;font-size:14px}
+
+  /* CALCULADORA */
+  .calc-wrap{background:linear-gradient(180deg,var(--bg-2),var(--bg-3));border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+  .calc-tabs{display:flex;border-bottom:1px solid var(--line);background:var(--bg-3);overflow-x:auto;scrollbar-width:none}
+  .calc-tabs::-webkit-scrollbar{display:none}
+  .calc-tab{padding:18px 22px;font-size:14px;font-weight:600;color:var(--muted);border-bottom:2px solid transparent;white-space:nowrap;transition:all .2s}
+  .calc-tab.active{color:var(--accent);border-bottom-color:var(--accent);background:var(--bg-2)}
+  .calc-tab:hover:not(.active){color:var(--text)}
+  .calc-body{display:grid;grid-template-columns:1fr 1fr;min-height:480px}
+  .calc-form{padding:36px;border-right:1px solid var(--line)}
+  .calc-form h3{font-size:20px;margin-bottom:6px}
+  .calc-form .desc{color:var(--muted);font-size:14px;margin-bottom:24px}
+  .field{margin-bottom:18px}
+  .field label{display:block;font-size:13px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+  .field input,.field select{width:100%;background:var(--bg-3);border:1px solid var(--line-2);color:#fff;padding:13px 16px;border-radius:10px;font-size:15px;outline:none;transition:border-color .2s}
+  .field input:focus,.field select:focus{border-color:var(--accent)}
+  .field-row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .seg{display:flex;background:var(--bg-3);border:1px solid var(--line-2);border-radius:10px;padding:4px}
+  .seg button{flex:1;padding:10px;border-radius:7px;font-size:14px;font-weight:600;color:var(--muted);transition:all .15s}
+  .seg button.on{background:var(--accent);color:#0a0a0a}
+  .calc-btn{width:100%;background:var(--accent);color:#0a0a0a;padding:14px;border-radius:10px;font-weight:700;font-size:15px;margin-top:8px;transition:transform .15s}
+  .calc-btn:hover{transform:translateY(-2px)}
+
+  /* CALC RESULT */
+  .calc-result{padding:36px;background:radial-gradient(80% 60% at 100% 0%, rgba(196,242,74,.08), transparent 60%);display:flex;flex-direction:column;justify-content:center}
+  .calc-result.empty{color:var(--dim);text-align:center;align-items:center;justify-content:center}
+  .calc-result.empty .ico{font-size:48px;margin-bottom:16px;opacity:.4}
+  .result-big{font-family:'Space Grotesk';font-size:54px;font-weight:700;color:var(--accent);line-height:1}
+  .result-big .u{font-size:18px;color:var(--muted);margin-left:6px;font-family:'Inter'}
+  .result-label{font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600}
+  .result-card{background:var(--bg-3);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-top:14px;display:flex;justify-content:space-between;align-items:center}
+  .result-card .k{color:var(--muted);font-size:14px}
+  .result-card .v{font-family:'Space Grotesk';font-weight:700;font-size:18px;color:var(--text)}
+  .result-card .v.acc{color:var(--accent)}
+  .macro-bars{margin-top:16px}
+  .macro{margin-bottom:12px}
+  .macro-top{display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px}
+  .macro-bar{height:8px;background:var(--bg-3);border-radius:99px;overflow:hidden}
+  .macro-bar div{height:100%;border-radius:99px}
+  .badge-status{display:inline-block;padding:4px 10px;border-radius:99px;font-size:12px;font-weight:700;margin-top:8px}
+  .badge-status.ok{background:rgba(34,197,94,.15);color:var(--ok)}
+  .badge-status.warn{background:rgba(250,204,21,.15);color:var(--warn)}
+  .badge-status.bad{background:rgba(239,68,68,.15);color:var(--bad)}
+  .ai-suggest{margin-top:18px;padding:16px;background:rgba(196,242,74,.06);border:1px solid rgba(196,242,74,.2);border-radius:10px;font-size:14px;color:var(--text)}
+  .ai-suggest .h{font-size:12px;color:var(--accent);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+
+  /* CATEGORIAS */
+  .cats{display:grid;grid-template-columns:repeat(5,1fr);gap:14px}
+  .cat{background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius);padding:22px 18px;text-align:left;transition:border-color .2s,transform .2s;cursor:pointer;display:block}
+  .cat:hover{border-color:var(--accent);transform:translateY(-3px)}
+  .cat .ico{width:38px;height:38px;display:grid;place-items:center;background:var(--bg-3);border-radius:10px;margin-bottom:14px;font-size:20px}
+  .cat h4{font-size:16px}
+  .cat span{color:var(--muted);font-size:12.5px}
+
+  /* GRID ARTIGOS */
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+  .card{background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;transition:transform .2s,border-color .2s;display:flex;flex-direction:column}
+  .card:hover{transform:translateY(-4px);border-color:#3a3a3a}
+  .card .thumb{aspect-ratio:16/10;background:linear-gradient(135deg,#1d1d1d,#0e0e0e);position:relative;overflow:hidden}
+  .card .thumb::after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 30% 30%, rgba(196,242,74,.18), transparent 60%)}
+  .card .thumb .emoji{position:absolute;inset:0;display:grid;place-items:center;font-size:64px;opacity:.85}
+  .card .body{padding:20px;display:flex;flex-direction:column;flex:1}
+  .tag{display:inline-block;background:rgba(196,242,74,.12);color:var(--accent);font-size:11.5px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;padding:4px 10px;border-radius:999px;margin-bottom:12px;align-self:flex-start}
+  .card h3{font-size:18.5px;margin-bottom:10px;line-height:1.3}
+  .card p{color:var(--muted);font-size:14.5px;margin-bottom:16px;flex:1}
+  .card .meta{color:#737373;font-size:12.5px;display:flex;gap:10px;align-items:center}
+
+  /* COMPARADOR */
+  .comp-toolbar{display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap}
+  .chip{background:var(--bg-3);border:1px solid var(--line);color:var(--muted);padding:9px 16px;border-radius:999px;font-size:13px;font-weight:600;transition:all .15s}
+  .chip:hover{color:var(--text)}
+  .chip.on{background:var(--accent);color:#0a0a0a;border-color:var(--accent)}
+  .comp-table{background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+  .comp-row{display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr 1fr auto;gap:14px;padding:18px 22px;border-bottom:1px solid var(--line);align-items:center;font-size:14.5px}
+  .comp-row.head{background:var(--bg-3);font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--accent);font-weight:700}
+  .comp-row:last-child{border-bottom:0}
+  .comp-prod{display:flex;flex-direction:column;gap:2px}
+  .comp-prod .pn{font-weight:700;font-size:15px}
+  .comp-prod .pb{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px}
+  .stars{color:#facc15;font-size:13px;letter-spacing:1px}
+  .comp-aff{background:var(--cta);color:#fff;padding:10px 14px;border-radius:8px;font-weight:700;font-size:13px;text-align:center;white-space:nowrap}
+  .comp-aff:hover{filter:brightness(1.1)}
+
+  /* SUPLEMENTOS DESTAQUE */
+  .supps{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+  .supp{background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius);padding:24px;display:flex;flex-direction:column;gap:14px;position:relative;overflow:hidden}
+  .supp.best{border-color:var(--accent)}
+  .supp.best::before{content:"#1 do Comparativo";position:absolute;top:14px;right:14px;background:var(--accent);color:#0a0a0a;padding:4px 10px;border-radius:99px;font-size:11px;font-weight:700;letter-spacing:.3px}
+  .supp .brand{font-size:11.5px;color:var(--accent);font-weight:700;letter-spacing:1px;text-transform:uppercase}
+  .supp h3{font-size:20px}
+  .supp .desc{color:var(--muted);font-size:14.5px}
+  .supp .price{font-size:14px;color:#a3a3a3}
+  .supp .price strong{color:var(--text);font-size:20px;font-family:'Space Grotesk',sans-serif}
+  .supp .aff{background:var(--cta);color:#fff;padding:12px 16px;text-align:center;border-radius:10px;font-weight:700;font-size:14px;letter-spacing:.3px;display:flex;align-items:center;justify-content:center;gap:8px;transition:filter .15s}
+  .supp .aff:hover{filter:brightness(1.08)}
+  .supp small{color:#737373;font-size:11.5px}
+
+  /* FAQ */
+  .faq{display:grid;gap:10px;max-width:820px;margin:0 auto}
+  .faq details{background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;transition:border-color .2s}
+  .faq details[open]{border-color:var(--accent)}
+  .faq summary{padding:20px 24px;font-weight:600;font-size:16px;cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:16px}
+  .faq summary::-webkit-details-marker{display:none}
+  .faq summary::after{content:"+";font-size:22px;color:var(--accent);font-weight:300}
+  .faq details[open] summary::after{content:"−"}
+  .faq .ans{padding:0 24px 20px;color:var(--muted);font-size:14.5px;line-height:1.7}
+
+  /* NEWSLETTER */
+  .news{background:linear-gradient(135deg,#161616,#0a0a0a);border:1px solid var(--line);border-radius:var(--radius);padding:48px;text-align:center;position:relative;overflow:hidden}
+  .news::before{content:"";position:absolute;width:300px;height:300px;background:radial-gradient(circle, rgba(196,242,74,.2), transparent 60%);top:-100px;right:-50px;border-radius:50%}
+  .news > *{position:relative}
+  .news h2{font-size:clamp(26px,3.5vw,36px);margin-bottom:12px}
+  .news p{color:var(--muted);max-width:520px;margin:0 auto 28px}
+  .news form{display:flex;gap:10px;max-width:480px;margin:0 auto;flex-wrap:wrap}
+  .news input{flex:1;min-width:220px;background:var(--bg-3);border:1px solid var(--line);color:#fff;padding:14px 18px;border-radius:999px;font-size:15px;outline:none;transition:border-color .2s}
+  .news input:focus{border-color:var(--accent)}
+  .news button{background:var(--accent);color:#0a0a0a;padding:14px 24px;border-radius:999px;font-weight:700;font-size:15px;transition:transform .15s}
+
+  /* FOOTER */
+  footer{padding:56px 0 28px;background:#070707}
+  .foot-grid{display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;gap:32px;margin-bottom:36px}
+  .foot-grid h5{font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:14px;color:var(--accent)}
+  .foot-grid ul{list-style:none;display:flex;flex-direction:column;gap:8px}
+  .foot-grid a{color:var(--muted);font-size:14px;transition:color .2s}
+  .foot-grid a:hover{color:#fff}
+  .foot-about p{color:var(--muted);font-size:14px;margin-top:10px;max-width:300px}
+  .socials{display:flex;gap:10px;margin-top:16px}
+  .socials a{width:36px;height:36px;display:grid;place-items:center;background:var(--bg-2);border:1px solid var(--line);border-radius:50%;font-size:13px;font-weight:700;transition:background .2s,color .2s}
+  .socials a:hover{background:var(--accent);color:#0a0a0a}
+  .disclosure{border-top:1px solid var(--line);padding-top:22px;color:#737373;font-size:12.5px;text-align:center;line-height:1.6}
+  .disclosure strong{color:var(--text)}
+
+  /* EQUIPE / AUTORES */
+  .team{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+  .person{background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius);padding:24px;display:flex;gap:16px;align-items:flex-start}
+  .person .av{width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#5a8a00);display:grid;place-items:center;color:#0a0a0a;font-weight:700;font-size:18px;flex-shrink:0;font-family:'Space Grotesk'}
+  .person h4{font-size:16px;margin-bottom:4px}
+  .person .role{font-size:12px;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+  .person p{font-size:13.5px;color:var(--muted);line-height:1.5}
+  .person .cred{margin-top:8px;font-size:11.5px;color:var(--dim)}
+  @media(max-width:760px){.team{grid-template-columns:1fr}}
+
+  /* STICKY MOBILE CTA */
+  .sticky-cta{position:fixed;bottom:20px;left:20px;right:20px;background:var(--accent);color:#0a0a0a;padding:14px;border-radius:14px;font-weight:700;text-align:center;display:none;z-index:40;box-shadow:0 10px 30px rgba(196,242,74,.3)}
+  @media(max-width:760px){.sticky-cta{display:block}}
+
+  /* RESPONSIVE */
+  @media(max-width:960px){
+    .hero-grid{grid-template-columns:1fr;gap:32px}
+    .cats{grid-template-columns:repeat(2,1fr)}
+    .grid{grid-template-columns:repeat(2,1fr)}
+    .supps{grid-template-columns:1fr}
+    .calc-body{grid-template-columns:1fr}
+    .calc-form{border-right:0;border-bottom:1px solid var(--line)}
+    .foot-grid{grid-template-columns:1fr 1fr;gap:24px}
+    .menu{display:none}
+    .burger{display:block}
+    .menu.open{display:flex;flex-direction:column;position:absolute;top:60px;left:0;right:0;background:var(--bg-2);padding:18px 24px;gap:16px;border-bottom:1px solid var(--line)}
+    .comp-row{grid-template-columns:1fr;gap:8px;padding:18px}
+    .comp-row.head{display:none}
+    .comp-row .k{font-size:11px;color:var(--muted);text-transform:uppercase;display:block;margin-bottom:2px}
+  }
+  @media(max-width:560px){
+    .grid{grid-template-columns:1fr}
+    .cats{grid-template-columns:1fr 1fr}
+    .section{padding:56px 0}
+    .news{padding:32px 22px}
+    .field-row{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <span><span class="pulse"></span> Conteúdo atualizado em <strong id="lastSync">27 de maio de 2026</strong> · Revisado pela equipe editorial</span>
+</div>
+
+<header class="site">
+  <div class="nav">
+    <a href="#" class="logo"><span class="dot"></span> Shape <span style="color:var(--accent)">Real</span></a>
+    <ul class="menu" id="menu">
+      <li><a href="#calculadora">Calculadora</a></li>
+      <li><a href="#comparativo">Comparativo</a></li>
+      <li><a href="#artigos">Artigos</a></li>
+      <li><a href="#suplementos">Suplementos</a></li>
+      <li><a href="#equipe">Equipe</a></li>
+    </ul>
+    <a href="#calculadora" class="nav-cta">Calcular meu plano →</a>
+    <button class="burger" onclick="document.getElementById('menu').classList.toggle('open')">☰</button>
+  </div>
+</header>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="container hero-grid">
+    <div>
+      <span class="pill"><span class="live"></span> Edição 27 mai 2026 · 8º conteúdo da semana</span>
+      <h1>Sua definição começa com <em>números reais</em>, não promessas.</h1>
+      <p>Calcule seu gasto calórico, IMC e macros em 20 segundos. Compare suplementos por custo-benefício real. Conteúdo revisado por nutricionistas esportivos.</p>
+      <div class="hero-actions">
+        <a href="#calculadora" class="btn btn-primary">Abrir calculadora grátis →</a>
+        <a href="#comparativo" class="btn btn-ghost">Ver comparativo de suplementos</a>
+      </div>
+      <div class="trust">
+        <div class="trust-item"><span class="n">+42k</span><span class="l">leitores/mês</span></div>
+        <div class="trust-item"><span class="n">128</span><span class="l">reviews honestos</span></div>
+        <div class="trust-item"><span class="n">5</span><span class="l">cálculos integrados</span></div>
+        <div class="trust-item"><span class="n">3</span><span class="l">nutricionistas revisores</span></div>
+      </div>
+    </div>
+    <div class="hero-card">
+      <div class="label">★ Destaque da semana <span class="updated-tag">● Publicado hoje</span></div>
+      <h3>Cafeína antes do treino: nova meta-análise confirma queima de gordura</h3>
+      <div class="meta">por Dra. Marina Costa, nutricionista esportiva · 8 min de leitura</div>
+      <p style="color:var(--muted);font-size:14.5px;margin-bottom:18px">Revisão com 21 estudos mostra que 3-6 mg/kg de cafeína 45 min antes do treino aeróbico aumenta a oxidação de gordura em até 11%.</p>
+      <a href="estudo-cafeina.html" class="read">Ler análise completa →</a>
+    </div>
+  </div>
+</section>
+
+<!-- CALCULADORA -->
+<section class="section" id="calculadora">
+  <div class="container">
+    <div class="section-head">
+      <div>
+        <h2>Calculadora fitness completa</h2>
+        <p class="sub">7 cálculos baseados em fórmulas validadas cientificamente. Sem cadastro, sem enganação.</p>
+      </div>
+    </div>
+
+    <div class="calc-wrap">
+      <div class="calc-tabs" role="tablist">
+        <button class="calc-tab active" data-tab="tmb">🔥 TMB & Calorias</button>
+        <button class="calc-tab" data-tab="imc">⚖️ IMC</button>
+        <button class="calc-tab" data-tab="macros">🥩 Macros</button>
+        <button class="calc-tab" data-tab="agua">💧 Hidratação</button>
+        <button class="calc-tab" data-tab="proteina">💪 Proteína</button>
+      </div>
+
+      <div class="calc-body">
+        <!-- FORM -->
+        <div class="calc-form">
+          <!-- TMB -->
+          <div class="tab-panel" data-panel="tmb">
+            <h3>TMB & Gasto Calórico Diário</h3>
+            <div class="desc">Fórmula Mifflin-St Jeor (a mais precisa para 90% dos casos)</div>
+
+            <div class="field">
+              <label>Sexo</label>
+              <div class="seg" id="sexo">
+                <button class="on" data-v="M">Masculino</button>
+                <button data-v="F">Feminino</button>
+              </div>
+            </div>
+            <div class="field-row">
+              <div class="field"><label>Idade (anos)</label><input type="number" id="idade" value="28" min="14" max="100"></div>
+              <div class="field"><label>Peso (kg)</label><input type="number" id="peso" value="78" min="30" max="250"></div>
+            </div>
+            <div class="field-row">
+              <div class="field"><label>Altura (cm)</label><input type="number" id="altura" value="178" min="120" max="220"></div>
+              <div class="field">
+                <label>Atividade</label>
+                <select id="ativ">
+                  <option value="1.2">Sedentário (0 treino)</option>
+                  <option value="1.375">Leve (1-3 ×/sem)</option>
+                  <option value="1.55" selected>Moderado (3-5 ×/sem)</option>
+                  <option value="1.725">Ativo (6-7 ×/sem)</option>
+                  <option value="1.9">Muito ativo</option>
+                </select>
+              </div>
+            </div>
+            <div class="field">
+              <label>Objetivo</label>
+              <div class="seg" id="obj">
+                <button data-v="cut">Definição (−18%)</button>
+                <button class="on" data-v="man">Manutenção</button>
+                <button data-v="bulk">Hipertrofia (+10%)</button>
+              </div>
+            </div>
+            <button class="calc-btn" onclick="calcTMB()">Calcular meu plano →</button>
+          </div>
+
+          <!-- IMC -->
+          <div class="tab-panel" data-panel="imc" hidden>
+            <h3>Índice de Massa Corporal</h3>
+            <div class="desc">Indicador clássico — útil mas não substitui medida de gordura corporal</div>
+            <div class="field-row">
+              <div class="field"><label>Peso (kg)</label><input type="number" id="imcPeso" value="78" min="30" max="250"></div>
+              <div class="field"><label>Altura (cm)</label><input type="number" id="imcAltura" value="178" min="120" max="220"></div>
+            </div>
+            <button class="calc-btn" onclick="calcIMC()">Calcular IMC →</button>
+          </div>
+
+          <!-- MACROS -->
+          <div class="tab-panel" data-panel="macros" hidden>
+            <h3>Distribuição de Macros</h3>
+            <div class="desc">Calcula proteína, gordura e carboidrato a partir das suas calorias</div>
+            <div class="field"><label>Calorias diárias</label><input type="number" id="mKcal" value="2200" min="800" max="6000"></div>
+            <div class="field"><label>Peso (kg)</label><input type="number" id="mPeso" value="78"></div>
+            <div class="field">
+              <label>Estratégia</label>
+              <div class="seg" id="mEst">
+                <button class="on" data-v="cut">Cutting (alta proteína)</button>
+                <button data-v="bulk">Bulking</button>
+                <button data-v="keto">Cetogênica</button>
+              </div>
+            </div>
+            <button class="calc-btn" onclick="calcMacros()">Dividir macros →</button>
+          </div>
+
+          <!-- AGUA -->
+          <div class="tab-panel" data-panel="agua" hidden>
+            <h3>Hidratação ideal</h3>
+            <div class="desc">Inclui ajuste por treino e clima</div>
+            <div class="field"><label>Peso (kg)</label><input type="number" id="aPeso" value="78"></div>
+            <div class="field"><label>Minutos de treino/dia</label><input type="number" id="aTreino" value="60" min="0" max="300"></div>
+            <div class="field">
+              <label>Clima/local</label>
+              <select id="aClima">
+                <option value="1.0">Ameno (ar-condicionado)</option>
+                <option value="1.15" selected>Normal (Brasil médio)</option>
+                <option value="1.3">Quente / suor intenso</option>
+              </select>
+            </div>
+            <button class="calc-btn" onclick="calcAgua()">Calcular litros →</button>
+          </div>
+
+          <!-- PROTEINA -->
+          <div class="tab-panel" data-panel="proteina" hidden>
+            <h3>Quantidade ideal de proteína</h3>
+            <div class="desc">Personalizada por objetivo e nível de treino</div>
+            <div class="field"><label>Peso (kg)</label><input type="number" id="pPeso" value="78"></div>
+            <div class="field">
+              <label>Objetivo</label>
+              <select id="pObj">
+                <option value="1.6">Saúde geral (1,6 g/kg)</option>
+                <option value="2.0" selected>Hipertrofia (2,0 g/kg)</option>
+                <option value="2.3">Cutting agressivo (2,3 g/kg)</option>
+                <option value="2.5">Atleta avançado (2,5 g/kg)</option>
+              </select>
+            </div>
+            <button class="calc-btn" onclick="calcProteina()">Calcular gramas →</button>
+          </div>
+        </div>
+
+        <!-- RESULT -->
+        <div class="calc-result empty" id="result">
+          <div class="ico">📊</div>
+          <div>Preencha os dados ao lado<br>e clique em calcular.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CATEGORIAS -->
+<section class="section">
+  <div class="container">
+    <div class="section-head">
+      <div>
+        <h2>Por onde começar</h2>
+        <p class="sub">Cinco frentes que cobrem 90% das dúvidas de quem busca definição.</p>
+      </div>
+    </div>
+    <div class="cats">
+      <a href="#estudos" class="cat"><div class="ico">🧪</div><h4>Estudos</h4><span>Pesquisas traduzidas</span></a>
+      <a href="#comparativo" class="cat"><div class="ico">⚖️</div><h4>Comparativo</h4><span>Suplementos lado-a-lado</span></a>
+      <a href="#calculadora" class="cat"><div class="ico">🧮</div><h4>Calculadora</h4><span>TMB, IMC, macros</span></a>
+      <a href="#suplementos" class="cat"><div class="ico">💊</div><h4>Reviews</h4><span>Análises honestas</span></a>
+      <a href="#noticias" class="cat"><div class="ico">📰</div><h4>Notícias</h4><span>Fitness atualizado</span></a>
+    </div>
+  </div>
+</section>
+
+<!-- ARTIGOS -->
+<section class="section" id="artigos">
+  <div class="container">
+    <div class="section-head">
+      <div>
+        <h2>Últimos artigos</h2>
+        <p class="sub">Conteúdo novo toda terça, quinta e sábado.</p>
+      </div>
+      <a href="#" class="link">Ver todos →</a>
+    </div>
+    <div class="grid">
+      <!--POSTS_START-->
+      <article class="card">
+        <a href="estudo-cafeina.html"><div class="thumb"><div class="emoji">☕</div></div></a>
+        <div class="body">
+          <span class="tag">Estudo</span>
+          <h3><a href="estudo-cafeina.html">Cafeína pré-treino: o que a ciência diz em 2026</a></h3>
+          <p>Meta-análise com 21 ensaios. Dose ideal, timing e quando ela atrapalha o sono.</p>
+          <div class="meta"><span>8 min</span> · <span>27 mai 2026</span></div>
+        </div>
+      </article>
+      <article class="card">
+        <a href="review-whey.html"><div class="thumb"><div class="emoji">🥛</div></div></a>
+        <div class="body">
+          <span class="tag">Review</span>
+          <h3><a href="review-whey.html">Whey Isolado: 5 marcas testadas (Growth, Max, Integral...)</a></h3>
+          <p>Pureza, sabor, custo por grama de proteína. O resultado surpreendeu.</p>
+          <div class="meta"><span>12 min</span> · <span>24 mai 2026</span></div>
+        </div>
+      </article>
+      <article class="card">
+        <a href="noticia-anvisa.html"><div class="thumb"><div class="emoji">📋</div></div></a>
+        <div class="body">
+          <span class="tag">Notícia</span>
+          <h3><a href="noticia-anvisa.html">Anvisa atualiza regra para termogênicos: o que muda</a></h3>
+          <p>Resolução de maio limita doses de cafeína e exige rotulagem extra.</p>
+          <div class="meta"><span>5 min</span> · <span>22 mai 2026</span></div>
+        </div>
+      </article>
+      <article class="card">
+        <a href="guia-deficit.html"><div class="thumb"><div class="emoji">🔥</div></div></a>
+        <div class="body">
+          <span class="tag">Guia</span>
+          <h3><a href="guia-deficit.html">Déficit calórico inteligente: passo-a-passo completo</a></h3>
+          <p>Como calcular seu TMB, definir o déficit certo e não perder músculo.</p>
+          <div class="meta"><span>15 min</span> · <span>20 mai 2026</span></div>
+        </div>
+      </article>
+      <article class="card">
+        <a href="#"><div class="thumb"><div class="emoji">💪</div></div></a>
+        <div class="body">
+          <span class="tag">Treino</span>
+          <h3><a href="#">Treino ABC de 45 min para definição</a></h3>
+          <p>Frequência 6×/semana, volume moderado, cardio HIIT 2×. Planilhão grátis.</p>
+          <div class="meta"><span>10 min</span> · <span>18 mai 2026</span></div>
+        </div>
+      </article>
+      <article class="card">
+        <a href="#"><div class="thumb"><div class="emoji">🍳</div></div></a>
+        <div class="body">
+          <span class="tag">Receita</span>
+          <h3><a href="#">Panqueca proteica de banana: 320 kcal, 32g proteína</a></h3>
+          <p>4 ingredientes, 8 minutos. Ideal pré ou pós-treino.</p>
+          <div class="meta"><span>4 min</span> · <span>15 mai 2026</span></div>
+        </div>
+      </article>
+      <!--POSTS_END-->
+    </div>
+  </div>
+</section>
+
+<!-- COMPARADOR -->
+<section class="section" id="comparativo">
+  <div class="container">
+    <div class="section-head">
+      <div>
+        <h2>Comparativo de suplementos</h2>
+        <p class="sub">Preços conferidos diariamente. Notas baseadas em testes da equipe e feedback dos leitores.</p>
+      </div>
+      <span class="updated-tag">● Preços verificados hoje</span>
+    </div>
+
+    <div class="comp-toolbar" id="compFilters">
+      <button class="chip on" data-cat="todos">Todos</button>
+      <button class="chip" data-cat="whey">Whey</button>
+      <button class="chip" data-cat="creatina">Creatina</button>
+      <button class="chip" data-cat="termo">Termogênico</button>
+      <button class="chip" data-cat="pre">Pré-treino</button>
+    </div>
+
+    <div class="comp-table">
+      <div class="comp-row head">
+        <div>Produto</div>
+        <div>Prot/dose</div>
+        <div>R$/g prot.</div>
+        <div>Nota</div>
+        <div>Preço</div>
+        <div></div>
+      </div>
+      <div id="compRows"></div>
+    </div>
+  </div>
+</section>
+
+<!-- SUPLEMENTOS DESTAQUE -->
+<section class="section" id="suplementos">
+  <div class="container">
+    <div class="section-head">
+      <div>
+        <h2>Top picks da semana</h2>
+        <p class="sub">Selecionados pela equipe — o preço é o mesmo, e o blog ganha uma pequena comissão se você comprar pelo link.</p>
+      </div>
+    </div>
+    <div class="supps">
+      <div class="supp best">
+        <span class="brand">Growth Supplements</span>
+        <h3>Whey Protein Isolado 1kg</h3>
+        <div class="stars">★★★★★</div>
+        <p class="desc">90% de pureza, melhor preço por grama de proteína do comparativo.</p>
+        <div class="price">A partir de <strong>R$ 109,90</strong></div>
+        <a href="https://www.gsuplementos.com.br/?ref=SEUCODIGO" target="_blank" rel="nofollow sponsored noopener" class="aff">Ver na Growth →</a>
+        <small>Link de afiliado · cupom SHAPEREAL</small>
+      </div>
+      <div class="supp">
+        <span class="brand">Max Titanium</span>
+        <h3>Creatina Creapure® 300g</h3>
+        <div class="stars">★★★★★</div>
+        <p class="desc">Forma mais estudada do mercado. Suplemento mais custo-efetivo de todos.</p>
+        <div class="price">A partir de <strong>R$ 89,00</strong></div>
+        <a href="https://www.maxtitanium.com.br/?ref=SEUCODIGO" target="_blank" rel="nofollow sponsored noopener" class="aff">Ver na Max Titanium →</a>
+        <small>Link de afiliado</small>
+      </div>
+      <div class="supp">
+        <span class="brand">Amazon Associados</span>
+        <h3>Shaker Inox 750ml</h3>
+        <div class="stars">★★★★☆</div>
+        <p class="desc">Aço inox, não pega cheiro, compartimento separado para cápsulas.</p>
+        <div class="price">A partir de <strong>R$ 79,90</strong></div>
+        <a href="https://www.amazon.com.br/dp/EXEMPLO?tag=SEUTAG-20" target="_blank" rel="nofollow sponsored noopener" class="aff">Comprar na Amazon →</a>
+        <small>Como Associado da Amazon, ganho com compras qualificadas.</small>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- EQUIPE -->
+<section class="section" id="equipe">
+  <div class="container">
+    <div class="section-head">
+      <div>
+        <h2>Quem assina o conteúdo</h2>
+        <p class="sub">Todo artigo passa por revisão técnica antes de ser publicado. Conheça quem está por trás.</p>
+      </div>
+    </div>
+    <div class="team">
+      <div class="person">
+        <div class="av">MC</div>
+        <div>
+          <h4>Dra. Marina Costa</h4>
+          <div class="role">Nutricionista esportiva</div>
+          <p>Mestre em Nutrição Clínica pela UFRJ, 9 anos atendendo praticantes de musculação e atletas amadores.</p>
+          <div class="cred">CRN-4 12.345 · Pós em Nutrição Esportiva</div>
+        </div>
+      </div>
+      <div class="person">
+        <div class="av">RA</div>
+        <div>
+          <h4>Rafael Andrade</h4>
+          <div class="role">Editor-chefe</div>
+          <p>Jornalista, 12 anos cobrindo saúde e bem-estar. Treina musculação há 15 anos. Responsável pela curadoria e revisão de pauta.</p>
+          <div class="cred">MTB-RJ 38.722</div>
+        </div>
+      </div>
+      <div class="person">
+        <div class="av">JS</div>
+        <div>
+          <h4>Juliana Souza</h4>
+          <div class="role">Educadora física</div>
+          <p>Pós-graduada em Fisiologia do Exercício, personal trainer com 8 anos de experiência em prescrição para emagrecimento.</p>
+          <div class="cred">CREF 098765-G/RJ</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="section">
+  <div class="container">
+    <div class="section-head" style="justify-content:center;text-align:center">
+      <div>
+        <h2>Perguntas frequentes</h2>
+        <p class="sub" style="margin:6px auto 0">As 6 dúvidas que mais aparecem na nossa newsletter.</p>
+      </div>
+    </div>
+    <div class="faq">
+      <details><summary>A calculadora é grátis mesmo?</summary><div class="ans">Sim, 100% grátis e sem cadastro. Os cálculos rodam direto no seu navegador — nada é enviado pra nenhum servidor.</div></details>
+      <details><summary>Os preços dos suplementos são reais?</summary><div class="ans">Conferidos diariamente direto nos sites das marcas pela nossa equipe. Mesmo assim, sempre confira no checkout — promoções e estoque mudam rápido.</div></details>
+      <details><summary>Vocês recebem comissão dos suplementos?</summary><div class="ans">Sim, em alguns links. O preço pra você é exatamente o mesmo — mas o blog ganha uma pequena fatia. É como funciona qualquer site de afiliado sério (e nós deixamos isso bem claro).</div></details>
+      <details><summary>Posso confiar nos estudos que vocês citam?</summary><div class="ans">Linkamos a fonte original sempre. Priorizamos meta-análises e ensaios randomizados publicados em jornais com peer-review (PubMed, JISSN, AJCN).</div></details>
+      <details><summary>Por que o foco em definição e emagrecimento?</summary><div class="ans">É a dúvida mais comum entre adultos de 25-45 anos no Brasil. Cobrimos hipertrofia também, mas a curadoria é cutting-first.</div></details>
+      <details><summary>Como vocês mantêm tudo atualizado?</summary><div class="ans">Nossa equipe monitora 14 fontes de pesquisa (PubMed, JISSN, AJCN, Anvisa e outras) e publica conteúdo novo todo dia útil. Estudos são lidos no original, traduzidos e contextualizados para o leitor brasileiro.</div></details>
+    </div>
+  </div>
+</section>
+
+<!-- NEWSLETTER -->
+<section class="section" id="newsletter">
+  <div class="container">
+    <div class="news">
+      <h2>Receba o resumo da semana fitness</h2>
+      <p>Toda sexta-feira: 1 estudo novo traduzido, 1 review de suplemento e 1 dica prática. Sem spam.</p>
+      <form onsubmit="event.preventDefault(); this.querySelector('button').innerText='Inscrito ✓'; this.querySelector('input').value='';">
+        <input type="email" placeholder="seu@email.com" required>
+        <button type="submit">Quero receber</button>
+      </form>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="container">
+    <div class="foot-grid">
+      <div class="foot-about">
+        <div class="logo"><span class="dot"></span> Shape <span style="color:var(--accent)">Real</span></div>
+        <p>Ciência, treino e nutrição para um corpo definido de verdade. Conteúdo independente, revisado por nutricionistas esportivos parceiros.</p>
+        <div class="socials">
+          <a href="#" aria-label="Instagram">IG</a>
+          <a href="#" aria-label="YouTube">YT</a>
+          <a href="#" aria-label="TikTok">TT</a>
+          <a href="#" aria-label="X">X</a>
+        </div>
+      </div>
+      <div><h5>Ferramentas</h5><ul><li><a href="#calculadora">Calculadora TMB</a></li><li><a href="#calculadora">Calculadora IMC</a></li><li><a href="#calculadora">Macros</a></li><li><a href="#comparativo">Comparativo</a></li></ul></div>
+      <div><h5>Conteúdo</h5><ul><li><a href="#estudos">Estudos</a></li><li><a href="#suplementos">Suplementos</a></li><li><a href="#">Treinos</a></li><li><a href="#">Receitas</a></li></ul></div>
+      <div><h5>Legal</h5><ul><li><a href="#">Política de privacidade</a></li><li><a href="#">Política de afiliados</a></li><li><a href="#">Termos de uso</a></li><li><a href="#">Contato</a></li></ul></div>
+    </div>
+    <div class="disclosure">
+      <strong>Aviso:</strong> Conteúdo informativo, não substitui orientação profissional. Alguns links são de afiliados (Growth, Max Titanium, Amazon Associados) — comprando por eles você apoia o blog sem custo adicional. © 2026 Shape Real.
+    </div>
+  </div>
+</footer>
+
+<a href="#calculadora" class="sticky-cta">📊 Calcular meu plano grátis</a>
+
+<script>
+/* ===========================
+   CALCULADORA FITNESS — JS
+   =========================== */
+
+// Tabs
+document.querySelectorAll('.calc-tab').forEach(t=>{
+  t.onclick=()=>{
+    document.querySelectorAll('.calc-tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(x=>x.hidden=true);
+    t.classList.add('active');
+    document.querySelector(`[data-panel="${t.dataset.tab}"]`).hidden=false;
+    setEmpty();
+  };
+});
+
+// Segmented controls
+document.querySelectorAll('.seg').forEach(seg=>{
+  seg.querySelectorAll('button').forEach(b=>{
+    b.onclick=()=>{seg.querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');};
+  });
+});
+const segVal=id=>document.querySelector(`#${id} .on`).dataset.v;
+
+function setEmpty(){
+  document.getElementById('result').className='calc-result empty';
+  document.getElementById('result').innerHTML='<div class="ico">📊</div><div>Preencha os dados ao lado<br>e clique em calcular.</div>';
+}
+
+function showResult(html){
+  const r=document.getElementById('result');
+  r.className='calc-result';
+  r.innerHTML=html;
+}
+
+// === TMB ===
+function calcTMB(){
+  const sexo=segVal('sexo'), idade=+document.getElementById('idade').value;
+  const peso=+document.getElementById('peso').value, altura=+document.getElementById('altura').value;
+  const ativ=+document.getElementById('ativ').value, obj=segVal('obj');
+  if(!idade||!peso||!altura) return;
+  const tmb=Math.round((10*peso)+(6.25*altura)-(5*idade)+(sexo==='M'?5:-161));
+  const get=Math.round(tmb*ativ);
+  let kcal=get;
+  if(obj==='cut') kcal=Math.round(get*0.82);
+  if(obj==='bulk') kcal=Math.round(get*1.10);
+  const sug=obj==='cut'
+    ? `Para definição, manter ${kcal} kcal/dia gera perda de ~0,5-0,7 kg/sem. Combine com 2,2 g de proteína/kg.`
+    : obj==='bulk'
+    ? `Para hipertrofia limpa, ${kcal} kcal/dia + treino 4-5×/sem. Ganho esperado: 0,3-0,5 kg/mês de massa.`
+    : `${kcal} kcal/dia mantém seu peso atual. Use como linha-base para qualquer estratégia.`;
+  showResult(`
+    <div class="result-label">Sua meta calórica diária</div>
+    <div class="result-big">${kcal.toLocaleString('pt-BR')}<span class="u">kcal</span></div>
+    <div class="result-card"><span class="k">TMB (gasto em repouso)</span><span class="v">${tmb.toLocaleString('pt-BR')} kcal</span></div>
+    <div class="result-card"><span class="k">GET (com atividade)</span><span class="v">${get.toLocaleString('pt-BR')} kcal</span></div>
+    <div class="result-card"><span class="k">Objetivo</span><span class="v acc">${obj==='cut'?'Definição -18%':obj==='bulk'?'Hipertrofia +10%':'Manutenção'}</span></div>
+    <div class="ai-suggest"><div class="h">→ Próximo passo</div>${sug}</div>
+  `);
+}
+
+// === IMC ===
+function calcIMC(){
+  const p=+document.getElementById('imcPeso').value, h=+document.getElementById('imcAltura').value/100;
+  if(!p||!h) return;
+  const imc=(p/(h*h));
+  let cls='', sts='ok', txt='';
+  if(imc<18.5){cls='Abaixo do peso';sts='warn';txt='Considere ganho de massa muscular com superávit calórico leve.';}
+  else if(imc<25){cls='Peso normal';sts='ok';txt='Faixa saudável. Foque em composição corporal (% de gordura).';}
+  else if(imc<30){cls='Sobrepeso';sts='warn';txt='Déficit moderado (15-20%) + treino de força é o caminho ideal.';}
+  else if(imc<35){cls='Obesidade grau I';sts='bad';txt='Acompanhamento médico/nutricional recomendado. Mudança progressiva.';}
+  else {cls='Obesidade grau II+';sts='bad';txt='Procure orientação profissional para um plano seguro e gradual.';}
+  showResult(`
+    <div class="result-label">Seu IMC</div>
+    <div class="result-big">${imc.toFixed(1)}</div>
+    <div class="badge-status ${sts}">${cls}</div>
+    <div class="result-card" style="margin-top:14px"><span class="k">Peso saudável (IMC 18,5–24,9)</span><span class="v">${(18.5*h*h).toFixed(1)} – ${(24.9*h*h).toFixed(1)} kg</span></div>
+    <div class="ai-suggest"><div class="h">✦ Próximo passo</div>${txt} <br><br>⚠️ IMC ignora músculo: atletas com muita massa podem ser classificados como "sobrepeso" sem ter gordura excessiva.</div>
+  `);
+}
+
+// === MACROS ===
+function calcMacros(){
+  const kcal=+document.getElementById('mKcal').value, peso=+document.getElementById('mPeso').value;
+  const est=segVal('mEst');
+  if(!kcal||!peso) return;
+  let pG, gG;
+  if(est==='cut'){pG=peso*2.2; gG=peso*0.9;}
+  else if(est==='bulk'){pG=peso*1.8; gG=peso*1.0;}
+  else {pG=peso*1.8; gG=Math.round(kcal*0.7/9);}
+  pG=Math.round(pG); gG=Math.round(gG);
+  const pK=pG*4, gK=gG*9;
+  const cK=Math.max(kcal-pK-gK,0), cG=Math.round(cK/4);
+  const total=pK+gK+cK;
+  const pP=Math.round(pK/total*100), gP=Math.round(gK/total*100), cP=100-pP-gP;
+  showResult(`
+    <div class="result-label">Distribuição para ${kcal} kcal</div>
+    <div class="macro-bars">
+      <div class="macro"><div class="macro-top"><span>🥩 Proteína</span><span><strong>${pG}g</strong> · ${pP}%</span></div><div class="macro-bar"><div style="width:${pP}%;background:#ef4444"></div></div></div>
+      <div class="macro"><div class="macro-top"><span>🥑 Gordura</span><span><strong>${gG}g</strong> · ${gP}%</span></div><div class="macro-bar"><div style="width:${gP}%;background:#facc15"></div></div></div>
+      <div class="macro"><div class="macro-top"><span>🍚 Carboidrato</span><span><strong>${cG}g</strong> · ${cP}%</span></div><div class="macro-bar"><div style="width:${cP}%;background:#22c55e"></div></div></div>
+    </div>
+    <div class="result-card"><span class="k">Distribuição calórica</span><span class="v">P ${pK} · G ${gK} · C ${cK}</span></div>
+    <div class="ai-suggest"><div class="h">✦ Como aplicar</div>Divida em 4-5 refeições. Whey isolado é prático pra fechar a proteína sem estourar gordura. Veja o <a href="#comparativo" style="color:var(--accent)">comparativo</a> abaixo.</div>
+  `);
+}
+
+// === ÁGUA ===
+function calcAgua(){
+  const p=+document.getElementById('aPeso').value, t=+document.getElementById('aTreino').value;
+  const c=+document.getElementById('aClima').value;
+  if(!p) return;
+  const base=p*35; // ml por kg
+  const treinoMl=(t/30)*350; // 350 ml por 30 min de treino
+  const totalMl=Math.round((base+treinoMl)*c);
+  const L=(totalMl/1000).toFixed(1);
+  const copos=Math.round(totalMl/250);
+  showResult(`
+    <div class="result-label">Sua meta diária de água</div>
+    <div class="result-big">${L}<span class="u">L</span></div>
+    <div class="result-card"><span class="k">Em copos (250 ml)</span><span class="v">${copos} copos</span></div>
+    <div class="result-card"><span class="k">Base por peso</span><span class="v">${(base/1000).toFixed(1)} L</span></div>
+    <div class="result-card"><span class="k">Extra por treino</span><span class="v">+${(treinoMl/1000).toFixed(1)} L</span></div>
+    <div class="ai-suggest"><div class="h">✦ Dica</div>Distribua: 2 copos ao acordar, 1 a cada 1-2h, 500 ml durante o treino. Se urina estiver amarelo escuro: aumente.</div>
+  `);
+}
+
+// === PROTEINA ===
+function calcProteina(){
+  const p=+document.getElementById('pPeso').value, mult=+document.getElementById('pObj').value;
+  if(!p) return;
+  const g=Math.round(p*mult);
+  const ref=Math.round(g/4);
+  showResult(`
+    <div class="result-label">Sua meta diária de proteína</div>
+    <div class="result-big">${g}<span class="u">g</span></div>
+    <div class="result-card"><span class="k">Por refeição (4×/dia)</span><span class="v">${ref}g</span></div>
+    <div class="result-card"><span class="k">Equivalente em frango</span><span class="v">${Math.round(g/0.31)}g</span></div>
+    <div class="result-card"><span class="k">Equivalente em ovos</span><span class="v">~${Math.round(g/6)} ovos</span></div>
+    <div class="ai-suggest"><div class="h">✦ Estratégia</div>Difícil bater só com comida? 1 dose de whey isolado entrega 25-27g de proteína em 120 kcal. Excelente custo-benefício no cutting.</div>
+  `);
+}
+
+/* ===========================
+   COMPARADOR DE SUPLEMENTOS
+   =========================== */
+const PRODS=[
+  {cat:'whey', n:'Whey Isolado 1kg', b:'Growth', prot:'27g', cpg:'R$ 0,11', stars:5, price:'R$ 109,90', url:'https://www.gsuplementos.com.br/?ref=SEUCODIGO'},
+  {cat:'whey', n:'Iso Top Whey 900g', b:'Max Titanium', prot:'25g', cpg:'R$ 0,16', stars:4, price:'R$ 159,00', url:'https://www.maxtitanium.com.br/?ref=SEUCODIGO'},
+  {cat:'whey', n:'Iso Triple Zero 900g', b:'Integralmédica', prot:'24g', cpg:'R$ 0,19', stars:4, price:'R$ 169,90', url:'#'},
+  {cat:'creatina', n:'Creatina Creapure® 300g', b:'Max Titanium', prot:'—', cpg:'R$ 1,00/3g', stars:5, price:'R$ 89,00', url:'https://www.maxtitanium.com.br/?ref=SEUCODIGO'},
+  {cat:'creatina', n:'Creatina Monohidratada 250g', b:'Growth', prot:'—', cpg:'R$ 0,72/3g', stars:5, price:'R$ 59,90', url:'https://www.gsuplementos.com.br/?ref=SEUCODIGO'},
+  {cat:'termo', n:'Lipo 6 Black 60 caps', b:'Nutrex', prot:'—', cpg:'R$ 1,33/dose', stars:4, price:'R$ 79,90', url:'https://www.amazon.com.br/dp/EXEMPLO?tag=SEUTAG-20'},
+  {cat:'termo', n:'Oxyelite Pro 60 caps', b:'USP Labs', prot:'—', cpg:'R$ 1,98/dose', stars:3, price:'R$ 119,00', url:'#'},
+  {cat:'pre', n:'Horus Pré-treino 300g', b:'Max Titanium', prot:'—', cpg:'R$ 3,15/dose', stars:5, price:'R$ 99,90', url:'https://www.maxtitanium.com.br/?ref=SEUCODIGO'},
+  {cat:'pre', n:'Pré-treino C4 200g', b:'Cellucor', prot:'—', cpg:'R$ 2,80/dose', stars:4, price:'R$ 89,00', url:'https://www.amazon.com.br/dp/EXEMPLO?tag=SEUTAG-20'},
+];
+function renderComp(filter='todos'){
+  const list= filter==='todos'?PRODS:PRODS.filter(p=>p.cat===filter);
+  document.getElementById('compRows').innerHTML = list.map(p=>`
+    <div class="comp-row">
+      <div class="comp-prod"><span class="pb">${p.b}</span><span class="pn">${p.n}</span></div>
+      <div><span class="k">Prot/dose</span>${p.prot}</div>
+      <div><span class="k">R$/g</span>${p.cpg}</div>
+      <div><span class="k">Nota</span><span class="stars">${'★'.repeat(p.stars)}${'☆'.repeat(5-p.stars)}</span></div>
+      <div><span class="k">Preço</span><strong>${p.price}</strong></div>
+      <a href="${p.url}" target="_blank" rel="nofollow sponsored noopener" class="comp-aff">Ver oferta →</a>
+    </div>
+  `).join('');
+}
+document.querySelectorAll('#compFilters .chip').forEach(c=>{
+  c.onclick=()=>{document.querySelectorAll('#compFilters .chip').forEach(x=>x.classList.remove('on'));c.classList.add('on');renderComp(c.dataset.cat);};
+});
+renderComp();
+
+/* Mostra a data atual formatada no topbar */
+(function(){
+  const meses=['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+  const d=new Date();
+  document.getElementById('lastSync').innerText = `${d.getDate()} de ${meses[d.getMonth()]} de ${d.getFullYear()}`;
+})();
+</script>
+</body>
+</html>

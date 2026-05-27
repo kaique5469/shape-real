@@ -1,0 +1,101 @@
+[
+  {
+    "cat": "whey",
+    "marca": "Growth",
+    "nome": "Whey Isolado 1kg",
+    "prot_dose": "27g",
+    "custo_g_prot": "R$ 0,11",
+    "nota": 5,
+    "preco": "R$ 109,90",
+    "url": "https://www.gsuplementos.com.br/?ref=SEUCODIGO",
+    "ultima_verificacao": "2026-05-27"
+  },
+  {
+    "cat": "whey",
+    "marca": "Max Titanium",
+    "nome": "Iso Top Whey 900g",
+    "prot_dose": "25g",
+    "custo_g_prot": "R$ 0,16",
+    "nota": 4,
+    "preco": "R$ 159,00",
+    "url": "https://www.maxtitanium.com.br/?ref=SEUCODIGO",
+    "ultima_verificacao": "2026-05-27"
+  },
+  {
+    "cat": "whey",
+    "marca": "Integralmédica",
+    "nome": "Iso Triple Zero 900g",
+    "prot_dose": "24g",
+    "custo_g_prot": "R$ 0,19",
+    "nota": 4,
+    "preco": "R$ 169,90",
+    "url": "#",
+    "ultima_verificacao": "2026-05-27"
+  },
+  {
+    "cat": "creatina",
+    "marca": "Max Titanium",
+    "nome": "Creatina Creapure® 300g",
+    "prot_dose": "—",
+    "custo_g_prot": "R$ 1,00/3g",
+    "nota": 5,
+    "preco": "R$ 89,00",
+    "url": "https://www.maxtitanium.com.br/?ref=SEUCODIGO",
+    "ultima_verificacao": "2026-05-27"
+  },
+  {
+    "cat": "creatina",
+    "marca": "Growth",
+    "nome": "Creatina Monohidratada 250g",
+    "prot_dose": "—",
+    "custo_g_prot": "R$ 0,72/3g",
+    "nota": 5,
+    "preco": "R$ 59,90",
+    "url": "https://www.gsuplementos.com.br/?ref=SEUCODIGO",
+    "ultima_verificacao": "2026-05-27"
+  },
+  {
+    "cat": "termo",
+    "marca": "Nutrex",
+    "nome": "Lipo 6 Black 60 caps",
+    "prot_dose": "—",
+    "custo_g_prot": "R$ 1,33/dose",
+    "nota": 4,
+    "preco": "R$ 79,90",
+    "url": "https://www.amazon.com.br/dp/EXEMPLO?tag=SEUTAG-20",
+    "ultima_verificacao": "2026-05-27"
+  },
+  {
+    "cat": "termo",
+    "marca": "USP Labs",
+    "nome": "Oxyelite Pro 60 caps",
+    "prot_dose": "—",
+    "custo_g_prot": "R$ 1,98/dose",
+    "nota": 3,
+    "preco": "R$ 119,00",
+    "url": "#",
+    "ultima_verificacao": "2026-05-27"
+  },
+  {
+    "cat": "pre",
+    "marca": "Max Titanium",
+    "nome": "Horus Pré-treino 300g",
+    "prot_dose": "—",
+    "custo_g_prot": "R$ 3,15/dose",
+    "nota": 5,
+    "preco": "R$ 99,90",
+    "url": "https://www.maxtitanium.com.br/?ref=SEUCODIGO",
+    "ultima_verificacao": "2026-05-27"
+  },
+  {
+    "cat": "pre",
+    "marca": "Cellucor",
+    "nome": "Pré-treino C4 200g",
+    "prot_dose": "—",
+    "custo_g_prot": "R$ 2,80/dose",
+    "nota": 4,
+    "preco": "R$ 89,00",
+    "url": "https://www.amazon.com.br/dp/EXEMPLO?tag=SEUTAG-20",
+    "ultima_verificacao": "2026-05-27"
+  }
+]

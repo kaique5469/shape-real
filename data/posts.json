@@ -1,0 +1,42 @@
+[
+  {
+    "titulo": "Cafeína pré-treino: o que a ciência diz em 2026",
+    "slug": "cafeina-pre-treino-2026",
+    "url": "estudo-cafeina.html",
+    "categoria": "estudo",
+    "emoji": "☕",
+    "resumo": "Meta-análise com 21 ensaios. Dose ideal, timing e quando ela atrapalha o sono.",
+    "tempo_leitura": 8,
+    "data": "2026-05-27"
+  },
+  {
+    "titulo": "Whey Isolado: 5 marcas testadas (Growth, Max, Integral...)",
+    "slug": "whey-isolado-comparativo",
+    "url": "review-whey.html",
+    "categoria": "review",
+    "emoji": "🥛",
+    "resumo": "Pureza, sabor, custo por grama de proteína. O resultado surpreendeu.",
+    "tempo_leitura": 12,
+    "data": "2026-05-24"
+  },
+  {
+    "titulo": "Anvisa atualiza regra para termogênicos: o que muda",
+    "slug": "anvisa-termogenicos",
+    "url": "noticia-anvisa.html",
+    "categoria": "noticia",
+    "emoji": "📋",
+    "resumo": "Resolução de maio limita doses de cafeína e exige rotulagem extra.",
+    "tempo_leitura": 5,
+    "data": "2026-05-22"
+  },
+  {
+    "titulo": "Déficit calórico inteligente: passo-a-passo completo",
+    "slug": "deficit-calorico-guia",
+    "url": "guia-deficit.html",
+    "categoria": "guia",
+    "emoji": "🔥",
+    "resumo": "Como calcular seu TMB, definir o déficit certo e não perder músculo.",
+    "tempo_leitura": 15,
+    "data": "2026-05-20"
+  }
+]
