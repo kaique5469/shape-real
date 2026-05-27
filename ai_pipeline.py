@@ -224,14 +224,41 @@ Devolva APENAS o JSON atualizado, mesmo formato, sem ```.
 
 
 # ============================================================
-# 5. REGENERA HOMEPAGE (injeta últimos artigos)
+# 5. REGENERA HOMEPAGE (injeta destaque + arquivo de artigos)
 # ============================================================
 def regenerar_homepage(posts: list[dict]) -> None:
     idx = ROOT / "index.html"
     html = idx.read_text(encoding="utf-8")
 
-    # Pega os 6 mais recentes
-    recentes = posts[:6]
+    # --- DESTAQUE: 2 mais recentes (cards grandes) ---
+    destaque = posts[:2]
+    featured_html = "\n".join([
+        f'''      <article class="feat">
+        {'<span class="new-badge">● Novo</span>' if i == 0 else ''}
+        <a href="{p["url"]}"><div class="thumb"><div class="emoji">{p["emoji"]}</div></div></a>
+        <div class="body">
+          <span class="tag">{p["categoria"].capitalize()}</span>
+          <h3><a href="{p["url"]}">{p["titulo"]}</a></h3>
+          <p class="lead">{p["resumo"]}</p>
+          <div class="meta-row">
+            <span class="date">{_fmt_data_extenso(p["data"])}</span>
+            <span class="dot">·</span>
+            <span class="read">{p["tempo_leitura"]} min de leitura</span>
+            <span class="arrow">Ler →</span>
+          </div>
+        </div>
+      </article>'''
+        for i, p in enumerate(destaque)
+    ])
+
+    pattern_feat = re.compile(r"<!--FEATURED_START-->.*?<!--FEATURED_END-->", re.DOTALL)
+    novo_feat = f"<!--FEATURED_START-->\n{featured_html}\n      <!--FEATURED_END-->"
+    if pattern_feat.search(html):
+        html = pattern_feat.sub(novo_feat, html)
+        print(f"     -> destaque regenerado com {len(destaque)} cards")
+
+    # --- MAIS ARTIGOS: do 3º ao 8º (6 cards no grid) ---
+    arquivo = posts[2:8]
     cards_html = "\n".join([
         f'''      <article class="card">
         <a href="{p["url"]}"><div class="thumb"><div class="emoji">{p["emoji"]}</div></div></a>
@@ -239,24 +266,32 @@ def regenerar_homepage(posts: list[dict]) -> None:
           <span class="tag">{p["categoria"].capitalize()}</span>
           <h3><a href="{p["url"]}">{p["titulo"]}</a></h3>
           <p>{p["resumo"]}</p>
-          <div class="meta"><span>{p["tempo_leitura"]} min</span> · <span>{_fmt_data(p["data"])}</span></div>
+          <div class="meta"><span class="date">{_fmt_data_extenso(p["data"])}</span> · <span>{p["tempo_leitura"]} min</span></div>
         </div>
       </article>'''
-        for p in recentes
+        for p in arquivo
     ])
 
-    # Substitui o conteúdo entre os marcadores <!--POSTS_START--> e <!--POSTS_END-->
     pattern = re.compile(r"<!--POSTS_START-->.*?<!--POSTS_END-->", re.DOTALL)
     novo_bloco = f"<!--POSTS_START-->\n{cards_html}\n      <!--POSTS_END-->"
     if pattern.search(html):
         html = pattern.sub(novo_bloco, html)
-        idx.write_text(html, encoding="utf-8")
-        print(f"     -> homepage regenerada com {len(recentes)} cards")
+        print(f"     -> arquivo regenerado com {len(arquivo)} cards")
     else:
-        print("     -> marcadores POSTS_START/END não encontrados; pulei a regeneração")
+        print("     -> marcadores POSTS_START/END não encontrados")
+
+    idx.write_text(html, encoding="utf-8")
+
+
+def _fmt_data_extenso(iso: str) -> str:
+    meses = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",
+             "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
+    d = datetime.date.fromisoformat(iso)
+    return f"{d.day} de {meses[d.month-1]} de {d.year}"
 
 
 def _fmt_data(iso: str) -> str:
+    """Mantido para compatibilidade — formato curto."""
     meses = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
     d = datetime.date.fromisoformat(iso)
     return f"{d.day} {meses[d.month-1]} {d.year}"
