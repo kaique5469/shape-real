@@ -1,101 +1,38 @@
 [
-  {
-    "cat": "whey",
-    "marca": "Growth",
-    "nome": "Whey Isolado 1kg",
-    "prot_dose": "27g",
-    "custo_g_prot": "R$ 0,11",
-    "nota": 5,
-    "preco": "R$ 109,90",
-    "url": "https://www.gsuplementos.com.br/?ref=SEUCODIGO",
-    "ultima_verificacao": "2026-05-27"
-  },
-  {
-    "cat": "whey",
-    "marca": "Max Titanium",
-    "nome": "Iso Top Whey 900g",
-    "prot_dose": "25g",
-    "custo_g_prot": "R$ 0,16",
-    "nota": 4,
-    "preco": "R$ 159,00",
-    "url": "https://www.maxtitanium.com.br/?ref=SEUCODIGO",
-    "ultima_verificacao": "2026-05-27"
-  },
-  {
-    "cat": "whey",
-    "marca": "Integralmédica",
-    "nome": "Iso Triple Zero 900g",
-    "prot_dose": "24g",
-    "custo_g_prot": "R$ 0,19",
-    "nota": 4,
-    "preco": "R$ 169,90",
-    "url": "#",
-    "ultima_verificacao": "2026-05-27"
-  },
-  {
-    "cat": "creatina",
-    "marca": "Max Titanium",
-    "nome": "Creatina Creapure® 300g",
-    "prot_dose": "—",
-    "custo_g_prot": "R$ 1,00/3g",
-    "nota": 5,
-    "preco": "R$ 89,00",
-    "url": "https://www.maxtitanium.com.br/?ref=SEUCODIGO",
-    "ultima_verificacao": "2026-05-27"
-  },
-  {
-    "cat": "creatina",
-    "marca": "Growth",
-    "nome": "Creatina Monohidratada 250g",
-    "prot_dose": "—",
-    "custo_g_prot": "R$ 0,72/3g",
-    "nota": 5,
-    "preco": "R$ 59,90",
-    "url": "https://www.gsuplementos.com.br/?ref=SEUCODIGO",
-    "ultima_verificacao": "2026-05-27"
-  },
-  {
-    "cat": "termo",
-    "marca": "Nutrex",
-    "nome": "Lipo 6 Black 60 caps",
-    "prot_dose": "—",
-    "custo_g_prot": "R$ 1,33/dose",
-    "nota": 4,
-    "preco": "R$ 79,90",
-    "url": "https://www.amazon.com.br/dp/EXEMPLO?tag=SEUTAG-20",
-    "ultima_verificacao": "2026-05-27"
-  },
-  {
-    "cat": "termo",
-    "marca": "USP Labs",
-    "nome": "Oxyelite Pro 60 caps",
-    "prot_dose": "—",
-    "custo_g_prot": "R$ 1,98/dose",
-    "nota": 3,
-    "preco": "R$ 119,00",
-    "url": "#",
-    "ultima_verificacao": "2026-05-27"
-  },
-  {
-    "cat": "pre",
-    "marca": "Max Titanium",
-    "nome": "Horus Pré-treino 300g",
-    "prot_dose": "—",
-    "custo_g_prot": "R$ 3,15/dose",
-    "nota": 5,
-    "preco": "R$ 99,90",
-    "url": "https://www.maxtitanium.com.br/?ref=SEUCODIGO",
-    "ultima_verificacao": "2026-05-27"
-  },
-  {
-    "cat": "pre",
-    "marca": "Cellucor",
-    "nome": "Pré-treino C4 200g",
-    "prot_dose": "—",
-    "custo_g_prot": "R$ 2,80/dose",
-    "nota": 4,
-    "preco": "R$ 89,00",
-    "url": "https://www.amazon.com.br/dp/EXEMPLO?tag=SEUTAG-20",
-    "ultima_verificacao": "2026-05-27"
-  }
+  {"cat":"whey","marca":"Growth","nome":"Whey Isolado 1kg","prot_dose":"27g","custo_g_prot":"R$ 0,11","nota":5,"preco":"R$ 109,90","url":"https://www.gsuplementos.com.br/?ref=SEUCODIGO","ultima_verificacao":"2026-05-27"},
+  {"cat":"whey","marca":"Max Titanium","nome":"Iso Top Whey 900g","prot_dose":"25g","custo_g_prot":"R$ 0,16","nota":4,"preco":"R$ 159,00","url":"https://www.maxtitanium.com.br/?ref=SEUCODIGO","ultima_verificacao":"2026-05-27"},
+  {"cat":"whey","marca":"Integralmédica","nome":"Iso Triple Zero 900g","prot_dose":"24g","custo_g_prot":"R$ 0,19","nota":4,"preco":"R$ 169,90","url":"#","ultima_verificacao":"2026-05-27"},
+  {"cat":"whey","marca":"Probiótica","nome":"Whey Concentrado 1kg","prot_dose":"24g","custo_g_prot":"R$ 0,10","nota":4,"preco":"R$ 99,90","url":"https://www.amazon.com.br/dp/EXEMPLO?tag=SEUTAG-20","ultima_verificacao":"2026-05-27"},
+  {"cat":"whey","marca":"Dux Nutrition","nome":"Whey Hidrolisado 800g","prot_dose":"26g","custo_g_prot":"R$ 0,21","nota":5,"preco":"R$ 179,00","url":"https://www.amazon.com.br/dp/EXEMPLO?tag=SEUTAG-20","ultima_verificacao":"2026-05-27"},
+  {"cat":"whey","marca":"Vitafor","nome":"Whey Vegetal 900g","prot_dose":"22g","custo_g_prot":"R$ 0,24","nota":4,"preco":"R$ 189,00","url":"https://www.amazon.com.br/dp/EXEMPLO?tag=SEUTAG-20","ultima_verificacao":"2026-05-27"},
+
+  {"cat":"creatina","marca":"Max Titanium","nome":"Creatina Creapure® 300g","prot_dose":"—","custo_g_prot":"R$ 1,00/3g","nota":5,"preco":"R$ 89,00","url":"https://www.maxtitanium.com.br/?ref=SEUCODIGO","ultima_verificacao":"2026-05-27"},
+  {"cat":"creatina","marca":"Growth","nome":"Creatina Monohidratada 250g","prot_dose":"—","custo_g_prot":"R$ 0,72/3g","nota":5,"preco":"R$ 59,90","url":"https://www.gsuplementos.com.br/?ref=SEUCODIGO","ultima_verificacao":"2026-05-27"},
+  {"cat":"creatina","marca":"Growth","nome":"Creatina 500g (formato família)","prot_dose":"—","custo_g_prot":"R$ 0,55/3g","nota":5,"preco":"R$ 89,90","url":"https://www.gsuplementos.com.br/?ref=SEUCODIGO","ultima_verificacao":"2026-05-27"},
+  {"cat":"creatina","marca":"Black Skull","nome":"Creatine 300g","prot_dose":"—","custo_g_prot":"R$ 0,80/3g","nota":4,"preco":"R$ 79,90","url":"https://www.blackskullusa.com.br/?ref=SEUCODIGO","ultima_verificacao":"2026-05-27"},
+
+  {"cat":"amino","marca":"Growth","nome":"BCAA 2400mg 60 caps","prot_dose":"—","custo_g_prot":"R$ 0,42/dose","nota":4,"preco":"R$ 24,90","url":"https://www.gsuplementos.com.br/?ref=SEUCODIGO","ultima_verificacao":"2026-05-27"},
+  {"cat":"amino","marca":"Max Titanium","nome":"BCAA em pó 200g","prot_dose":"—","custo_g_prot":"R$ 1,50/dose","nota":4,"preco":"R$ 89,90","url":"https://www.maxtitanium.com.br/?ref=SEUCODIGO","ultima_verificacao":"2026-05-27"},
+  {"cat":"amino","marca":"Growth","nome":"Glutamina Pura 300g","prot_dose":"—","custo_g_prot":"R$ 0,80/5g","nota":5,"preco":"R$ 49,90","url":"https://www.gsuplementos.com.br/?ref=SEUCODIGO","ultima_verificacao":"2026-05-27"},
+  {"cat":"amino","marca":"Probiótica","nome":"Glutamina 250g","prot_dose":"—","custo_g_prot":"R$ 1,00/5g","nota":4,"preco":"R$ 59,90","url":"https://www.amazon.com.br/dp/EXEMPLO?tag=SEUTAG-20","ultima_verificacao":"2026-05-27"},
+
+  {"cat":"termo","marca":"Nutrex","nome":"Lipo 6 Black 60 caps","prot_dose":"—","custo_g_prot":"R$ 1,33/dose","nota":4,"preco":"R$ 79,90","url":"https://www.amazon.com.br/dp/EXEMPLO?tag=SEUTAG-20","ultima_verificacao":"2026-05-27"},
+  {"cat":"termo","marca":"Soldiers","nome":"Soldiers Lipo Cut 60 caps","prot_dose":"—","custo_g_prot":"R$ 0,98/dose","nota":4,"preco":"R$ 59,00","url":"https://www.amazon.com.br/dp/EXEMPLO?tag=SEUTAG-20","ultima_verificacao":"2026-05-27"},
+  {"cat":"termo","marca":"Integralmédica","nome":"Thermo Vortex 60 caps","prot_dose":"—","custo_g_prot":"R$ 1,15/dose","nota":4,"preco":"R$ 69,00","url":"#","ultima_verificacao":"2026-05-27"},
+
+  {"cat":"pre","marca":"Max Titanium","nome":"Horus Pré-treino 300g","prot_dose":"—","custo_g_prot":"R$ 3,15/dose","nota":5,"preco":"R$ 99,90","url":"https://www.maxtitanium.com.br/?ref=SEUCODIGO","ultima_verificacao":"2026-05-27"},
+  {"cat":"pre","marca":"Cellucor","nome":"Pré-treino C4 200g","prot_dose":"—","custo_g_prot":"R$ 2,80/dose","nota":4,"preco":"R$ 89,00","url":"https://www.amazon.com.br/dp/EXEMPLO?tag=SEUTAG-20","ultima_verificacao":"2026-05-27"},
+  {"cat":"pre","marca":"Dose Mais","nome":"Haze Pré-treino 300g","prot_dose":"—","custo_g_prot":"R$ 2,10/dose","nota":5,"preco":"R$ 119,00","url":"https://www.amazon.com.br/dp/EXEMPLO?tag=SEUTAG-20","ultima_verificacao":"2026-05-27"},
+  {"cat":"pre","marca":"Growth","nome":"Pré sem estimulante Stim Free 300g","prot_dose":"—","custo_g_prot":"R$ 1,80/dose","nota":4,"preco":"R$ 79,90","url":"https://www.gsuplementos.com.br/?ref=SEUCODIGO","ultima_verificacao":"2026-05-27"},
+  {"cat":"pre","marca":"Growth","nome":"Cafeína Anidra 200mg 60 caps","prot_dose":"—","custo_g_prot":"R$ 0,67/dose","nota":5,"preco":"R$ 39,90","url":"https://www.gsuplementos.com.br/?ref=SEUCODIGO","ultima_verificacao":"2026-05-27"},
+
+  {"cat":"saude","marca":"Growth","nome":"Multivitamínico 60 caps","prot_dose":"—","custo_g_prot":"R$ 0,50/dose","nota":5,"preco":"R$ 29,90","url":"https://www.gsuplementos.com.br/?ref=SEUCODIGO","ultima_verificacao":"2026-05-27"},
+  {"cat":"saude","marca":"Optimum Nutrition","nome":"Daily Vitamins (multi premium)","prot_dose":"—","custo_g_prot":"R$ 1,33/dose","nota":5,"preco":"R$ 119,00","url":"https://www.amazon.com.br/dp/EXEMPLO?tag=SEUTAG-20","ultima_verificacao":"2026-05-27"},
+  {"cat":"saude","marca":"Probiótica","nome":"ZMA 90 caps","prot_dose":"—","custo_g_prot":"R$ 0,77/dose","nota":4,"preco":"R$ 69,00","url":"https://www.amazon.com.br/dp/EXEMPLO?tag=SEUTAG-20","ultima_verificacao":"2026-05-27"},
+  {"cat":"saude","marca":"Vitafor","nome":"Ômega 3 1000mg 120 caps","prot_dose":"—","custo_g_prot":"R$ 0,49/dose","nota":5,"preco":"R$ 58,90","url":"https://www.amazon.com.br/dp/EXEMPLO?tag=SEUTAG-20","ultima_verificacao":"2026-05-27"},
+
+  {"cat":"outros","marca":"Amazon Basics","nome":"Shaker Inox 750ml","prot_dose":"—","custo_g_prot":"—","nota":4,"preco":"R$ 79,90","url":"https://www.amazon.com.br/dp/EXEMPLO?tag=SEUTAG-20","ultima_verificacao":"2026-05-27"},
+  {"cat":"outros","marca":"Bold","nome":"Barra de Proteína 60g (cx 12)","prot_dose":"20g","custo_g_prot":"R$ 6,90/un","nota":4,"preco":"R$ 82,90","url":"https://www.amazon.com.br/dp/EXEMPLO?tag=SEUTAG-20","ultima_verificacao":"2026-05-27"},
+  {"cat":"outros","marca":"Dr. Peanut","nome":"Pasta de Amendoim 1kg (sem açúcar)","prot_dose":"7g/colher","custo_g_prot":"—","nota":5,"preco":"R$ 39,90","url":"https://www.amazon.com.br/dp/EXEMPLO?tag=SEUTAG-20","ultima_verificacao":"2026-05-27"},
+  {"cat":"outros","marca":"Growth","nome":"Beta-alanina 200g","prot_dose":"—","custo_g_prot":"R$ 1,00/dose","nota":5,"preco":"R$ 79,90","url":"https://www.gsuplementos.com.br/?ref=SEUCODIGO","ultima_verificacao":"2026-05-27"}
 ]
