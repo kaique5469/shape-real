@@ -311,6 +311,43 @@ def regenerar_homepage(posts: list[dict]) -> None:
     idx = ROOT / "index.html"
     html = idx.read_text(encoding="utf-8")
 
+    # --- HERO EDIÇÃO: data + número total de artigos ---
+    edicao_html = (
+        f'<span class="pill"><span class="live"></span> '
+        f'Edição {_fmt_data(TODAY.isoformat())} · Artigo nº {len(posts)}'
+        f'</span>'
+    )
+    pattern_edicao = re.compile(r"<!--HERO_EDICAO_START-->.*?<!--HERO_EDICAO_END-->", re.DOTALL)
+    novo_edicao = f"<!--HERO_EDICAO_START-->\n      {edicao_html}\n      <!--HERO_EDICAO_END-->"
+    if pattern_edicao.search(html):
+        html = pattern_edicao.sub(novo_edicao, html)
+        print(f"     -> badge de edição atualizado (nº {len(posts)})")
+
+    # --- HERO DESTAQUE: artigo mais recente ---
+    if posts:
+        p = posts[0]
+        autor_nome, autor_papel = _autor_por_categoria(p.get("categoria", ""))
+        publicado = _publicado_label(p["data"])
+        destaque_card = (
+            f'<div class="label">★ Destaque mais recente '
+            f'<span class="updated-tag">{publicado}</span></div>\n'
+            f'      <h3><a href="{p["url"]}" style="color:inherit">{p["titulo"]}</a></h3>\n'
+            f'      <div class="meta">por {autor_nome}, {autor_papel} · {p["tempo_leitura"]} min de leitura</div>\n'
+            f'      <p style="color:var(--muted);font-size:14.5px;margin-bottom:18px">{p["resumo"]}</p>\n'
+            f'      <a href="{p["url"]}" class="read">Ler análise completa →</a>'
+        )
+        pattern_dest = re.compile(r"<!--HERO_DESTAQUE_START-->.*?<!--HERO_DESTAQUE_END-->", re.DOTALL)
+        novo_dest = f"<!--HERO_DESTAQUE_START-->\n      {destaque_card}\n      <!--HERO_DESTAQUE_END-->"
+        if pattern_dest.search(html):
+            html = pattern_dest.sub(novo_dest, html)
+            print(f"     -> destaque do hero atualizado: {p['titulo'][:60]}")
+
+    # --- HERO TOTAL: contador de artigos publicados (trust strip) ---
+    pattern_total = re.compile(r"<!--HERO_TOTAL_START-->.*?<!--HERO_TOTAL_END-->", re.DOTALL)
+    novo_total = f"<!--HERO_TOTAL_START-->{len(posts)}<!--HERO_TOTAL_END-->"
+    if pattern_total.search(html):
+        html = pattern_total.sub(novo_total, html)
+
     # --- DESTAQUE: 2 mais recentes (cards grandes) ---
     destaque = posts[:2]
     featured_html = "\n".join([
@@ -372,10 +409,34 @@ def _fmt_data_extenso(iso: str) -> str:
 
 
 def _fmt_data(iso: str) -> str:
-    """Mantido para compatibilidade — formato curto."""
+    """Formato curto: 28 mai 2026."""
     meses = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
     d = datetime.date.fromisoformat(iso)
     return f"{d.day} {meses[d.month-1]} {d.year}"
+
+
+def _autor_por_categoria(cat: str) -> tuple:
+    """Mapa autor → (nome, papel) para o hero card."""
+    mapa = {
+        "guia":    ("Dra. Marina Costa", "nutricionista esportiva"),
+        "estudo":  ("Dra. Marina Costa", "nutricionista esportiva"),
+        "review":  ("Rafael Andrade",    "editor-chefe"),
+        "noticia": ("Rafael Andrade",    "editor-chefe"),
+    }
+    return mapa.get(cat.lower(), ("Equipe Shape Real", "equipe editorial"))
+
+
+def _publicado_label(iso: str) -> str:
+    """Mostra 'Publicado hoje', 'há X dias' ou a data curta."""
+    d = datetime.date.fromisoformat(iso)
+    delta = (datetime.date.today() - d).days
+    if delta == 0:
+        return "● Publicado hoje"
+    if delta == 1:
+        return "● Publicado ontem"
+    if delta < 7:
+        return f"● Publicado há {delta} dias"
+    return f"● {_fmt_data(iso)}"
 
 
 # ============================================================
