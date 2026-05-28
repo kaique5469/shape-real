@@ -138,35 +138,35 @@
   .cat h4{font-size:16px}
   .cat span{color:var(--muted);font-size:12.5px}
 
-  /* FEATURED — destaque (cards grandes em 2 colunas) */
-  .featured{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+  /* FEATURED — destaque (compactos, 2 colunas) */
+  .featured{display:grid;grid-template-columns:1fr 1fr;gap:18px}
   .feat{background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;transition:transform .2s,border-color .2s;position:relative}
-  .feat:hover{transform:translateY(-4px);border-color:var(--accent)}
-  .feat .thumb{aspect-ratio:16/9;background:linear-gradient(135deg,#1d1d1d,#0e0e0e);position:relative;overflow:hidden}
-  .feat .thumb::after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 30% 30%, rgba(196,242,74,.25), transparent 60%)}
-  .feat .thumb .emoji{position:absolute;inset:0;display:grid;place-items:center;font-size:88px;opacity:.9}
-  .feat .new-badge{position:absolute;top:14px;left:14px;background:var(--accent);color:#0a0a0a;padding:5px 12px;border-radius:99px;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;z-index:2}
-  .feat .body{padding:26px 24px 24px;display:flex;flex-direction:column;flex:1}
-  .feat h3{font-size:24px;margin-bottom:12px;line-height:1.25}
-  .feat .lead{color:var(--muted);font-size:15.5px;margin-bottom:18px;line-height:1.55}
-  .feat .meta-row{display:flex;align-items:center;gap:14px;color:var(--text);font-size:13.5px;margin-top:auto;padding-top:16px;border-top:1px solid var(--line)}
+  .feat:hover{transform:translateY(-3px);border-color:var(--accent)}
+  .feat .thumb{aspect-ratio:16/8;background:linear-gradient(135deg,#1d1d1d,#0e0e0e);position:relative;overflow:hidden}
+  .feat .thumb::after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 30% 30%, rgba(196,242,74,.22), transparent 60%)}
+  .feat .thumb .emoji{position:absolute;inset:0;display:grid;place-items:center;font-size:60px;opacity:.9}
+  .feat .new-badge{position:absolute;top:12px;left:12px;background:var(--accent);color:#0a0a0a;padding:4px 10px;border-radius:99px;font-size:10.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;z-index:2}
+  .feat .body{padding:18px 18px 16px;display:flex;flex-direction:column;flex:1}
+  .feat h3{font-size:18px;margin-bottom:8px;line-height:1.3}
+  .feat .lead{color:var(--muted);font-size:13.5px;margin-bottom:14px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .feat .meta-row{display:flex;align-items:center;gap:10px;color:var(--text);font-size:12.5px;margin-top:auto;padding-top:12px;border-top:1px solid var(--line)}
   .feat .meta-row .date{color:var(--accent);font-weight:600}
   .feat .meta-row .dot{color:var(--dim)}
   .feat .meta-row .read{color:var(--muted)}
-  .feat .meta-row .arrow{margin-left:auto;color:var(--accent);font-weight:600}
+  .feat .meta-row .arrow{margin-left:auto;color:var(--accent);font-weight:600;font-size:12.5px}
 
-  /* GRID ARTIGOS */
-  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+  /* GRID ARTIGOS — 4 colunas no desktop */
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
   .card{background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;transition:transform .2s,border-color .2s;display:flex;flex-direction:column}
-  .card:hover{transform:translateY(-4px);border-color:#3a3a3a}
+  .card:hover{transform:translateY(-3px);border-color:#3a3a3a}
   .card .thumb{aspect-ratio:16/10;background:linear-gradient(135deg,#1d1d1d,#0e0e0e);position:relative;overflow:hidden}
   .card .thumb::after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 30% 30%, rgba(196,242,74,.18), transparent 60%)}
-  .card .thumb .emoji{position:absolute;inset:0;display:grid;place-items:center;font-size:64px;opacity:.85}
-  .card .body{padding:20px;display:flex;flex-direction:column;flex:1}
-  .tag{display:inline-block;background:rgba(196,242,74,.12);color:var(--accent);font-size:11.5px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;padding:4px 10px;border-radius:999px;margin-bottom:12px;align-self:flex-start}
-  .card h3{font-size:18.5px;margin-bottom:10px;line-height:1.3}
-  .card p{color:var(--muted);font-size:14.5px;margin-bottom:16px;flex:1}
-  .card .meta{color:#bfbfbf;font-size:13px;display:flex;gap:10px;align-items:center;padding-top:12px;border-top:1px solid var(--line);font-weight:500}
+  .card .thumb .emoji{position:absolute;inset:0;display:grid;place-items:center;font-size:48px;opacity:.85}
+  .card .body{padding:14px 14px 14px;display:flex;flex-direction:column;flex:1}
+  .tag{display:inline-block;background:rgba(196,242,74,.12);color:var(--accent);font-size:10.5px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;padding:3px 8px;border-radius:999px;margin-bottom:10px;align-self:flex-start}
+  .card h3{font-size:14.5px;margin-bottom:8px;line-height:1.3}
+  .card p{color:var(--muted);font-size:12.5px;margin-bottom:12px;flex:1;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .card .meta{color:#bfbfbf;font-size:11.5px;display:flex;gap:8px;align-items:center;padding-top:10px;border-top:1px solid var(--line);font-weight:500;flex-wrap:wrap}
   .card .meta .date{color:var(--accent);font-weight:600}
 
   /* COMPARADOR */
@@ -253,8 +253,9 @@
     .hero-grid{grid-template-columns:1fr;gap:32px}
     .cats{grid-template-columns:repeat(2,1fr)}
     .featured{grid-template-columns:1fr}
-    .feat h3{font-size:21px}
-    .grid{grid-template-columns:repeat(2,1fr)}
+    .feat h3{font-size:19px}
+    .feat .lead{-webkit-line-clamp:3}
+    .grid{grid-template-columns:repeat(3,1fr)}
     .supps{grid-template-columns:1fr}
     .calc-body{grid-template-columns:1fr}
     .calc-form{border-right:0;border-bottom:1px solid var(--line)}
@@ -267,7 +268,12 @@
     .comp-row .k{font-size:11px;color:var(--muted);text-transform:uppercase;display:block;margin-bottom:2px}
   }
   @media(max-width:560px){
-    .grid{grid-template-columns:1fr}
+    .grid{grid-template-columns:repeat(2,1fr);gap:12px}
+    .card .body{padding:12px}
+    .card h3{font-size:13.5px}
+    .card p{font-size:12px;-webkit-line-clamp:2}
+    .card .meta{font-size:11px;gap:6px}
+    .card .thumb .emoji{font-size:38px}
     .cats{grid-template-columns:1fr 1fr}
     .section{padding:56px 0}
     .news{padding:32px 22px}
@@ -324,13 +330,130 @@
   </div>
 </section>
 
+<!-- DESTAQUE -->
+<section class="section" id="artigos">
+  <div class="container">
+    <div class="section-head">
+      <div>
+        <h2>★ Em destaque</h2>
+        <p class="sub">Os 2 conteúdos mais recentes do blog, atualizado todo dia útil.</p>
+      </div>
+    </div>
+    <div class="featured">
+      <!--FEATURED_START-->
+      <article class="feat">
+        <span class="new-badge">● Novo</span>
+        <a href="estudo-cafeina.html"><div class="thumb"><div class="emoji">☕</div></div></a>
+        <div class="body">
+          <span class="tag">Estudo</span>
+          <h3><a href="estudo-cafeina.html">Cafeína pré-treino: o que a ciência diz em 2026</a></h3>
+          <p class="lead">Meta-análise com 21 ensaios clínicos mostra que 3-6 mg/kg de cafeína 45 min antes do treino aumenta a oxidação de gordura em até 11%.</p>
+          <div class="meta-row">
+            <span class="date">27 de maio de 2026</span>
+            <span class="dot">·</span>
+            <span class="read">8 min de leitura</span>
+            <span class="arrow">Ler →</span>
+          </div>
+        </div>
+      </article>
+      <article class="feat">
+        <a href="review-whey.html"><div class="thumb"><div class="emoji">🥛</div></div></a>
+        <div class="body">
+          <span class="tag">Review</span>
+          <h3><a href="review-whey.html">Whey Isolado: 5 marcas testadas (Growth, Max, Integral)</a></h3>
+          <p class="lead">Comparamos pureza, sabor, custo por grama de proteína e mistura. Veja qual venceu e o ranking honesto de maio de 2026.</p>
+          <div class="meta-row">
+            <span class="date">24 de maio de 2026</span>
+            <span class="dot">·</span>
+            <span class="read">12 min de leitura</span>
+            <span class="arrow">Ler →</span>
+          </div>
+        </div>
+      </article>
+      <!--FEATURED_END-->
+    </div>
+  </div>
+</section>
+
+<!-- MAIS ARTIGOS -->
+<section class="section">
+  <div class="container">
+    <div class="section-head">
+      <div>
+        <h2>Mais artigos</h2>
+        <p class="sub">Arquivo completo, ordenado do mais recente para o mais antigo.</p>
+      </div>
+      <a href="#" class="link">Ver todos →</a>
+    </div>
+    <div class="grid">
+      <!--POSTS_START-->
+      <article class="card">
+        <a href="noticia-anvisa.html"><div class="thumb"><div class="emoji">📋</div></div></a>
+        <div class="body">
+          <span class="tag">Notícia</span>
+          <h3><a href="noticia-anvisa.html">Anvisa atualiza regra para termogênicos: o que muda</a></h3>
+          <p>Resolução de maio limita doses de cafeína e exige rotulagem extra.</p>
+          <div class="meta"><span class="date">22 de maio de 2026</span> · <span>5 min</span></div>
+        </div>
+      </article>
+      <article class="card">
+        <a href="guia-deficit.html"><div class="thumb"><div class="emoji">🔥</div></div></a>
+        <div class="body">
+          <span class="tag">Guia</span>
+          <h3><a href="guia-deficit.html">Déficit calórico inteligente: passo-a-passo completo</a></h3>
+          <p>Como calcular seu TMB, definir o déficit certo e não perder músculo.</p>
+          <div class="meta"><span class="date">20 de maio de 2026</span> · <span>15 min</span></div>
+        </div>
+      </article>
+      <article class="card">
+        <a href="#"><div class="thumb"><div class="emoji">💪</div></div></a>
+        <div class="body">
+          <span class="tag">Treino</span>
+          <h3><a href="#">Treino ABC de 45 min para definição</a></h3>
+          <p>Frequência 6×/semana, volume moderado, cardio HIIT 2×. Planilhão grátis.</p>
+          <div class="meta"><span class="date">18 de maio de 2026</span> · <span>10 min</span></div>
+        </div>
+      </article>
+      <article class="card">
+        <a href="#"><div class="thumb"><div class="emoji">🍳</div></div></a>
+        <div class="body">
+          <span class="tag">Receita</span>
+          <h3><a href="#">Panqueca proteica de banana: 320 kcal, 32g proteína</a></h3>
+          <p>4 ingredientes, 8 minutos. Ideal pré ou pós-treino.</p>
+          <div class="meta"><span class="date">15 de maio de 2026</span> · <span>4 min</span></div>
+        </div>
+      </article>
+      <!--POSTS_END-->
+    </div>
+  </div>
+</section>
+
+<!-- CATEGORIAS -->
+<section class="section">
+  <div class="container">
+    <div class="section-head">
+      <div>
+        <h2>Explore por categoria</h2>
+        <p class="sub">Cinco frentes que cobrem 90% das dúvidas de quem busca definição.</p>
+      </div>
+    </div>
+    <div class="cats">
+      <a href="#artigos" class="cat"><div class="ico">🧪</div><h4>Estudos</h4><span>Pesquisas traduzidas</span></a>
+      <a href="#comparativo" class="cat"><div class="ico">⚖️</div><h4>Comparativo</h4><span>Suplementos lado-a-lado</span></a>
+      <a href="#calculadora" class="cat"><div class="ico">🧮</div><h4>Calculadora</h4><span>TMB, IMC, macros</span></a>
+      <a href="#suplementos" class="cat"><div class="ico">💊</div><h4>Reviews</h4><span>Análises honestas</span></a>
+      <a href="#artigos" class="cat"><div class="ico">📰</div><h4>Notícias</h4><span>Fitness atualizado</span></a>
+    </div>
+  </div>
+</section>
+
 <!-- CALCULADORA -->
 <section class="section" id="calculadora">
   <div class="container">
     <div class="section-head">
       <div>
-        <h2>Calculadora fitness completa</h2>
-        <p class="sub">7 cálculos baseados em fórmulas validadas cientificamente. Sem cadastro, sem enganação.</p>
+        <h2>🧮 Calculadora fitness completa</h2>
+        <p class="sub">5 cálculos baseados em fórmulas validadas. Use como ferramenta de apoio aos artigos acima.</p>
       </div>
     </div>
 
@@ -455,123 +578,6 @@
           <div>Preencha os dados ao lado<br>e clique em calcular.</div>
         </div>
       </div>
-    </div>
-  </div>
-</section>
-
-<!-- CATEGORIAS -->
-<section class="section">
-  <div class="container">
-    <div class="section-head">
-      <div>
-        <h2>Por onde começar</h2>
-        <p class="sub">Cinco frentes que cobrem 90% das dúvidas de quem busca definição.</p>
-      </div>
-    </div>
-    <div class="cats">
-      <a href="#estudos" class="cat"><div class="ico">🧪</div><h4>Estudos</h4><span>Pesquisas traduzidas</span></a>
-      <a href="#comparativo" class="cat"><div class="ico">⚖️</div><h4>Comparativo</h4><span>Suplementos lado-a-lado</span></a>
-      <a href="#calculadora" class="cat"><div class="ico">🧮</div><h4>Calculadora</h4><span>TMB, IMC, macros</span></a>
-      <a href="#suplementos" class="cat"><div class="ico">💊</div><h4>Reviews</h4><span>Análises honestas</span></a>
-      <a href="#noticias" class="cat"><div class="ico">📰</div><h4>Notícias</h4><span>Fitness atualizado</span></a>
-    </div>
-  </div>
-</section>
-
-<!-- DESTAQUE -->
-<section class="section" id="artigos">
-  <div class="container">
-    <div class="section-head">
-      <div>
-        <h2>★ Em destaque</h2>
-        <p class="sub">Os 2 conteúdos mais recentes, atualizado todo dia útil.</p>
-      </div>
-    </div>
-    <div class="featured">
-      <!--FEATURED_START-->
-      <article class="feat">
-        <span class="new-badge">● Novo</span>
-        <a href="estudo-cafeina.html"><div class="thumb"><div class="emoji">☕</div></div></a>
-        <div class="body">
-          <span class="tag">Estudo</span>
-          <h3><a href="estudo-cafeina.html">Cafeína pré-treino: o que a ciência diz em 2026</a></h3>
-          <p class="lead">Meta-análise com 21 ensaios clínicos mostra que 3-6 mg/kg de cafeína 45 min antes do treino aumenta a oxidação de gordura em até 11%.</p>
-          <div class="meta-row">
-            <span class="date">27 de maio de 2026</span>
-            <span class="dot">·</span>
-            <span class="read">8 min de leitura</span>
-            <span class="arrow">Ler →</span>
-          </div>
-        </div>
-      </article>
-      <article class="feat">
-        <a href="review-whey.html"><div class="thumb"><div class="emoji">🥛</div></div></a>
-        <div class="body">
-          <span class="tag">Review</span>
-          <h3><a href="review-whey.html">Whey Isolado: 5 marcas testadas (Growth, Max, Integral)</a></h3>
-          <p class="lead">Comparamos pureza, sabor, custo por grama de proteína e mistura. Veja qual venceu e o ranking honesto de maio de 2026.</p>
-          <div class="meta-row">
-            <span class="date">24 de maio de 2026</span>
-            <span class="dot">·</span>
-            <span class="read">12 min de leitura</span>
-            <span class="arrow">Ler →</span>
-          </div>
-        </div>
-      </article>
-      <!--FEATURED_END-->
-    </div>
-  </div>
-</section>
-
-<!-- MAIS ARTIGOS -->
-<section class="section">
-  <div class="container">
-    <div class="section-head">
-      <div>
-        <h2>Mais artigos</h2>
-        <p class="sub">Arquivo completo, ordenado do mais recente para o mais antigo.</p>
-      </div>
-      <a href="#" class="link">Ver todos →</a>
-    </div>
-    <div class="grid">
-      <!--POSTS_START-->
-      <article class="card">
-        <a href="noticia-anvisa.html"><div class="thumb"><div class="emoji">📋</div></div></a>
-        <div class="body">
-          <span class="tag">Notícia</span>
-          <h3><a href="noticia-anvisa.html">Anvisa atualiza regra para termogênicos: o que muda</a></h3>
-          <p>Resolução de maio limita doses de cafeína e exige rotulagem extra.</p>
-          <div class="meta"><span class="date">22 de maio de 2026</span> · <span>5 min</span></div>
-        </div>
-      </article>
-      <article class="card">
-        <a href="guia-deficit.html"><div class="thumb"><div class="emoji">🔥</div></div></a>
-        <div class="body">
-          <span class="tag">Guia</span>
-          <h3><a href="guia-deficit.html">Déficit calórico inteligente: passo-a-passo completo</a></h3>
-          <p>Como calcular seu TMB, definir o déficit certo e não perder músculo.</p>
-          <div class="meta"><span class="date">20 de maio de 2026</span> · <span>15 min</span></div>
-        </div>
-      </article>
-      <article class="card">
-        <a href="#"><div class="thumb"><div class="emoji">💪</div></div></a>
-        <div class="body">
-          <span class="tag">Treino</span>
-          <h3><a href="#">Treino ABC de 45 min para definição</a></h3>
-          <p>Frequência 6×/semana, volume moderado, cardio HIIT 2×. Planilhão grátis.</p>
-          <div class="meta"><span class="date">18 de maio de 2026</span> · <span>10 min</span></div>
-        </div>
-      </article>
-      <article class="card">
-        <a href="#"><div class="thumb"><div class="emoji">🍳</div></div></a>
-        <div class="body">
-          <span class="tag">Receita</span>
-          <h3><a href="#">Panqueca proteica de banana: 320 kcal, 32g proteína</a></h3>
-          <p>4 ingredientes, 8 minutos. Ideal pré ou pós-treino.</p>
-          <div class="meta"><span class="date">15 de maio de 2026</span> · <span>4 min</span></div>
-        </div>
-      </article>
-      <!--POSTS_END-->
     </div>
   </div>
 </section>
