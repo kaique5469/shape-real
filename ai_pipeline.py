@@ -58,15 +58,9 @@ TODAY = datetime.date.today()
 # ============================================================
 # 1. GERAR ARTIGO
 # ============================================================
-def gerar_artigo() -> dict:
-    weekday = TODAY.weekday()
-    if weekday not in EDITORIAL:
-        print(f"[skip] {TODAY} é {['seg','ter','qua','qui','sex','sáb','dom'][weekday]} — pipeline não roda")
-        raise SystemExit(0)
-
-    tipo, descricao = EDITORIAL[weekday]
-
-    prompt = f"""Você é redator do blog brasileiro "Shape Real" (nicho: emagrecimento e definição muscular).
+def _prompt_padrao(tipo: str, descricao: str) -> str:
+    """Prompt usado para guia, review e notícia (1.200-1.500 palavras, prático)."""
+    return f"""Você é redator do blog brasileiro "Shape Real" (nicho: emagrecimento e definição muscular).
 
 Escreva 1 artigo do tipo "{tipo}".
 Tema sugerido: {descricao}
@@ -103,9 +97,96 @@ PARTE 2 — HTML do corpo do artigo (sem cercas, sem aspas escapadas, escreva HT
 <h2>Segundo subtítulo</h2>
 <p>...</p>
 ..."""
+
+
+def _prompt_estudo(descricao: str) -> str:
+    """Prompt aprofundado para artigos do tipo 'estudo' (~2.500-3.500 palavras, estrutura científica)."""
+    return f"""Você é editor científico do blog brasileiro "Shape Real" (nicho: emagrecimento, definição muscular, nutrição esportiva).
+
+Sua tarefa: escrever 1 artigo APROFUNDADO traduzindo e contextualizando um estudo científico recente para o público brasileiro.
+
+Tema sugerido: {descricao}
+
+REGRAS RÍGIDAS (siga TODAS):
+- 2.500 a 3.500 palavras (artigo pilar de SEO)
+- Português brasileiro técnico mas acessível — explique jargões na primeira aparição
+- ZERO opinião sem evidência. Tudo precisa ter base no estudo discutido OU em literatura prévia
+- NUNCA invente estudos, autores ou números. Se citar pesquisa de apoio que não tem certeza, marque [VERIFICAR FONTE: descrição do que precisa verificar]
+- Sempre cite o estudo principal com: autor principal, ano, jornal, e (se souber) DOI
+- Use unidades do SI e exemplos com valores brasileiros (kg, kcal, R$)
+- Linguagem na 2ª pessoa: você, seu, sua
+
+ESTRUTURA OBRIGATÓRIA (cada subtítulo H2 vira uma seção):
+
+1. <h2>O que esse estudo descobriu</h2>
+   — 1 parágrafo resumindo o achado principal em linguagem simples (TL;DR)
+
+2. <h2>Por que isso importa para você</h2>
+   — Conecta com a vida prática de quem treina/faz dieta
+
+3. <h2>Como o estudo foi feito</h2>
+   — Metodologia em detalhe: n amostral, perfil dos participantes (idade, sexo, nível de treino), duração, protocolo, variáveis medidas, grupo controle, randomização. Use bullet points ou tabela quando ajudar
+
+4. <h2>Os resultados em números</h2>
+   — Aqui vai 1 TABELA HTML obrigatória com os principais desfechos (média ± desvio padrão, valor de p quando relevante, tamanho de efeito)
+   — Comente cada linha da tabela em parágrafo separado
+
+5. <h2>Como isso se compara com o que já sabíamos</h2>
+   — Contextualiza com 2-3 estudos anteriores da mesma área (se você não souber com certeza, marque [VERIFICAR FONTE])
+
+6. <h2>Limitações que você precisa saber</h2>
+   — Tamanho amostral pequeno? Curto prazo? Conflitos de interesse? Sempre tem limitações — liste honestamente
+
+7. <h2>O que isso muda na sua rotina (prática)</h2>
+   — Lista numerada de aplicações concretas: dose, timing, combinações, em quem funciona melhor, quando NÃO usar
+
+8. <h2>Referência</h2>
+   — Citação no formato: Sobrenome A. et al. (ANO). Título do estudo. Jornal, vol(ed), pp. DOI.
+
+FORMATO DA RESPOSTA (siga RIGOROSAMENTE — duas partes separadas por ===HTML===):
+
+PARTE 1 — JSON válido com metadata (sem aspas escapadas, sem ```):
+{{
+  "titulo": "Título SEO técnico mas atrativo (até 65 caracteres)",
+  "slug": "url-com-hifens-sem-acento",
+  "meta_description": "Resumo do achado central + número-chave em 150-160 caracteres",
+  "categoria": "estudo",
+  "tags": ["nome-do-suplemento-ou-tema", "ciencia", "estudos"],
+  "emoji_thumb": "🔬",
+  "tempo_leitura_min": 18,
+  "lead": "1-2 frases: qual estudo, quem publicou, qual a descoberta principal"
+}}
+
+===HTML===
+
+PARTE 2 — HTML do corpo do artigo (segue a estrutura de 8 seções acima, sem cercas, sem aspas escapadas):
+<h2>O que esse estudo descobriu</h2>
+<p>...</p>
+<h2>Por que isso importa para você</h2>
+<p>...</p>
+..."""
+
+
+def gerar_artigo() -> dict:
+    weekday = TODAY.weekday()
+    if weekday not in EDITORIAL:
+        print(f"[skip] {TODAY} é {['seg','ter','qua','qui','sex','sáb','dom'][weekday]} — pipeline não roda")
+        raise SystemExit(0)
+
+    tipo, descricao = EDITORIAL[weekday]
+
+    # Prompts diferenciados por tipo
+    if tipo == "estudo":
+        prompt = _prompt_estudo(descricao)
+        max_tokens = 16000  # artigo maior precisa de mais tokens
+        print(f"     -> usando prompt APROFUNDADO (estudo científico)")
+    else:
+        prompt = _prompt_padrao(tipo, descricao)
+        max_tokens = 8000
+
     msg = client.messages.create(
         model=MODEL,
-        max_tokens=8000,
+        max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
     )
     text = msg.content[0].text.strip()
