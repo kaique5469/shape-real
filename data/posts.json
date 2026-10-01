@@ -1,5 +1,15 @@
 [
   {
+    "titulo": "Anvisa proíbe fat burners com DMAA: o que muda para você",
+    "slug": "anvisa-proibe-fat-burners-dmaa-o-que-muda",
+    "url": "posts/2026-10-01-anvisa-proibe-fat-burners-dmaa-o-que-muda.html",
+    "categoria": "noticia",
+    "emoji": "🔥",
+    "resumo": "A Anvisa baniu termogênicos com DMAA do mercado brasileiro. Entenda o que são, os riscos e como substituir esses produtos com segurança.",
+    "tempo_leitura": 6,
+    "data": "2026-10-01"
+  },
+  {
     "titulo": "Creatina: Review Honesto Para Quem Quer Resultado",
     "slug": "review-honesto-creatina-funciona",
     "url": "posts/2026-09-30-review-honesto-creatina-funciona.html",
@@ -588,15 +598,5 @@
     "resumo": "Pureza, sabor, custo por grama de proteína. O resultado surpreendeu.",
     "tempo_leitura": 12,
     "data": "2026-05-24"
-  },
-  {
-    "titulo": "Anvisa atualiza regra para termogênicos: o que muda",
-    "slug": "anvisa-termogenicos",
-    "url": "noticia-anvisa.html",
-    "categoria": "noticia",
-    "emoji": "📋",
-    "resumo": "Resolução de maio limita doses de cafeína e exige rotulagem extra.",
-    "tempo_leitura": 5,
-    "data": "2026-05-22"
   }
 ]
