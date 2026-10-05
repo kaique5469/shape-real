@@ -1,5 +1,15 @@
 [
   {
+    "titulo": "Déficit Calórico para Definição: Guia Completo de Cutting",
+    "slug": "deficit-calorico-guia-completo-cutting-definicao",
+    "url": "posts/2026-10-05-deficit-calorico-guia-completo-cutting-definicao.html",
+    "categoria": "guia",
+    "emoji": "🔥",
+    "resumo": "Aprenda como montar seu déficit calórico, treinar para definição e aplicar o cutting sem perder massa muscular. Guia prático e direto ao ponto.",
+    "tempo_leitura": 10,
+    "data": "2026-10-05"
+  },
+  {
     "titulo": "Creatina: Review Honesto Para Quem Quer Resultado",
     "slug": "review-honesto-creatina-funciona",
     "url": "posts/2026-09-30-review-honesto-creatina-funciona.html",
@@ -588,15 +598,5 @@
     "resumo": "Pureza, sabor, custo por grama de proteína. O resultado surpreendeu.",
     "tempo_leitura": 12,
     "data": "2026-05-24"
-  },
-  {
-    "titulo": "Anvisa atualiza regra para termogênicos: o que muda",
-    "slug": "anvisa-termogenicos",
-    "url": "noticia-anvisa.html",
-    "categoria": "noticia",
-    "emoji": "📋",
-    "resumo": "Resolução de maio limita doses de cafeína e exige rotulagem extra.",
-    "tempo_leitura": 5,
-    "data": "2026-05-22"
   }
 ]
