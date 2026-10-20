@@ -1,5 +1,15 @@
 [
   {
+    "titulo": "Creatina e Sono: o Estudo que Muda Tudo que Você Sabia",
+    "slug": "creatina-privacao-sono-recuperacao-cognitiva-estudo",
+    "url": "posts/2026-10-20-creatina-privacao-sono-recuperacao-cognitiva-estudo.html",
+    "categoria": "estudo",
+    "emoji": "🔬",
+    "resumo": "Novo estudo mostra que creatina reduz queda de desempenho cognitivo em até 40% após privação de sono. Veja como usar na prática.",
+    "tempo_leitura": 18,
+    "data": "2026-10-20"
+  },
+  {
     "titulo": "Déficit Calórico para Emagrecer: Guia Completo e Prático",
     "slug": "deficit-calorico-guia-completo-pratico",
     "url": "posts/2026-10-19-deficit-calorico-guia-completo-pratico.html",
@@ -588,15 +598,5 @@
     "resumo": "Review completo da creatina monohidratada: o que funciona de verdade, dosagem correta, mitos e para quem vale a pena comprar.",
     "tempo_leitura": 10,
     "data": "2026-06-03"
-  },
-  {
-    "titulo": "Creatina e Sono: Estudo Revela Efeito Surpreendente",
-    "slug": "creatina-privacao-sono-desempenho-cognitivo-estudo",
-    "url": "posts/2026-06-02-creatina-privacao-sono-desempenho-cognitivo-estudo.html",
-    "categoria": "estudo",
-    "emoji": "🔬",
-    "resumo": "Estudo de 2024 mostra que creatina reduz queda cognitiva após privação de sono em até 20%. Veja o que isso muda na sua suplementação.",
-    "tempo_leitura": 18,
-    "data": "2026-06-02"
   }
 ]
