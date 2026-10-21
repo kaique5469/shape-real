@@ -1,5 +1,15 @@
 [
   {
+    "titulo": "Creatina: Review Honesto Sobre o Suplemento Mais Estudado",
+    "slug": "review-creatina-suplemento-mais-estudado",
+    "url": "posts/2026-10-21-review-creatina-suplemento-mais-estudado.html",
+    "categoria": "review",
+    "emoji": "💪",
+    "resumo": "Review completo e honesto sobre creatina: o que a ciência diz, como tomar, quem deve usar e se vale o investimento. Sem enrolação.",
+    "tempo_leitura": 10,
+    "data": "2026-10-21"
+  },
+  {
     "titulo": "Creatina e Sono: o Estudo que Muda Tudo que Você Sabia",
     "slug": "creatina-privacao-sono-recuperacao-cognitiva-estudo",
     "url": "posts/2026-10-20-creatina-privacao-sono-recuperacao-cognitiva-estudo.html",
@@ -588,15 +598,5 @@
     "resumo": "Aprenda como calcular e aplicar o déficit calórico certo para perder gordura sem perder músculo. Guia prático e direto ao ponto.",
     "tempo_leitura": 10,
     "data": "2026-06-08"
-  },
-  {
-    "titulo": "Creatina Monohidratada: Review Honesto e Sem Enrolação",
-    "slug": "creatina-monohidratada-review-honesto",
-    "url": "posts/2026-06-03-creatina-monohidratada-review-honesto.html",
-    "categoria": "review",
-    "emoji": "🔥",
-    "resumo": "Review completo da creatina monohidratada: o que funciona de verdade, dosagem correta, mitos e para quem vale a pena comprar.",
-    "tempo_leitura": 10,
-    "data": "2026-06-03"
   }
 ]
