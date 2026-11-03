@@ -1,5 +1,15 @@
 [
   {
+    "titulo": "Creatina e Músculo: O Que um Estudo de 2024 Revelou",
+    "slug": "creatina-massa-muscular-estudo-2024",
+    "url": "posts/2026-11-03-creatina-massa-muscular-estudo-2024.html",
+    "categoria": "estudo",
+    "emoji": "🔬",
+    "resumo": "Novo estudo mostra que creatina + treino aumentou massa magra em 1,37 kg a mais que placebo em 8 semanas. Veja o que isso muda na sua rotina.",
+    "tempo_leitura": 18,
+    "data": "2026-11-03"
+  },
+  {
     "titulo": "Déficit Calórico: Guia Prático para Emagrecer com Músculo",
     "slug": "deficit-calorico-guia-pratico-emagrecimento-definicao",
     "url": "posts/2026-11-02-deficit-calorico-guia-pratico-emagrecimento-definicao.html",
@@ -588,15 +598,5 @@
     "resumo": "Review honesto sobre creatina: o que a ciência diz, como tomar, para quem funciona e o que ninguém te conta antes de comprar.",
     "tempo_leitura": 10,
     "data": "2026-06-17"
-  },
-  {
-    "titulo": "Cafeína e Força: O Que um Estudo de 2024 Revelou",
-    "slug": "cafeina-suplementacao-forca-muscular-estudo-2024",
-    "url": "posts/2026-06-16-cafeina-suplementacao-forca-muscular-estudo-2024.html",
-    "categoria": "estudo",
-    "emoji": "🔬",
-    "resumo": "Estudo de 2024 mostra que 3 mg/kg de cafeína aumenta força máxima em até 7% em treinos de resistência. Veja como aplicar na sua rotina.",
-    "tempo_leitura": 18,
-    "data": "2026-06-16"
   }
 ]
