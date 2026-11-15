@@ -1,0 +1,39 @@
+{
+  "name": "shape-real-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shape Real — ficha de treino com IA, registro de cargas, dieta e área do personal.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "verify": "npm run typecheck && npm run test"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
+    "@fontsource-variable/archivo": "^5.3.0",
+    "@supabase/supabase-js": "^2.119.0",
+    "lucide-react": "^1.73.0",
+    "next": "^16.4.6",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "server-only": "^0.0.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "postcss": "^8.5.0",
+    "tailwindcss": "^4.1.0",
+    "typescript": "^5.9.0",
+    "vitest": "~3.2.4"
+  }
+}

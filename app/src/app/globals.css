@@ -1,0 +1,146 @@
+@import "tailwindcss";
+@import "@fontsource-variable/archivo/wdth.css";
+
+/*
+ * Shape Real — sistema visual
+ * Mundo: a ficha de treino de papel das academias brasileiras (grade, colunas
+ * séries × reps × carga, carga antiga riscada a lápis) + o código de cores das
+ * anilhas de competição (25 vermelho, 20 azul, 15 amarelo, 10 verde, 5 branco).
+ * Cor tem significado: vermelho = recorde/carga máxima, azul = informação/ação
+ * secundária, verde = concluído, amarelo = atenção/seleção.
+ * Cena de uso: piso de academia sob luz fluorescente, celular na mão entre séries →
+ * fundo claro de alto contraste, alvos de toque grandes, números grandes.
+ */
+
+@theme {
+  --font-sans: "Archivo Variable", ui-sans-serif, system-ui, sans-serif;
+
+  --color-chalk: #f1f2ee;
+  --color-chalk-2: #e7e9e3;
+  --color-paper: #ffffff;
+  --color-iron: #12151a;
+  --color-iron-2: #232830;
+  --color-steel: #535b67;
+  --color-pencil: #858c96;
+  --color-rule: #d9dcd5;
+  --color-rule-strong: #b8bcb4;
+
+  --color-plate-red: #d3241c;
+  --color-plate-red-ink: #a8160f;
+  --color-plate-blue: #1e4fd0;
+  --color-plate-blue-ink: #173ea6;
+  --color-plate-yellow: #f3b905;
+  --color-plate-green: #12843f;
+  --color-plate-green-ink: #0d6b32;
+  --color-plate-chrome: #a9afb6;
+
+  --radius-ficha: 6px;
+  --shadow-lift: 0 1px 0 rgb(18 21 26 / 0.04), 0 8px 24px -12px rgb(18 21 26 / 0.18);
+  --shadow-press: 0 2px 6px -2px rgb(18 21 26 / 0.25);
+
+  --animate-stamp: stamp 260ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-rise: rise 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+:root {
+  --plate-red: var(--color-plate-red);
+  --plate-blue: var(--color-plate-blue);
+  --plate-yellow: var(--color-plate-yellow);
+  --plate-green: var(--color-plate-green);
+  --plate-white: #fbfbf9;
+  --plate-chrome: var(--color-plate-chrome);
+  color-scheme: light;
+}
+
+@keyframes stamp {
+  0% { transform: scale(1.35); opacity: 0; }
+  60% { transform: scale(0.94); opacity: 1; }
+  100% { transform: scale(1); }
+}
+@keyframes rise {
+  from { transform: translateY(10px); opacity: 0.001; }
+  to { transform: none; opacity: 1; }
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-rendering: optimizeLegibility;
+}
+body {
+  background: var(--color-chalk);
+  color: var(--color-iron);
+  font-family: var(--font-sans);
+  font-feature-settings: "tnum" 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--color-plate-yellow);
+  color: var(--color-iron);
+}
+:focus-visible {
+  outline: 2px solid var(--color-plate-blue);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+input,
+textarea,
+select {
+  caret-color: var(--color-plate-red);
+}
+a {
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-rule-strong) transparent;
+}
+
+/* Números de treino: tabulares e um pouco condensados para caberem nas colunas. */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+/* Voz de placa de anilha: larga e pesada. Só para títulos e números de destaque. */
+.plate-type {
+  font-stretch: 118%;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.cond {
+  font-stretch: 82%;
+}
+/* Cabeçalho de coluna da ficha. */
+.col-head {
+  font-stretch: 112%;
+  font-weight: 700;
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+/* Carga antiga riscada a lápis. */
+.pencil-strike {
+  color: var(--color-pencil);
+  text-decoration: line-through;
+  text-decoration-color: var(--color-pencil);
+  text-decoration-thickness: 1.5px;
+}
+/* Pauta da ficha: linhas finas como papel pautado. */
+.ruled > * + * {
+  border-top: 1px solid var(--color-rule);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+@media print {
+  body { background: #fff; }
+  .no-print { display: none !important; }
+}
