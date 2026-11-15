@@ -19,7 +19,7 @@
   "headline": "{{TITLE}}",
   "description": "{{META_DESCRIPTION}}",
   "author": {"@type": "Person", "name": "{{AUTHOR_NAME}}"},
-  "datePublished": "{{DATE}}",
+  "datePublished": "{{DATE_ISO}}",
   "publisher": {"@type": "Organization", "name": "Shape Real"}
 }
 </script>
@@ -34,7 +34,8 @@
       <li><a href="../index.html#comparativo">Comparativo</a></li>
       <li><a href="../index.html#artigos">Artigos</a></li>
       <li><a href="../index.html#suplementos">Suplementos</a></li>
-      <li><a href="../index.html#equipe">Equipe</a></li>
+      <li><a href="../index.html#equipe">Transparência</a></li>
+      <li><a href="https://app.shapereal.com.br/?utm_source=blog&amp;utm_medium=menu">Ficha com IA</a></li>
     </ul>
   </div>
 </header>
@@ -58,7 +59,7 @@
 
 <hr>
 <p style="color:var(--muted);font-size:13px">
-  <strong>Revisão técnica:</strong> {{AUTHOR_NAME}}.<br>
+  <strong>Transparência:</strong> artigo produzido com auxílio de inteligência artificial pela {{AUTHOR_NAME}}.<br>
   <strong>Aviso:</strong> conteúdo educativo. Não substitui consulta com profissional de saúde, nutricionista ou educador físico.
 </p>
 

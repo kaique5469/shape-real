@@ -1,9 +1,11 @@
-# Configuração Netlify — detectada automaticamente quando você conecta o repo
-# (você não precisa editar nada aqui)
+# Configuração Netlify — blog estático (raiz do repositório).
+# O app (pasta app/) é implantado separadamente na Vercel em app.shapereal.com.br.
 
 [build]
   publish = "."         # raiz do repo é o site
   command = ""          # sem build step (HTML estático)
+  # Não redeploya o blog quando o commit só altera o app.
+  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- . ':(exclude)app'"
 
 [[headers]]
   for = "/*"
@@ -12,6 +14,19 @@
     X-Content-Type-Options = "nosniff"
     Referrer-Policy        = "strict-origin-when-cross-origin"
     Permissions-Policy     = "geolocation=(), camera=(), microphone=()"
+
+# O código-fonte do app não deve ser servido pelo blog: /app leva ao app de verdade.
+[[redirects]]
+  from = "/app/*"
+  to   = "https://app.shapereal.com.br/:splat"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/app"
+  to   = "https://app.shapereal.com.br/"
+  status = 301
+  force = true
 
 # Redirect www → root (opcional, ativa quando você conectar o domínio)
 [[redirects]]

@@ -40,16 +40,81 @@ TEMPLATES = ROOT / "templates"
 POSTS_DIR.mkdir(exist_ok=True)
 DATA_DIR.mkdir(exist_ok=True)
 
-# Quinta-feira = dia de criar PR para revisão
-DAYS_DRAFT_MODE = {3}  # 0=seg, 1=ter, 2=qua, 3=qui, 4=sex...
+# Terça (estudo) vira PR para revisão humana: o modelo não acessa a internet e pode
+# errar detalhes de um estudo específico. Nada que cite pesquisa vai direto para o ar.
+DAYS_DRAFT_MODE = {1}  # 0=seg, 1=ter, 2=qua, 3=qui
 
-# Calendário editorial: tipo + tema sugerido por dia da semana
+# Calendário editorial. "noticia" foi REMOVIDA: sem fonte real (RSS/DOU), o modelo
+# inventava notícias da Anvisa. Quinta passa a ser "treino" — guias evergreen que
+# levam o leitor ao app (ficha com IA).
 EDITORIAL = {
-    0: ("guia",    "Guia prático sobre déficit calórico, treino para definição ou estratégia de cutting (1.500 palavras)"),
-    1: ("estudo",  "Tradução comentada de um estudo recente sobre suplementação, nutrição ou treinamento"),
-    2: ("review",  "Review honesto de um suplemento popular (whey, creatina, termogênico ou pré-treino)"),
-    3: ("noticia", "Notícia recente do mundo fitness (Anvisa, lançamento, polêmica ou tendência)"),
+    0: ("guia",   "Guia prático de nutrição para emagrecimento e definição"),
+    1: ("estudo", "Explicação comentada de um tema com boa base científica (sem inventar estudo específico)"),
+    2: ("review", "Review honesto de um suplemento"),
+    3: ("treino", "Guia prático de treino de musculação"),
 }
+
+# Fila de temas por tipo. O pipeline escolhe o PRIMEIRO tema ainda não coberto
+# (comparando palavras-chave com títulos/slugs já publicados) — fim dos artigos repetidos.
+# Cada tema: (palavras-chave que identificam o tema, briefing).
+TEMAS = {
+    "guia": [
+        (["deficit"], "Déficit calórico: como calcular o seu e por quanto tempo manter"),
+        (["proteina", "quanto"], "Quanta proteína comer por dia para perder gordura sem perder músculo"),
+        (["refeic", "marmita"], "Marmitas da semana para cutting: como montar e quanto pesar"),
+        (["plato", "estagn"], "Platô no emagrecimento: por que a balança parou e o que fazer"),
+        (["dieta flexivel", "iifym"], "Dieta flexível na prática: encaixando o que você gosta nos macros"),
+        (["jejum"], "Jejum intermitente funciona para definir? O que importa de verdade"),
+        (["carboidrato", "noite"], "Carboidrato à noite engorda? Mitos de horário das refeições"),
+        (["bulking", "superavit"], "Bulking limpo: superávit calórico sem ganhar gordura demais"),
+        (["restaurante", "fim de semana"], "Como comer fora e no fim de semana sem perder a semana de dieta"),
+        (["agua", "retencao"], "Retenção de líquido: por que o peso oscila e como ler a balança"),
+        (["fibra"], "Fibras na dieta de definição: saciedade, intestino e quanto comer"),
+        (["alcool", "cerveja"], "Álcool e resultado na academia: quanto atrapalha de verdade"),
+    ],
+    "estudo": [
+        (["sono"], "Sono e hipertrofia: o que a ciência mostra sobre recuperação"),
+        (["cafeina"], "Cafeína e desempenho no treino: dose, horário e tolerância"),
+        (["volume", "series"], "Volume de treino: quantas séries por semana para crescer"),
+        (["falha"], "Treinar até a falha: necessário ou contraproducente?"),
+        (["descanso", "intervalo"], "Intervalo entre séries: 1 ou 3 minutos para hipertrofia?"),
+        (["frequencia"], "Frequência de treino: 1x ou 2x por semana por músculo"),
+        (["cardio", "interferencia"], "Cardio atrapalha ganho de massa? O efeito interferência"),
+        (["mulher", "ciclo"], "Treino feminino e ciclo menstrual: o que muda na prática"),
+        (["idoso", "sarcopenia"], "Musculação depois dos 50: força, massa e longevidade"),
+        (["proteina", "dose"], "Quanta proteína por refeição o corpo aproveita?"),
+    ],
+    "review": [
+        (["creatina"], "Creatina monoidratada: como escolher, dose e mitos"),
+        (["whey", "concentrado"], "Whey concentrado: para quem vale e como comparar marcas pelo custo por grama"),
+        (["isolado"], "Whey isolado vale a diferença de preço?"),
+        (["pre-treino", "pre treino"], "Pré-treino: o que tem dentro e o que realmente funciona"),
+        (["termogenico"], "Termogênico emagrece? O que diz a ciência e os riscos"),
+        (["beta-alanina", "beta alanina"], "Beta-alanina: para quem serve o formigamento"),
+        (["omega"], "Ômega 3 para quem treina: necessário ou desperdício?"),
+        (["multivitaminico", "vitamina d"], "Multivitamínico e vitamina D: quando faz sentido"),
+        (["albumina"], "Albumina x whey: custo, digestão e qualidade proteica"),
+        (["colageno"], "Colágeno para articulação e pele: o que é fato"),
+        (["hipercalorico"], "Hipercalórico: quando ajuda e quando só engorda"),
+        (["bcaa"], "BCAA vale a pena se você já come proteína suficiente?"),
+    ],
+    "treino": [
+        (["abc"], "Treino ABC: como montar a ficha completa (com exemplo)"),
+        (["upper", "lower"], "Treino Upper/Lower: divisão superior e inferior para 4 dias"),
+        (["push", "pull", "ppl"], "Push Pull Legs: a divisão por movimento explicada"),
+        (["full body", "fullbody"], "Treino Full Body para iniciantes: 3 dias por semana"),
+        (["5x5"], "Treino 5x5 para força: como progredir no agachamento, supino e terra"),
+        (["progressao", "carga"], "Progressão de carga: quando e quanto aumentar o peso"),
+        (["abcde"], "Treino ABCDE: vale a pena treinar um músculo por dia?"),
+        (["drop", "rest-pause", "rest pause"], "Drop-set, rest-pause e bi-set: quando usar técnicas avançadas"),
+        (["em casa", "halter"], "Treino em casa com halteres: ficha completa"),
+        (["gluteo"], "Treino de glúteo: exercícios, séries e frequência"),
+        (["iniciante", "primeiro mes"], "Primeiro mês na academia: ficha e erros comuns"),
+        (["aquecimento"], "Aquecimento antes da musculação: o que fazer em 5 minutos"),
+    ],
+}
+
+APP_URL = "https://app.shapereal.com.br"
 
 client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 TODAY = datetime.date.today()
@@ -167,13 +232,63 @@ PARTE 2 — HTML do corpo do artigo (segue a estrutura de 8 seções acima, sem 
 ..."""
 
 
+def _norm(s: str) -> str:
+    import unicodedata
+    s = unicodedata.normalize("NFD", s.lower())
+    return "".join(c for c in s if unicodedata.category(c) != "Mn").replace("-", " ")
+
+
+def publicados() -> list[dict]:
+    path = DATA_DIR / "posts.json"
+    posts = json.loads(path.read_text()) if path.exists() else []
+    # Inclui também arquivos em posts/ fora do manifesto (o manifesto guarda só 60).
+    slugs = {p["slug"] for p in posts}
+    for f in POSTS_DIR.glob("*.html"):
+        slug = re.sub(r"^\d{4}-\d{2}-\d{2}-", "", f.stem)
+        if slug not in slugs:
+            posts.append({"titulo": slug.replace("-", " "), "slug": slug})
+            slugs.add(slug)
+    return posts
+
+
+def escolher_tema(tipo: str, posts: list[dict]) -> str | None:
+    corpus = " | ".join(_norm(p.get("titulo", "") + " " + p.get("slug", "")) for p in posts)
+    for chaves, briefing in TEMAS.get(tipo, []):
+        if not any(_norm(k) in corpus for k in chaves):
+            return briefing
+    return None
+
+
+def _tokens(s: str) -> set[str]:
+    stop = {"de", "da", "do", "das", "dos", "e", "o", "a", "os", "as", "para", "com", "que", "um", "uma", "no", "na", "em", "por", "como", "seu", "sua"}
+    return {t for t in re.findall(r"[a-z0-9]+", _norm(s)) if t not in stop and len(t) > 2}
+
+
+def duplicado(titulo: str, posts: list[dict], limite: float = 0.5) -> str | None:
+    """Retorna o título parecido já publicado (Jaccard de palavras), se houver."""
+    novo = _tokens(titulo)
+    for p in posts:
+        antigo = _tokens(p.get("titulo", "") + " " + p.get("slug", "").replace("-", " "))
+        if novo and antigo and len(novo & antigo) / len(novo | antigo) >= limite:
+            return p.get("titulo") or p.get("slug")
+    return None
+
+
 def gerar_artigo() -> dict:
     weekday = TODAY.weekday()
     if weekday not in EDITORIAL:
         print(f"[skip] {TODAY} é {['seg','ter','qua','qui','sex','sáb','dom'][weekday]} — pipeline não roda")
         raise SystemExit(0)
 
-    tipo, descricao = EDITORIAL[weekday]
+    tipo, _ = EDITORIAL[weekday]
+    posts = publicados()
+    tema = escolher_tema(tipo, posts)
+    if not tema:
+        print(f"[skip] todos os temas de '{tipo}' já foram cobertos — adicione temas em TEMAS para continuar")
+        raise SystemExit(0)
+    ja = "\n".join(f"- {p.get('titulo')}" for p in posts[:80])
+    descricao = f"{tema}\n\nNÃO repita nenhum destes artigos já publicados (escolha um ângulo e título diferentes):\n{ja}"
+    print(f"     -> tema: {tema}")
 
     # Prompts diferenciados por tipo
     if tipo == "estudo":
@@ -213,18 +328,32 @@ def gerar_artigo() -> dict:
     return json.loads(text)
 
 
+def bloco_app(slug: str, categoria: str) -> str:
+    """Chamada para o app no fim de todo artigo (canal de aquisição do produto)."""
+    utm = f"utm_source=blog&utm_medium=artigo&utm_campaign={slug}"
+    titulo = "Monte sua ficha de treino com IA — grátis" if categoria in ("treino", "estudo") else "Coloque isso em prática no Shape Real"
+    texto = (
+        "Escolha o sistema que você gosta (ABC, Upper/Lower, PPL, 5×5), registre cada carga e veja quando subir o peso."
+        if categoria in ("treino", "estudo")
+        else "Calcule suas metas de calorias e proteína, analise o que você comeu e acompanhe sua evolução no app."
+    )
+    return f"""
+<aside class="app-cta" style="margin:40px 0;padding:24px;border-radius:10px;background:#12151a;color:#f1f2ee">
+  <p style="margin:0 0 6px;font-size:20px;font-weight:800">{titulo}</p>
+  <p style="margin:0 0 16px;color:rgba(241,242,238,.75)">{texto}</p>
+  <a href="{APP_URL}/?{utm}" style="display:inline-block;background:#d3241c;color:#fff;padding:12px 18px;border-radius:6px;font-weight:700;text-decoration:none">Começar grátis</a>
+</aside>"""
+
+
 # ============================================================
 # 2. RENDER ARTIGO -> HTML
 # ============================================================
 def render_artigo(artigo: dict) -> Path:
     tpl = (TEMPLATES / "article.html.tpl").read_text(encoding="utf-8")
     hoje_pt = TODAY.strftime("%d de %B de %Y")
-    autor = {
-        "guia":    ("Dra. Marina Costa", "MC", "Nutricionista esportiva"),
-        "estudo":  ("Dra. Marina Costa", "MC", "Nutricionista esportiva"),
-        "review":  ("Rafael Andrade",    "RA", "Editor-chefe"),
-        "noticia": ("Rafael Andrade",    "RA", "Editor-chefe"),
-    }.get(artigo["categoria"], ("Equipe Shape Real", "SR", "Equipe editorial"))
+    # Autoria honesta: nada de profissional fictício. Conteúdo é gerado com IA;
+    # troque por um autor real (nome + registro CRN/CREF) somente quando houver revisão de fato.
+    autor = ("Equipe Shape Real", "SR", "Conteúdo produzido com auxílio de IA")
 
     html = (tpl
         .replace("{{TITLE}}", artigo["titulo"])
@@ -235,9 +364,10 @@ def render_artigo(artigo: dict) -> Path:
         .replace("{{AUTHOR_NAME}}", autor[0])
         .replace("{{AUTHOR_AVATAR}}", autor[1])
         .replace("{{AUTHOR_ROLE}}", autor[2])
+        .replace("{{DATE_ISO}}", TODAY.isoformat())
         .replace("{{DATE}}", hoje_pt)
         .replace("{{READ_TIME}}", str(artigo["tempo_leitura_min"]))
-        .replace("{{CONTENT_HTML}}", artigo["conteudo_html"])
+        .replace("{{CONTENT_HTML}}", artigo["conteudo_html"] + bloco_app(artigo["slug"], artigo["categoria"]))
     )
 
     fname = f"{TODAY.isoformat()}-{artigo['slug']}.html"
@@ -277,6 +407,10 @@ def atualizar_precos() -> list[dict]:
     if not path.exists():
         return []
     current = json.loads(path.read_text())
+    # DESATIVADO: o modelo não acessa a internet, então "verificar" preços só carimbava
+    # ultima_verificacao sem checar nada (informação enganosa ao consumidor). Atualize
+    # supplements.json manualmente ou integre uma API de preços/afiliados real.
+    return current
 
     prompt = f"""Hoje é {TODAY.isoformat()}. Os preços abaixo foram verificados há alguns dias.
 
@@ -417,13 +551,8 @@ def _fmt_data(iso: str) -> str:
 
 def _autor_por_categoria(cat: str) -> tuple:
     """Mapa autor → (nome, papel) para o hero card."""
-    mapa = {
-        "guia":    ("Dra. Marina Costa", "nutricionista esportiva"),
-        "estudo":  ("Dra. Marina Costa", "nutricionista esportiva"),
-        "review":  ("Rafael Andrade",    "editor-chefe"),
-        "noticia": ("Rafael Andrade",    "editor-chefe"),
-    }
-    return mapa.get(cat.lower(), ("Equipe Shape Real", "equipe editorial"))
+    # Sem autores fictícios: todo conteúdo é assinado pela equipe, com aviso de IA.
+    return ("Equipe Shape Real", "conteúdo com auxílio de IA")
 
 
 def _publicado_label(iso: str) -> str:
@@ -484,8 +613,12 @@ def main() -> None:
     weekday = TODAY.weekday()
     draft_mode = weekday in DAYS_DRAFT_MODE
 
-    print(f"[1/4] Gerando artigo do dia ({['seg','ter','qua','qui'][weekday]})...")
+    print(f"[1/4] Gerando artigo do dia ({['seg','ter','qua','qui','sex','sáb','dom'][weekday]})...")
     artigo = gerar_artigo()
+    parecido = duplicado(artigo["titulo"], publicados())
+    if parecido:
+        print(f"[skip] título muito parecido com um já publicado: '{parecido}' — nada foi publicado")
+        raise SystemExit(0)
     html_path = render_artigo(artigo)
     print(f"     -> {artigo['titulo']} ({artigo['tempo_leitura_min']} min)")
     print(f"     -> {html_path.relative_to(ROOT)}")

@@ -1,38 +1,37 @@
-# Shape Real — blog fitness com pipeline de IA
+# Shape Real
 
-Site estático hospedado na Netlify. Atualização automática 4×/semana via GitHub Actions + Claude API.
+Dois produtos no mesmo repositório:
 
-## Estrutura
+| Pasta | O que é | Onde roda |
+|---|---|---|
+| `/` (raiz) | Blog de fitness estático + pipeline de artigos com IA | Netlify — shapereal.com.br |
+| `app/` | App de treino: ficha com IA, cargas, evolução, dieta e área do personal | Vercel — app.shapereal.com.br |
 
-```
-shape-real/
-├── index.html                    # homepage com calculadora + comparativo
-├── article.css                   # estilo compartilhado dos artigos
-├── estudo-cafeina.html           # artigo modelo (estudo)
-├── review-whey.html              # artigo modelo (review)
-├── noticia-anvisa.html           # artigo modelo (notícia)
-├── guia-deficit.html             # artigo modelo (guia)
-├── posts/                        # artigos gerados automaticamente
-├── data/
-│   ├── posts.json                # manifesto dos artigos publicados
-│   └── supplements.json          # dados do comparativo
-├── templates/
-│   └── article.html.tpl          # template usado pelo pipeline
-├── ai_pipeline.py                # script que gera artigos com Claude
-├── requirements.txt
-├── netlify.toml                  # config Netlify
-├── .github/workflows/
-│   └── daily-update.yml          # cron que dispara o pipeline
-├── DEPLOY-AGORA.md               # passo-a-passo de deploy
-└── GUIA-USO.md                   # guia completo
-```
+O blog é o canal de aquisição do app: menu "Ficha com IA" e chamada no fim de todo artigo (com UTM).
 
-## Deploy
+## App
 
-Leia o `DEPLOY-AGORA.md`.
+Veja [`app/README.md`](app/README.md).
 
-## Como o pipeline funciona
+## Blog — pipeline de artigos
 
-Segunda → guia · Terça → estudo · Quarta → review · Quinta → notícia (vira PR pra você revisar)
+GitHub Actions (`.github/workflows/daily-update.yml`) roda seg–qui às 9h UTC e executa `ai_pipeline.py`:
 
-Sexta-domingo não roda.
+| Dia | Tipo | Publicação |
+|---|---|---|
+| Seg | guia (nutrição) | direto no `main` |
+| Ter | estudo | **Pull Request para revisão** (cita pesquisa) |
+| Qua | review de suplemento | direto no `main` |
+| Qui | treino (leva ao app) | direto no `main` |
+
+Proteções contra conteúdo repetido ou inventado:
+- **Fila de temas** (`TEMAS`): o pipeline escolhe o primeiro tema ainda não coberto. Acabou a fila → não publica.
+- **Trava de duplicado**: título parecido com um já publicado (similaridade ≥ 50%) → não publica.
+- **Sem "notícia"**: sem fonte real, o modelo inventava notícias da Anvisa. Removido até integrar uma fonte (RSS do DOU/Anvisa).
+- **Preços não são "verificados" pela IA**: atualize `data/supplements.json` manualmente ou via API de afiliados.
+- **Autoria honesta**: "Equipe Shape Real", com aviso de uso de IA. Só use nome de profissional real (com CRN/CREF) se houver revisão de fato.
+
+### Pendências do blog
+- Trocar `?ref=SEUCODIGO` em `data/supplements.json` pelos códigos reais de afiliado (hoje nenhuma comissão é registrada).
+- Consolidar os artigos duplicados já publicados (mesmo tema várias vezes) com redirecionamento 301 para a melhor versão.
+- Apagar as branches `draft/*` com notícias geradas sem fonte.
