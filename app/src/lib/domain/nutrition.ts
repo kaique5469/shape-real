@@ -1,4 +1,4 @@
-import { FOODS, getFood, type Food } from "./foods";
+import { allFoods, foodsVersion, getFood, type Food } from "./foods";
 import { normalize } from "./exercises";
 import { uid } from "./ids";
 import type { ActivityLevel, DietItem, DietPlan, Goal, MacroTargets, Meal, Profile, Sex } from "./types";
@@ -103,13 +103,30 @@ const UNIT_RE =
 
 const WORD_NUM: Record<string, number> = { meia: 0.5, meio: 0.5, uma: 1, um: 1, duas: 2, dois: 2, tres: 3, "três": 3 };
 
-const ALIAS_INDEX: { alias: string; food: Food }[] = FOODS.flatMap((f) => f.aliases.map((a) => ({ alias: normalize(a), food: f }))).sort(
-  (a, b) => b.alias.length - a.alias.length,
-);
+interface AliasEntry {
+  alias: string;
+  re: RegExp;
+  food: Food;
+}
+let aliasIndex: AliasEntry[] = [];
+let aliasIndexVersion = -1;
+
+/** Índice de apelidos (maior primeiro), reconstruído quando os alimentos personalizados mudam. */
+function aliases(): AliasEntry[] {
+  if (aliasIndexVersion !== foodsVersion()) {
+    aliasIndex = allFoods()
+      .flatMap((f) => [...f.aliases, f.name].map((a) => ({ alias: normalize(a), food: f })))
+      .filter((e) => e.alias.length > 1)
+      .sort((a, b) => b.alias.length - a.alias.length)
+      .map((e) => ({ ...e, re: new RegExp(`(^|[^a-z0-9])${e.alias.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}([^a-z0-9]|$)`) }));
+    aliasIndexVersion = foodsVersion();
+  }
+  return aliasIndex;
+}
 
 export function matchFood(text: string): Food | undefined {
   const t = normalize(text);
-  return ALIAS_INDEX.find(({ alias }) => new RegExp(`(^|[^a-z])${alias.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}([^a-z]|$)`).test(t))?.food;
+  return aliases().find(({ re }) => re.test(t))?.food;
 }
 
 export interface ParsedLine {

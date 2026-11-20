@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import type { GenerateInput } from "@/lib/domain/generator";
 import type { DietPlan, MacroTargets, Meal, Program } from "@/lib/domain/types";
 
@@ -10,10 +11,30 @@ export interface AIResult<T> {
   quota?: boolean;
 }
 
+const PASS_KEY = "sr:pass";
+
+/** Código do link de teste (libera a IA real para quem recebeu o link). */
+export function saveTesterPass(pass: string) {
+  try {
+    localStorage.setItem(PASS_KEY, pass.slice(0, 64));
+  } catch {
+    /* modo privado */
+  }
+}
+
+function testerPass(): string | null {
+  try {
+    return localStorage.getItem(PASS_KEY);
+  } catch {
+    return null;
+  }
+}
+
 async function post<T>(path: string, body: unknown, token: string | null): Promise<T> {
+  const pass = testerPass();
   const res = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(pass ? { "x-sr-pass": pass } : {}) },
     body: JSON.stringify(body),
   });
   const json = await res.json().catch(() => ({}));
@@ -50,4 +71,32 @@ export async function aiDietGenerate(
 ): Promise<AIResult<DietPlan>> {
   const r = await post<{ diet: DietPlan; source: "ia" | "motor"; notice?: string; quota?: boolean }>("/api/ai/diet", { mode: "generate", ...body }, token);
   return { data: r.diet, source: r.source, notice: r.notice, quota: r.quota };
+}
+
+interface AIStatus {
+  configured: boolean;
+  access: "account" | "pass" | "open" | "off";
+}
+
+let statusPromise: Promise<AIStatus> | null = null;
+
+/**
+ * A IA real está disponível para este usuário? (decide os textos da interface:
+ * "Gerar com IA" quando sim; "Gerar ficha" pelo motor do app quando não.)
+ */
+export function useAI(signedIn: boolean): { enabled: boolean; loading: boolean } {
+  const [status, setStatus] = useState<AIStatus | null>(null);
+  useEffect(() => {
+    statusPromise ??= fetch("/api/ai/status")
+      .then((r) => (r.ok ? (r.json() as Promise<AIStatus>) : { configured: false, access: "off" as const }))
+      .catch(() => ({ configured: false, access: "off" as const }));
+    let alive = true;
+    void statusPromise.then((s) => alive && setStatus(s));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  if (!status) return { enabled: false, loading: true };
+  const enabled = status.configured && (status.access === "open" || (status.access === "pass" && Boolean(testerPass())) || (status.access === "account" && signedIn));
+  return { enabled, loading: false };
 }

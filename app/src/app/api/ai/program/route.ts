@@ -16,7 +16,7 @@ export async function POST(req: Request) {
 
   const auth = await authorizeAI(req, "program");
   if (auth.useAI) {
-    const ai = await structuredCall<Parameters<typeof programFromAI>[0]>({
+    const ai = await structuredCall<Parameters<typeof programFromAI>[0]>(auth.provider, {
       system: PROGRAM_SYSTEM,
       user: programUserPrompt(input),
       schema: PROGRAM_JSON_SCHEMA as unknown as Record<string, unknown>,

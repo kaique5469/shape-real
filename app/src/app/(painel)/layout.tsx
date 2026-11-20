@@ -6,6 +6,7 @@ import { useEffect, type ReactNode } from "react";
 import { CalendarCheck, ClipboardList, LineChart, Salad, UserRound, Users } from "lucide-react";
 import { Logo } from "@/components/brand";
 import { Skeleton, cx } from "@/components/ui";
+import { ActingStrip, TesterStrip } from "@/components/tester";
 import { useApp } from "@/lib/app-context";
 
 const ATHLETE_NAV = [
@@ -17,20 +18,23 @@ const ATHLETE_NAV = [
 ];
 const COACH_NAV = [
   { href: "/alunos", label: "Alunos", icon: Users },
-  { href: "/treinos", label: "Meus treinos", icon: ClipboardList },
+  { href: "/treinos", label: "Modelos", icon: ClipboardList },
   { href: "/conta", label: "Conta", icon: UserRound },
 ];
 
 export default function PainelLayout({ children }: { children: ReactNode }) {
-  const { ready, user, isDemo, signOut } = useApp();
+  const { ready, user, isDemo, isTester, plan, signOut } = useApp();
   const pathname = usePathname();
   const router = useRouter();
 
   useEffect(() => {
     if (!ready) return;
-    if (!user) router.replace("/entrar");
+    // Quem entrou pelo link de teste volta para o ambiente de teste, nunca para a tela de login.
+    if (!user) router.replace(isTester ? "/testar" : "/entrar");
     else if (!user.onboarded) router.replace("/onboarding");
-  }, [ready, user, router]);
+  }, [ready, user, router, isTester]);
+
+  const focus = pathname.startsWith("/sessao");
 
   if (!ready || !user || !user.onboarded) {
     return (
@@ -42,13 +46,14 @@ export default function PainelLayout({ children }: { children: ReactNode }) {
     );
   }
 
-  const focus = pathname.startsWith("/sessao");
   const nav = user.role === "coach" ? COACH_NAV : ATHLETE_NAV;
   const active = (href: string) => pathname === href || pathname.startsWith(href + "/");
 
   return (
     <div className="min-h-dvh">
-      {isDemo ? (
+      {!focus && isTester ? <TesterStrip /> : null}
+      {!focus ? <ActingStrip /> : null}
+      {isDemo && !isTester ? (
         <div className="no-print flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-plate-yellow px-4 py-2 text-center text-sm font-semibold text-iron">
           Demonstração com dados fictícios.
           <button
@@ -89,7 +94,7 @@ export default function PainelLayout({ children }: { children: ReactNode }) {
             </nav>
             <div className="mt-auto rounded-[6px] border border-rule px-3 py-3">
               <p className="truncate text-sm font-semibold">{user.name}</p>
-              <p className="text-xs text-steel">{user.role === "coach" ? "Personal" : "Aluno"} · plano {user.plan === "free" ? "Grátis" : user.plan === "pro" ? "Pro" : "Personal"}</p>
+              <p className="text-xs text-steel">{user.role === "coach" ? "Personal" : "Aluno"} · {isTester ? "teste com tudo liberado" : `plano ${plan === "free" ? "Grátis" : plan === "pro" ? "Pro" : "Personal"}`}</p>
             </div>
           </aside>
 

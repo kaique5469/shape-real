@@ -1,12 +1,15 @@
+import type { Food } from "@/lib/domain/foods";
 import type {
   BodyMetric,
   DietPlan,
+  Exercise,
   Invite,
   PhotoPose,
   Profile,
   Program,
   ProgressPhoto,
   Session,
+  StudentDraft,
   StudentSummary,
 } from "@/lib/domain/types";
 
@@ -18,6 +21,12 @@ import type {
  */
 export interface Repository {
   readonly mode: "local" | "supabase";
+  /**
+   * O que este armazenamento permite:
+   *  - invites: convite por código funciona entre aparelhos (só com contas na nuvem);
+   *  - managedStudents: o personal cadastra o aluno direto, sem conta (modo local/teste).
+   */
+  readonly capabilities: { invites: boolean; managedStudents: boolean };
 
   getProfile(userId: string): Promise<Profile | null>;
   saveProfile(profile: Profile): Promise<Profile>;
@@ -44,10 +53,20 @@ export interface Repository {
   saveDiet(diet: DietPlan): Promise<DietPlan>;
 
   listStudents(coachId: string): Promise<StudentSummary[]>;
+  /** Cadastra um aluno sem conta, já vinculado ao personal (requer capabilities.managedStudents). */
+  createStudent(coachId: string, draft: StudentDraft): Promise<Profile>;
   createInvite(coachId: string): Promise<Invite>;
   acceptInvite(code: string, studentId: string): Promise<{ coachName: string }>;
   unlinkStudent(coachId: string, studentId: string): Promise<void>;
   getCoach(studentId: string): Promise<{ id: string; name: string } | null>;
+
+  /** Exercícios e alimentos criados pelo usuário. */
+  listCustomExercises(ownerId: string): Promise<Exercise[]>;
+  saveCustomExercise(ownerId: string, exercise: Exercise): Promise<Exercise>;
+  deleteCustomExercise(ownerId: string, id: string): Promise<void>;
+  listCustomFoods(ownerId: string): Promise<Food[]>;
+  saveCustomFood(ownerId: string, food: Food): Promise<Food>;
+  deleteCustomFood(ownerId: string, id: string): Promise<void>;
 
   recordUpgradeIntent(userId: string, plan: string): Promise<void>;
   /** LGPD: exclusão definitiva da conta e de todos os dados do usuário. */

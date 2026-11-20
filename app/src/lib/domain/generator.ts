@@ -1,4 +1,4 @@
-import { EXERCISES, getExercise, normalize } from "./exercises";
+import { EXERCISES, getExercise, normalize, unitOf } from "./exercises";
 import { getSystem, type Slot } from "./systems";
 import { uid } from "./ids";
 import type {
@@ -43,9 +43,16 @@ export const LEVEL_LABEL: Record<Level, string> = {
 export const TECHNIQUE_LABEL: Record<Technique, string> = {
   normal: "Normal",
   drop_set: "Drop-set na última série",
-  bi_set: "Bi-set",
+  bi_set: "Bi-set com o próximo",
+  tri_set: "Tri-set com os próximos",
+  super_serie: "Supersérie (antagonista)",
   rest_pause: "Rest-pause",
-  piramide: "Pirâmide",
+  piramide: "Pirâmide crescente",
+  piramide_dec: "Pirâmide decrescente",
+  cluster: "Cluster",
+  falha: "Até a falha",
+  parciais: "Repetições parciais no fim",
+  negativa: "Negativa lenta",
   isometria: "Isometria",
 };
 
@@ -103,10 +110,9 @@ interface Scheme {
 }
 
 export function repScheme(goal: Goal, level: Level, ex: Exercise, system: SystemId, isMainSlot: boolean): Scheme {
-  if (ex.pattern === "core") {
-    const timed = ex.id.startsWith("prancha");
-    return { sets: 3, repsMin: timed ? 30 : 12, repsMax: timed ? 45 : 20, restSec: 45 };
-  }
+  if (ex.unit === "min") return { sets: 1, repsMin: 15, repsMax: 20, restSec: 0 };
+  if (ex.unit === "seg") return { sets: 3, repsMin: 30, repsMax: 45, restSec: 45 };
+  if (ex.pattern === "core") return { sets: 3, repsMin: 12, repsMax: 20, restSec: 45 };
   if (system === "forca_5x5" && isMainSlot) {
     return { sets: level === "iniciante" ? 3 : 5, repsMin: 5, repsMax: 5, restSec: 180 };
   }
@@ -134,8 +140,11 @@ export function repScheme(goal: Goal, level: Level, ex: Exercise, system: System
 }
 
 /** Duração estimada de um exercício (segundos): execução + descanso + preparação. */
-export function estimateSeconds(p: Pick<PlannedExercise, "sets" | "repsMin" | "repsMax" | "restSec">): number {
+export function estimateSeconds(p: Pick<PlannedExercise, "sets" | "repsMin" | "repsMax" | "restSec"> & { exerciseId?: string; unit?: PlannedExercise["unit"] }): number {
   const reps = (p.repsMin + p.repsMax) / 2;
+  const unit = unitOf(p.exerciseId ?? "", p.unit);
+  if (unit === "min") return p.sets * (reps * 60 + p.restSec);
+  if (unit === "seg") return p.sets * (reps + p.restSec) + 30;
   return p.sets * (reps * 3 + p.restSec) + 60;
 }
 
@@ -165,7 +174,7 @@ function pickExercise(
 }
 
 export function buildPlanned(ex: Exercise, scheme: Scheme, technique: Technique = "normal"): PlannedExercise {
-  return { uid: uid(), exerciseId: ex.id, name: ex.name, ...scheme, loadKg: null, technique };
+  return { uid: uid(), exerciseId: ex.id, name: ex.name, ...scheme, loadKg: null, technique, ...(ex.unit && ex.unit !== "reps" ? { unit: ex.unit } : {}) };
 }
 
 /** Motor determinístico: gera uma ficha completa sem IA (também é o fallback da IA). */

@@ -1,7 +1,8 @@
 "use client";
 
 import { uid } from "@/lib/domain/ids";
-import type { BodyMetric, DietPlan, Invite, PhotoPose, Profile, Program, ProgressPhoto, Session } from "@/lib/domain/types";
+import type { Food } from "@/lib/domain/foods";
+import type { BodyMetric, DietPlan, Exercise, Invite, PhotoPose, Profile, Program, ProgressPhoto, Session, StudentDraft } from "@/lib/domain/types";
 import { DataError, summarizeStudent, type Repository } from "./repository";
 
 /**
@@ -99,8 +100,16 @@ function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
+interface Owned<T> {
+  ownerId: string;
+  item: T;
+}
+
 export class LocalRepository implements Repository {
   readonly mode = "local" as const;
+  // Tudo fica num aparelho só: convite por código não alcança outro celular,
+  // então o personal cadastra o aluno diretamente.
+  readonly capabilities = { invites: false, managedStudents: true };
 
   // perfis -------------------------------------------------------------------
   async getProfile(userId: string) {
@@ -146,6 +155,15 @@ export class LocalRepository implements Repository {
   }
   async saveSession(session: Session) {
     return upsert("sessions", session);
+  }
+  /** Grava várias sessões de uma vez (carga de dados de exemplo sem reescrever a coleção a cada item). */
+  saveSessionsBulk(sessions: Session[]) {
+    const ids = new Set(sessions.map((s) => s.id));
+    write("sessions", [...read<Session>("sessions").filter((s) => !ids.has(s.id)), ...sessions]);
+  }
+  saveMetricsBulk(metrics: BodyMetric[]) {
+    const ids = new Set(metrics.map((m) => m.id));
+    write("metrics", [...read<BodyMetric>("metrics").filter((m) => !ids.has(m.id)), ...metrics]);
   }
   async deleteSession(id: string) {
     remove("sessions", id);
@@ -211,6 +229,24 @@ export class LocalRepository implements Repository {
     }
     return out;
   }
+  async createStudent(coachId: string, draft: StudentDraft) {
+    const now = new Date().toISOString();
+    const profile: Profile = {
+      ...draft,
+      name: draft.name.trim(),
+      id: uid(),
+      role: "athlete",
+      plan: "free",
+      onboarded: true,
+      managedBy: coachId,
+      createdAt: now,
+      // Dados de saúde informados ao personal pelo próprio aluno.
+      consentHealthAt: now,
+    };
+    await this.saveProfile(profile);
+    this.linkDirect(coachId, profile.id, now);
+    return profile;
+  }
   async createInvite(coachId: string) {
     const code = Array.from({ length: 6 }, () => "ABCDEFGHJKMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 31)]).join("");
     const invite: Invite = { code, coachId, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 7 * 86_400_000).toISOString() };
@@ -248,6 +284,40 @@ export class LocalRepository implements Repository {
     write("links", [...read<Link>("links").filter((l) => l.studentId !== studentId), { coachId, studentId, since }]);
   }
 
+  // personalizados ------------------------------------------------------------
+  async listCustomExercises(ownerId: string) {
+    return read<Owned<Exercise>>("custom_exercises")
+      .filter((r) => r.ownerId === ownerId)
+      .map((r) => r.item);
+  }
+  async saveCustomExercise(ownerId: string, exercise: Exercise) {
+    const rows = read<Owned<Exercise>>("custom_exercises").filter((r) => !(r.ownerId === ownerId && r.item.id === exercise.id));
+    write("custom_exercises", [...rows, { ownerId, item: { ...exercise, custom: true } }]);
+    return exercise;
+  }
+  async deleteCustomExercise(ownerId: string, id: string) {
+    write(
+      "custom_exercises",
+      read<Owned<Exercise>>("custom_exercises").filter((r) => !(r.ownerId === ownerId && r.item.id === id)),
+    );
+  }
+  async listCustomFoods(ownerId: string) {
+    return read<Owned<Food>>("custom_foods")
+      .filter((r) => r.ownerId === ownerId)
+      .map((r) => r.item);
+  }
+  async saveCustomFood(ownerId: string, food: Food) {
+    const rows = read<Owned<Food>>("custom_foods").filter((r) => !(r.ownerId === ownerId && r.item.id === food.id));
+    write("custom_foods", [...rows, { ownerId, item: food }]);
+    return food;
+  }
+  async deleteCustomFood(ownerId: string, id: string) {
+    write(
+      "custom_foods",
+      read<Owned<Food>>("custom_foods").filter((r) => !(r.ownerId === ownerId && r.item.id === id)),
+    );
+  }
+
   async recordUpgradeIntent(userId: string, plan: string) {
     write("intents", [...read<Intent>("intents"), { userId, plan, at: new Date().toISOString() }]);
   }
@@ -260,6 +330,8 @@ export class LocalRepository implements Repository {
     write("metrics", read<BodyMetric>("metrics").filter((m) => m.userId !== userId));
     write("diets", read<DietPlan>("diets").filter((d) => d.ownerId !== userId));
     write("links", read<Link>("links").filter((l) => l.studentId !== userId && l.coachId !== userId));
+    write("custom_exercises", read<Owned<Exercise>>("custom_exercises").filter((r) => r.ownerId !== userId));
+    write("custom_foods", read<Owned<Food>>("custom_foods").filter((r) => r.ownerId !== userId));
   }
 
   /** Apaga todos os dados locais (botão "Apagar dados deste aparelho"). */

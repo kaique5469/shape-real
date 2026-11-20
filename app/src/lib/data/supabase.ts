@@ -2,7 +2,8 @@
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { uid } from "@/lib/domain/ids";
-import type { BodyMetric, DietPlan, Invite, PhotoPose, Profile, Program, ProgressPhoto, Session } from "@/lib/domain/types";
+import type { Food } from "@/lib/domain/foods";
+import type { BodyMetric, DietPlan, Exercise, Invite, PhotoPose, Profile, Program, ProgressPhoto, Session, StudentDraft } from "@/lib/domain/types";
 import { DataError, summarizeStudent, type Repository } from "./repository";
 
 type Row = Record<string, unknown>;
@@ -164,6 +165,7 @@ const toDiet = (r: Row): DietPlan => ({
 
 export class SupabaseRepository implements Repository {
   readonly mode = "supabase" as const;
+  readonly capabilities = { invites: true, managedStudents: false };
   private get db() {
     return getSupabase();
   }
@@ -330,6 +332,9 @@ export class SupabaseRepository implements Repository {
       );
     });
   }
+  async createStudent(_coachId: string, _draft: StudentDraft): Promise<Profile> {
+    throw new DataError("Com contas na nuvem, o aluno entra pelo seu código de convite.", "invalid");
+  }
   async createInvite(coachId: string) {
     const code = Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => "ABCDEFGHJKMNPQRSTUVWXYZ23456789"[b % 31]).join("");
     const { data, error } = await this.db.from("invites").insert({ code, coach_id: coachId }).select("*").single();
@@ -350,6 +355,39 @@ export class SupabaseRepository implements Repository {
     if (!data) return null;
     const { data: coach } = await this.db.from("profiles").select("id,name").eq("id", data.coach_id).maybeSingle();
     return coach ? { id: coach.id as string, name: coach.name as string } : null;
+  }
+
+  private async listCustom<T>(table: "custom_exercises" | "custom_foods", ownerId: string): Promise<T[]> {
+    const { data, error } = await this.db.from(table).select("data").eq("owner_id", ownerId);
+    if (error) fail(error, "Não foi possível carregar seus itens personalizados.");
+    return (data ?? []).map((r) => r.data as T);
+  }
+  private async saveCustom<T extends { id: string }>(table: "custom_exercises" | "custom_foods", ownerId: string, item: T): Promise<T> {
+    const { error } = await this.db.from(table).upsert({ id: item.id, owner_id: ownerId, data: item }, { onConflict: "owner_id,id" });
+    if (error) fail(error);
+    return item;
+  }
+  private async deleteCustom(table: "custom_exercises" | "custom_foods", ownerId: string, id: string) {
+    const { error } = await this.db.from(table).delete().eq("owner_id", ownerId).eq("id", id);
+    if (error) fail(error);
+  }
+  listCustomExercises(ownerId: string) {
+    return this.listCustom<Exercise>("custom_exercises", ownerId);
+  }
+  saveCustomExercise(ownerId: string, exercise: Exercise) {
+    return this.saveCustom("custom_exercises", ownerId, { ...exercise, custom: true });
+  }
+  deleteCustomExercise(ownerId: string, id: string) {
+    return this.deleteCustom("custom_exercises", ownerId, id);
+  }
+  listCustomFoods(ownerId: string) {
+    return this.listCustom<Food>("custom_foods", ownerId);
+  }
+  saveCustomFood(ownerId: string, food: Food) {
+    return this.saveCustom("custom_foods", ownerId, food);
+  }
+  deleteCustomFood(ownerId: string, id: string) {
+    return this.deleteCustom("custom_foods", ownerId, id);
   }
 
   async recordUpgradeIntent(userId: string, plan: string) {

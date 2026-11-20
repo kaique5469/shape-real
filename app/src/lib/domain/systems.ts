@@ -174,7 +174,23 @@ export const SYSTEMS: TrainingSystem[] = [
   },
 ];
 
-const BY_ID = new Map(SYSTEMS.map((s) => [s.id, s]));
+/** Divisão montada à mão pelo personal/aluno: quantos dias quiser, sem modelo. Não é gerada pelo motor nem pela IA. */
+export const FREE_SYSTEM: TrainingSystem = {
+  id: "livre",
+  name: "Divisão livre",
+  short: "Livre",
+  days: 0,
+  fits: [],
+  description: "Você define os dias e os exercícios do seu jeito.",
+  bestFor: "Personais com método próprio.",
+  week: [],
+  templates: [],
+};
+
+const BY_ID = new Map([...SYSTEMS, FREE_SYSTEM].map((s) => [s.id, s]));
+
+/** Letras/chaves padrão para dias de uma divisão livre. */
+export const DAY_KEYS = ["A", "B", "C", "D", "E", "F", "G"];
 
 export function getSystem(id: SystemId): TrainingSystem {
   const s = BY_ID.get(id);

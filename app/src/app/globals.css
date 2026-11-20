@@ -57,6 +57,10 @@
   60% { transform: scale(0.94); opacity: 1; }
   100% { transform: scale(1); }
 }
+@keyframes slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
 @keyframes rise {
   from { transform: translateY(10px); opacity: 0.001; }
   to { transform: none; opacity: 1; }

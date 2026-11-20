@@ -25,7 +25,19 @@ export type EventName =
   | "program_assigned"
   | "export_downloaded"
   | "upgrade_clicked"
-  | "paywall_viewed";
+  | "paywall_viewed"
+  | "tester_started"
+  | "tester_solo_started"
+  | "view_as_student"
+  | "student_created"
+  | "student_removed"
+  | "assessment_logged"
+  | "program_shared"
+  | "program_copied"
+  | "diet_shared"
+  | "custom_exercise_created"
+  | "custom_food_created"
+  | "feedback_sent";
 
 let distinctId: string | null = null;
 

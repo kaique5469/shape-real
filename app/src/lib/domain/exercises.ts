@@ -1,4 +1,4 @@
-import type { Exercise, MuscleGroup } from "./types";
+import type { Exercise, MuscleGroup, Unit } from "./types";
 
 /**
  * Biblioteca de exercícios com os nomes usados nas academias brasileiras.
@@ -97,14 +97,14 @@ export const EXERCISES: Exercise[] = [
   { id: "panturrilha_unilateral", name: "Panturrilha unilateral no degrau", group: "panturrilhas", implement: "peso_corporal", pattern: "isolado", compound: false, home: true },
 
   // Abdômen e core
-  { id: "prancha", name: "Prancha", group: "abdomen", implement: "peso_corporal", pattern: "core", compound: false, home: true, cue: "Contraia glúteo e abdômen; reps = segundos." },
+  { id: "prancha", name: "Prancha", group: "abdomen", implement: "peso_corporal", pattern: "core", compound: false, home: true, unit: "seg", cue: "Contraia glúteo e abdômen, quadril alinhado ao tronco." },
   { id: "abdominal_supra", name: "Abdominal supra", group: "abdomen", implement: "peso_corporal", pattern: "core", compound: false, home: true },
   { id: "abdominal_infra", name: "Abdominal infra (elevação de pernas)", group: "abdomen", implement: "peso_corporal", pattern: "core", compound: false, home: true },
   { id: "abdominal_polia", name: "Abdominal na polia (crunch)", group: "abdomen", implement: "cabo", pattern: "core", compound: false },
   { id: "elevacao_pernas_barra", name: "Elevação de pernas na barra", group: "abdomen", implement: "peso_corporal", pattern: "core", compound: false },
   { id: "abdominal_roda", name: "Abdominal com roda", group: "abdomen", implement: "peso_corporal", pattern: "core", compound: false, home: true },
   { id: "pallof", name: "Pallof press", group: "abdomen", implement: "cabo", pattern: "core", compound: false },
-  { id: "prancha_lateral", name: "Prancha lateral", group: "abdomen", implement: "peso_corporal", pattern: "core", compound: false, home: true },
+  { id: "prancha_lateral", name: "Prancha lateral", group: "abdomen", implement: "peso_corporal", pattern: "core", compound: false, home: true, unit: "seg" },
 
   // Antebraço
   { id: "rosca_punho", name: "Rosca de punho", group: "antebraco", implement: "barra", pattern: "isolado", compound: false },
@@ -113,9 +113,40 @@ export const EXERCISES: Exercise[] = [
 
 const BY_ID = new Map(EXERCISES.map((e) => [e.id, e]));
 
-export function getExercise(id: string): Exercise | undefined {
-  return BY_ID.get(id);
+/**
+ * Exercícios criados pelo usuário (personal ou aluno). Ficam num registro em memória,
+ * carregado do repositório ao entrar, para que getExercise/searchExercises os enxerguem.
+ */
+let CUSTOM: Exercise[] = [];
+let CUSTOM_BY_ID = new Map<string, Exercise>();
+
+export function registerCustomExercises(list: Exercise[]): void {
+  CUSTOM = list.map((e) => ({ ...e, custom: true }));
+  CUSTOM_BY_ID = new Map(CUSTOM.map((e) => [e.id, e]));
 }
+
+export function customExercises(): Exercise[] {
+  return CUSTOM;
+}
+
+export function isCustomExerciseId(id: string): boolean {
+  return id.startsWith("custom_");
+}
+
+export function getExercise(id: string): Exercise | undefined {
+  return BY_ID.get(id) ?? CUSTOM_BY_ID.get(id);
+}
+
+/** Unidade em que as séries de um exercício são contadas. */
+export function unitOf(exerciseId: string, fallback?: Unit): Unit {
+  return fallback ?? getExercise(exerciseId)?.unit ?? "reps";
+}
+
+export const UNIT_LABEL: Record<Unit, { short: string; column: string; noun: string }> = {
+  reps: { short: "reps", column: "Reps", noun: "repetições" },
+  seg: { short: "s", column: "Segundos", noun: "segundos" },
+  min: { short: "min", column: "Minutos", noun: "minutos" },
+};
 
 export const GROUP_LABEL: Record<MuscleGroup, string> = {
   peito: "Peito",
@@ -129,6 +160,9 @@ export const GROUP_LABEL: Record<MuscleGroup, string> = {
   panturrilhas: "Panturrilhas",
   abdomen: "Abdômen",
   antebraco: "Antebraço",
+  adutores: "Adutores",
+  lombar: "Lombar",
+  cardio: "Cardio",
 };
 
 /** Busca tolerante a acentos e caixa. */
@@ -142,5 +176,10 @@ export function normalize(s: string): string {
 
 export function searchExercises(query: string, group?: MuscleGroup | null): Exercise[] {
   const q = normalize(query);
-  return EXERCISES.filter((e) => (!group || e.group === group) && (!q || normalize(e.name).includes(q)));
+  const words = q.split(/\s+/).filter(Boolean);
+  return [...CUSTOM, ...EXERCISES].filter((e) => {
+    if (group && e.group !== group) return false;
+    const name = normalize(e.name);
+    return words.every((w) => name.includes(w));
+  });
 }

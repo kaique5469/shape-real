@@ -85,7 +85,7 @@ export async function POST(req: Request) {
     if (!b.text?.trim()) return NextResponse.json({ error: "Escreva o que você comeu." }, { status: 400 });
     const auth = await authorizeAI(req, "diet_analyze");
     if (auth.useAI) {
-      const ai = await structuredCall<{ meals: AIMeal[]; score: number; summary: string; highlights: string[]; adjustments: string[] }>({
+      const ai = await structuredCall<{ meals: AIMeal[]; score: number; summary: string; highlights: string[]; adjustments: string[] }>(auth.provider, {
         system: SYSTEM,
         user: `${tgt}\n\nAnalise o que a pessoa comeu (estime porções quando faltarem):\n"""${b.text}"""`,
         schema: ANALYZE_SCHEMA,
@@ -124,7 +124,7 @@ export async function POST(req: Request) {
 
   const auth = await authorizeAI(req, "diet_generate");
   if (auth.useAI) {
-    const ai = await structuredCall<{ name: string; notes: string; meals: AIMeal[] }>({
+    const ai = await structuredCall<{ name: string; notes: string; meals: AIMeal[] }>(auth.provider, {
       system: SYSTEM,
       user: `${tgt}\nPreferências/restrições: ${b.preferences || "nenhuma"}\n\nMonte um cardápio de 1 dia com 4–6 refeições que bata as metas (±5%).`,
       schema: GENERATE_SCHEMA,

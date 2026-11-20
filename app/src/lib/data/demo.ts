@@ -128,7 +128,7 @@ function profile(p: Partial<Profile> & { id: string; name: string; role: Profile
 
 async function seedAthlete(
   repo: LocalRepository,
-  opts: { id: string; name: string; sex: "M" | "F"; birthYear: number; heightCm: number; weightKg: number; goal: Goal; level: Level; system: SystemId; days: number; weeks: number; seed: number; skip?: number; delta: number; bf: number; coachId?: string },
+  opts: { id: string; name: string; sex: "M" | "F"; birthYear: number; heightCm: number; weightKg: number; goal: Goal; level: Level; system: SystemId; days: number; weeks: number; seed: number; skip?: number; delta: number; bf: number; coachId?: string; extra?: Partial<Profile>; stopDaysAgo?: number },
 ) {
   const p = profile({
     id: opts.id,
@@ -145,6 +145,7 @@ async function seedAthlete(
     sessionMinutes: 60,
     equipment: "academia",
     preferredSystem: opts.system,
+    ...opts.extra,
   });
   await repo.saveProfile(p);
   const program = generateProgram(
@@ -152,10 +153,15 @@ async function seedAthlete(
     { ownerId: p.id, createdBy: opts.coachId ?? p.id },
   );
   program.source = opts.coachId ? "personal" : "ia";
-  const sessions = simulateSessions(p.id, program, opts.weeks, opts.days, opts.seed, opts.skip);
+  let sessions = simulateSessions(p.id, program, opts.weeks, opts.days, opts.seed, opts.skip);
+  if (opts.stopDaysAgo) {
+    // Aluno parado: sem treinos recentes, para o painel mostrar o alerta de aderência.
+    const cutoff = Date.now() - opts.stopDaysAgo * 86_400_000;
+    sessions = sessions.filter((s) => new Date(s.startedAt).getTime() <= cutoff);
+  }
   await repo.saveProgram(program);
-  for (const s of sessions) await repo.saveSession(s);
-  for (const m of metricsSeries(p.id, opts.weeks, opts.weightKg - opts.delta * opts.weeks, opts.delta, opts.bf, opts.seed + 7)) await repo.saveMetric(m);
+  repo.saveSessionsBulk(sessions);
+  repo.saveMetricsBulk(metricsSeries(p.id, opts.weeks, opts.weightKg - opts.delta * opts.weeks, opts.delta, opts.bf, opts.seed + 7));
   const targets = targetsForProfile(p);
   if (targets) await repo.saveDiet(buildDietTemplate(targets, { ownerId: p.id, createdBy: opts.coachId ?? p.id }));
   return p;
@@ -179,13 +185,30 @@ export async function seedDemo(repo: LocalRepository, role: "athlete" | "coach")
       { id: "demo-aluna-3", name: "Beatriz Lima", sex: "F" as const, birthYear: 1999, heightCm: 160, weightKg: 55.5, goal: "hipertrofia" as Goal, level: "iniciante" as Level, system: "fullbody" as SystemId, days: 3, weeks: 5, seed: 37, delta: 0.15, bf: 24, skip: 0.45 },
     ];
     for (const s of students) {
-      await seedAthlete(repo, { ...s, coachId: DEMO_COACH_ID });
+      await seedAthlete(repo, { ...s, coachId: DEMO_COACH_ID, stopDaysAgo: s.id === "demo-aluna-3" ? 9 : undefined });
       repo.linkDirect(DEMO_COACH_ID, s.id, new Date(Date.now() - s.weeks * 7 * 86_400_000).toISOString());
     }
-    // Uma aluna parada há 9 dias, para o painel mostrar o alerta de aderência.
-    const late = await repo.listSessions("demo-aluna-3");
-    const cutoff = Date.now() - 9 * 86_400_000;
-    for (const s of late) if (new Date(s.startedAt).getTime() > cutoff) await repo.deleteSession(s.id);
   }
   return DEMO_COACH_ID;
+}
+
+/**
+ * Ambiente de teste para personais: entra direto como personal, sem cadastro, com
+ * três alunos de exemplo (marcados como exemplo e removíveis) para ver o painel vivo.
+ */
+export const TESTER_COACH_ID = "teste-personal";
+
+export async function seedTester(repo: LocalRepository): Promise<string> {
+  if (await repo.getProfile(TESTER_COACH_ID)) return TESTER_COACH_ID;
+  await repo.saveProfile(profile({ id: TESTER_COACH_ID, name: "Personal", role: "coach", plan: "coach", createdAt: new Date().toISOString() }));
+  const samples = [
+    { id: "teste-ex-1", name: "Juliana Prado", sex: "F" as const, birthYear: 1991, heightCm: 165, weightKg: 63.2, goal: "emagrecimento" as Goal, level: "intermediario" as Level, system: "upper_lower" as SystemId, days: 4, weeks: 6, seed: 11, delta: -0.35, bf: 27, skip: 0.08 },
+    { id: "teste-ex-2", name: "Marcos Antunes", sex: "M" as const, birthYear: 1987, heightCm: 182, weightKg: 88.0, goal: "forca" as Goal, level: "avancado" as Level, system: "forca_5x5" as SystemId, days: 3, weeks: 6, seed: 23, delta: 0.1, bf: 20, skip: 0.05 },
+    { id: "teste-ex-3", name: "Beatriz Lima", sex: "F" as const, birthYear: 1999, heightCm: 160, weightKg: 55.5, goal: "hipertrofia" as Goal, level: "iniciante" as Level, system: "fullbody" as SystemId, days: 3, weeks: 5, seed: 37, delta: 0.15, bf: 24, skip: 0.45, stopDaysAgo: 9 },
+  ];
+  for (const s of samples) {
+    await seedAthlete(repo, { ...s, coachId: TESTER_COACH_ID, extra: { sample: true, managedBy: TESTER_COACH_ID } });
+    repo.linkDirect(TESTER_COACH_ID, s.id, new Date(Date.now() - s.weeks * 7 * 86_400_000).toISOString());
+  }
+  return TESTER_COACH_ID;
 }

@@ -159,6 +159,23 @@ create table public.diet_plans (
   updated_at timestamptz not null default now()
 );
 
+-- Exercícios e alimentos criados pelo usuário (o item completo fica em data).
+create table public.custom_exercises (
+  owner_id uuid not null references public.profiles (id) on delete cascade,
+  id text not null,
+  data jsonb not null,
+  created_at timestamptz not null default now(),
+  primary key (owner_id, id)
+);
+
+create table public.custom_foods (
+  owner_id uuid not null references public.profiles (id) on delete cascade,
+  id text not null,
+  data jsonb not null,
+  created_at timestamptz not null default now(),
+  primary key (owner_id, id)
+);
+
 -- ---------------------------------------------------------------------------
 -- Monetização: uso de IA e interesse em planos pagos
 -- ---------------------------------------------------------------------------
@@ -252,6 +269,8 @@ alter table public.sessions enable row level security;
 alter table public.body_metrics enable row level security;
 alter table public.progress_photos enable row level security;
 alter table public.diet_plans enable row level security;
+alter table public.custom_exercises enable row level security;
+alter table public.custom_foods enable row level security;
 alter table public.ai_usage enable row level security;
 alter table public.upgrade_intents enable row level security;
 
@@ -291,16 +310,22 @@ create policy sessions_write on public.sessions for insert with check (user_id =
 create policy sessions_update on public.sessions for update using (user_id = auth.uid()) with check (user_id = auth.uid());
 create policy sessions_delete on public.sessions for delete using (user_id = auth.uid());
 
--- body_metrics
+-- body_metrics: o personal vinculado também registra a avaliação física do aluno
 create policy metrics_select on public.body_metrics for select using (user_id = auth.uid() or public.is_coach_of(user_id));
-create policy metrics_insert on public.body_metrics for insert with check (user_id = auth.uid());
-create policy metrics_update on public.body_metrics for update using (user_id = auth.uid()) with check (user_id = auth.uid());
-create policy metrics_delete on public.body_metrics for delete using (user_id = auth.uid());
+create policy metrics_insert on public.body_metrics for insert with check (user_id = auth.uid() or public.is_coach_of(user_id));
+create policy metrics_update on public.body_metrics for update
+  using (user_id = auth.uid() or public.is_coach_of(user_id))
+  with check (user_id = auth.uid() or public.is_coach_of(user_id));
+create policy metrics_delete on public.body_metrics for delete using (user_id = auth.uid() or public.is_coach_of(user_id));
 
--- progress_photos
+-- progress_photos: o personal vinculado pode adicionar fotos da avaliação; só o aluno apaga
 create policy photos_select on public.progress_photos for select using (user_id = auth.uid() or public.is_coach_of(user_id));
-create policy photos_insert on public.progress_photos for insert with check (user_id = auth.uid());
+create policy photos_insert on public.progress_photos for insert with check (user_id = auth.uid() or public.is_coach_of(user_id));
 create policy photos_delete on public.progress_photos for delete using (user_id = auth.uid());
+
+-- personalizados: só o dono
+create policy custom_exercises_all on public.custom_exercises for all using (owner_id = auth.uid()) with check (owner_id = auth.uid());
+create policy custom_foods_all on public.custom_foods for all using (owner_id = auth.uid()) with check (owner_id = auth.uid());
 
 -- diet_plans: dono e personal vinculado
 create policy diets_select on public.diet_plans for select using (owner_id = auth.uid() or public.is_coach_of(owner_id));
@@ -333,7 +358,11 @@ create policy photos_obj_select on storage.objects for select using (
   )
 );
 create policy photos_obj_insert on storage.objects for insert with check (
-  bucket_id = 'progress-photos' and (storage.foldername(name))[1] = auth.uid()::text
+  bucket_id = 'progress-photos'
+  and (
+    (storage.foldername(name))[1] = auth.uid()::text
+    or public.is_coach_of(((storage.foldername(name))[1])::uuid)
+  )
 );
 create policy photos_obj_delete on storage.objects for delete using (
   bucket_id = 'progress-photos' and (storage.foldername(name))[1] = auth.uid()::text

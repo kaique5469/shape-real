@@ -11,7 +11,10 @@ export type Sex = "M" | "F";
 export type ActivityLevel = "sedentario" | "leve" | "moderado" | "alto" | "atleta";
 export type PlanId = "free" | "pro" | "coach";
 
+export type Unit = "reps" | "seg" | "min";
+
 export type SystemId =
+  | "livre"
   | "fullbody"
   | "ab"
   | "abc"
@@ -33,14 +36,24 @@ export type MuscleGroup =
   | "gluteos"
   | "panturrilhas"
   | "abdomen"
-  | "antebraco";
+  | "antebraco"
+  | "adutores"
+  | "lombar"
+  | "cardio";
 
 export type Technique =
   | "normal"
   | "drop_set"
   | "bi_set"
+  | "tri_set"
+  | "super_serie"
   | "rest_pause"
   | "piramide"
+  | "piramide_dec"
+  | "cluster"
+  | "falha"
+  | "parciais"
+  | "negativa"
   | "isometria";
 
 export type Implement =
@@ -51,7 +64,9 @@ export type Implement =
   | "peso_corporal"
   | "kettlebell"
   | "elastico"
-  | "smith";
+  | "smith"
+  | "caneleira"
+  | "acessorio";
 
 export type Pattern =
   | "empurrar_h"
@@ -61,7 +76,9 @@ export type Pattern =
   | "agachar"
   | "quadril"
   | "isolado"
-  | "core";
+  | "core"
+  | "cardio"
+  | "mobilidade";
 
 export interface Exercise {
   id: string;
@@ -77,6 +94,10 @@ export interface Exercise {
   cue?: string;
   /** Exercício "principal" de força (agachamento, supino, terra, desenvolvimento, remada). */
   main?: boolean;
+  /** Como a série é contada: repetições (padrão), segundos (isometria) ou minutos (cardio). */
+  unit?: Unit;
+  /** Criado pelo usuário (não faz parte da biblioteca padrão). */
+  custom?: boolean;
 }
 
 export interface Profile {
@@ -96,6 +117,14 @@ export interface Profile {
   equipment?: Equipment;
   preferredSystem?: SystemId;
   limitations?: string;
+  /** WhatsApp do aluno (só dígitos, com DDD) — usado pelo personal para enviar ficha e dieta. */
+  phone?: string;
+  /** Aluno cadastrado pelo próprio personal (sem conta): id do personal responsável. */
+  managedBy?: string;
+  /** Anotações do personal sobre o aluno (anamnese, rotina, observações). */
+  coachNotes?: string;
+  /** Perfil de exemplo criado pelo modo teste (pode ser removido pelo personal). */
+  sample?: boolean;
   plan: PlanId;
   onboarded: boolean;
   createdAt: string;
@@ -114,6 +143,8 @@ export interface PlannedExercise {
   loadKg?: number | null;
   technique: Technique;
   notes?: string;
+  /** Unidade da série (padrão: a do exercício, ou "reps"). */
+  unit?: Unit;
 }
 
 export interface WorkoutDay {
@@ -135,6 +166,8 @@ export interface Program {
   level: Level;
   daysPerWeek: number;
   notes?: string;
+  /** Validade planejada da ficha, em semanas (o personal é avisado quando vence). */
+  durationWeeks?: number;
   days: WorkoutDay[];
   active: boolean;
   source: ProgramSource;
@@ -156,6 +189,7 @@ export interface ExerciseLog {
   planned?: { sets: number; repsMin: number; repsMax: number; loadKg?: number | null; restSec?: number };
   sets: SetLog[];
   notes?: string;
+  unit?: Unit;
 }
 
 export interface Session {
@@ -236,6 +270,10 @@ export interface DietPlan {
   notes?: string;
   updatedAt: string;
 }
+
+/** Dados que o personal informa ao cadastrar um aluno sem conta. */
+export type StudentDraft = Pick<Profile, "name"> &
+  Partial<Pick<Profile, "phone" | "sex" | "birthYear" | "heightCm" | "weightKg" | "activity" | "goal" | "level" | "daysPerWeek" | "sessionMinutes" | "equipment" | "preferredSystem" | "limitations" | "coachNotes">>;
 
 export interface Invite {
   code: string;

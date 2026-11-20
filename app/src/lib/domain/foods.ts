@@ -92,6 +92,32 @@ export const FOODS: Food[] = [
 ];
 
 const BY_ID = new Map(FOODS.map((f) => [f.id, f]));
+
+/** Alimentos criados pelo usuário; registrados em memória ao entrar (ver app-context). */
+let CUSTOM_FOODS: Food[] = [];
+let CUSTOM_BY_ID = new Map<string, Food>();
+let version = 0;
+
+export function registerCustomFoods(list: Food[]): void {
+  CUSTOM_FOODS = list;
+  CUSTOM_BY_ID = new Map(list.map((f) => [f.id, f]));
+  version++;
+}
+
+export function customFoods(): Food[] {
+  return CUSTOM_FOODS;
+}
+
+/** Todos os alimentos (personalizados primeiro). */
+export function allFoods(): Food[] {
+  return [...CUSTOM_FOODS, ...FOODS];
+}
+
+/** Muda sempre que o registro de personalizados muda (para invalidar índices derivados). */
+export function foodsVersion(): number {
+  return version;
+}
+
 export function getFood(id: string): Food | undefined {
-  return BY_ID.get(id);
+  return BY_ID.get(id) ?? CUSTOM_BY_ID.get(id);
 }
