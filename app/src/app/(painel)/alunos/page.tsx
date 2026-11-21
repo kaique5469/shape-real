@@ -147,7 +147,7 @@ function Alunos() {
             {[
               { n: 1, title: "Cadastre um aluno", body: "Nome, objetivo, rotina e limitações. Leva um minuto.", action: () => setFormOpen(true), cta: "Adicionar" },
               { n: 2, title: "Monte a ficha e a dieta", body: "Gere uma base e ajuste, ou monte do zero. Depois envie pelo WhatsApp ou imprima.", action: null, cta: "" },
-              { n: 3, title: "Veja o app como o aluno", body: "Na página do aluno, toque em “Ver como aluno” e registre um treino com cargas.", action: null, cta: "" },
+              { n: 3, title: "Veja o app como o aluno", body: "Na página do aluno, toque em “Ver como aluno” e registre um treino. Na versão final, o aluno entra com a própria conta no celular dele.", action: null, cta: "" },
             ].map((s) => (
               <li key={s.n} className="flex items-center gap-3 px-4 py-3">
                 <span className="plate-type num grid size-8 shrink-0 place-items-center rounded-full border border-rule-strong text-sm">{s.n}</span>
