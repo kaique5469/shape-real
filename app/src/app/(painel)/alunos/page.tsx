@@ -5,6 +5,7 @@ import { Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronRight, Copy, MessageCircle, Search, Trash2, UserPlus, X } from "lucide-react";
 import { StudentForm } from "@/components/student-form";
+import { InviteDialog } from "@/components/invite-dialog";
 import { InstallCard } from "@/components/pwa";
 import { Alert, Badge, Button, Dialog, Empty, Input, PageHeader, Skeleton, cx } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
@@ -116,18 +117,23 @@ function Alunos() {
     }
   }
 
+  // Com contas na nuvem há dois caminhos: cadastrar o aluno direto (ele assume depois) ou mandar um convite para ele se cadastrar.
   const addAction = canManage ? (
-    <Button onClick={() => setFormOpen(true)} icon={<UserPlus className="size-4" />} disabled={full}>
-      Adicionar aluno
-    </Button>
+    <>
+      <Button onClick={() => setFormOpen(true)} icon={<UserPlus className="size-4" />} disabled={full}>
+        Adicionar aluno
+      </Button>
+      {repo.capabilities.invites ? (
+        <Button variant="secondary" onClick={newInvite} loading={inviting} disabled={full}>
+          Convidar por link
+        </Button>
+      ) : null}
+    </>
   ) : (
     <Button onClick={newInvite} loading={inviting} icon={<UserPlus className="size-4" />} disabled={full}>
       Convidar aluno
     </Button>
   );
-
-  const link = invite ? `${typeof window !== "undefined" ? location.origin : ""}/convite/${invite.code}` : "";
-  const inviteText = invite ? `Oi! Vou acompanhar seus treinos pelo Shape Real. Crie sua conta por este link: ${link} (ou use o código ${invite.code}).` : "";
 
   return (
     <>
@@ -307,36 +313,7 @@ function Alunos() {
         </div>
       </Dialog>
 
-      <Dialog open={inviteOpen} onClose={() => setInviteOpen(false)} title="Convite para aluno">
-        {invite ? (
-          <div className="space-y-4">
-            <p className="text-[0.9375rem] text-steel">Envie o link ou o código. Ele vale por 7 dias e serve para um aluno.</p>
-            <p className="plate-type rounded-[8px] border-2 border-dashed border-rule-strong bg-chalk py-4 text-center text-[2.2rem] tracking-[0.25em]">{invite.code}</p>
-            <div className="flex flex-wrap gap-2">
-              <a
-                href={waLink(inviteText)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-[6px] bg-plate-green px-4 font-semibold text-white hover:bg-plate-green-ink"
-              >
-                <MessageCircle className="size-4" /> Enviar no WhatsApp
-              </a>
-              <Button
-                variant="secondary"
-                className="flex-1"
-                icon={<Copy className="size-4" />}
-                onClick={async () => {
-                  await navigator.clipboard?.writeText(inviteText).catch(() => undefined);
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 2000);
-                }}
-              >
-                {copied ? "Copiado" : "Copiar mensagem"}
-              </Button>
-            </div>
-          </div>
-        ) : null}
-      </Dialog>
+      <InviteDialog open={inviteOpen} onClose={() => setInviteOpen(false)} invite={invite} />
     </>
   );
 }

@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { LocalRepository } from "@/lib/data/local";
-import { getSupabase, SupabaseRepository, supabaseConfigured } from "@/lib/data/supabase";
+import { cachedSelf, clearCloudCache, getSupabase, SupabaseRepository, supabaseConfigured } from "@/lib/data/supabase";
 import { seedDemo, seedTester } from "@/lib/data/demo";
 import type { Repository } from "@/lib/data/repository";
 import { registerCustomExercises } from "@/lib/domain/exercises";
@@ -16,12 +16,15 @@ import { identify, resetIdentity, setContext, track } from "@/lib/analytics";
  *  - "supabase": conta real (quando o projeto tem Supabase configurado);
  *  - "local": dados no aparelho — uso sem conta, demonstração e modo teste.
  *
- * No modo local o personal pode "ver como aluno": a sessão troca para o perfil do
- * aluno e guarda para onde voltar (RETURN_KEY).
+ * O personal pode "ver como aluno": a sessão do app troca para o perfil do aluno e guarda
+ * para onde voltar (RETURN_KEY no modo local; ACTING_KEY na nuvem, onde a conta logada
+ * continua sendo a do personal e o banco confere o vínculo a cada gravação).
  */
 const LOCAL_SESSION_KEY = "sr:session";
 const RETURN_KEY = "sr:return";
 const TESTER_KEY = "sr:tester";
+/** Conta na nuvem: o personal está vendo como um aluno (vale só para a aba aberta). */
+const ACTING_KEY = "sr:acting";
 
 interface AppContextValue {
   ready: boolean;
@@ -47,7 +50,7 @@ interface AppContextValue {
   startTester: () => Promise<Profile>;
   /** No teste: cria um perfil de aluno que treina sozinho e entra nele (com volta para o personal). */
   startSolo: () => Promise<Profile>;
-  /** Personal passa a ver o app como um aluno seu (somente modo local). */
+  /** Personal passa a ver o app como um aluno seu (e registra o treino por ele, na aula presencial). */
   actAs: (profileId: string) => Promise<void>;
   returnToOwner: () => Promise<Profile | null>;
   refreshCustom: () => Promise<void>;
@@ -120,35 +123,59 @@ export function AppProvider({ children }: { children: ReactNode }) {
       try {
         if (cloudRepo) {
           const sb = getSupabase();
-          const { data } = await sb.auth.getSession();
-          if (data.session) {
-            const p = await cloudRepo.getProfile(data.session.user.id).catch(() => null);
-            if (p) {
-              setMode("supabase");
+          const enterCloud = async (p: Profile) => {
+            ls.del(LOCAL_SESSION_KEY);
+            ls.del(RETURN_KEY);
+            setMode("supabase");
+            identify(p.id, { role: p.role });
+            // O personal estava vendo como um aluno nesta aba: volta para onde estava.
+            let acting: { owner: string; target: string } | null = null;
+            try {
+              acting = JSON.parse(sessionStorage.getItem(ACTING_KEY) ?? "null");
+            } catch {}
+            const target = acting?.owner === p.id ? await cloudRepo.getProfile(acting.target).catch(() => null) : null;
+            if (target) {
+              setReturnTo({ id: p.id, name: p.name });
+              setUserState(target);
+            } else {
+              setReturnTo(null);
               setUserState(p);
-              identify(p.id, { role: p.role });
             }
+            // Treinos finalizados sem sinal sobem assim que houver rede.
+            if (navigator.onLine) void cloudRepo.flushPending().catch(() => {});
+          };
+          const { data } = await sb.auth.getSession().catch(() => ({ data: { session: null } }));
+          if (data.session) {
+            // getProfile devolve a cópia guardada no aparelho quando não há rede.
+            const p = (await cloudRepo.getProfile(data.session.user.id).catch(() => null)) ?? cachedSelf();
+            if (p) await enterCloud(p);
+          } else if (!navigator.onLine && cachedSelf()) {
+            // Sem rede e com o acesso vencido: abre com quem estava logado; a sessão se renova quando a rede voltar.
+            await enterCloud(cachedSelf()!);
           } else {
             await loadLocal();
           }
           const sub = sb.auth.onAuthStateChange(async (event, session) => {
             if (event === "SIGNED_IN" && session) {
               const p = await cloudRepo.getProfile(session.user.id).catch(() => null);
-              if (p) {
-                ls.del(LOCAL_SESSION_KEY);
-                ls.del(RETURN_KEY);
-                setReturnTo(null);
-                setMode("supabase");
-                setUserState(p);
-                identify(p.id, { role: p.role });
-              }
+              if (p) await enterCloud(p);
             }
             if (event === "SIGNED_OUT") {
+              clearCloudCache();
+              try {
+                sessionStorage.removeItem(ACTING_KEY);
+              } catch {}
+              setReturnTo(null);
               setUserState(null);
               setMode("local");
             }
           });
-          unsub = () => sub.data.subscription.unsubscribe();
+          const online = () => void cloudRepo.flushPending().catch(() => {});
+          window.addEventListener("online", online);
+          unsub = () => {
+            sub.data.subscription.unsubscribe();
+            window.removeEventListener("online", online);
+          };
         } else {
           await loadLocal();
         }
@@ -162,6 +189,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Exercícios e alimentos personalizados do usuário (e do personal que o cadastrou).
   const userId = user?.id;
   const managedBy = user?.managedBy;
+  const role = user?.role;
   const refreshCustom = useCallback(async () => {
     if (!userId) {
       registerCustomExercises([]);
@@ -169,7 +197,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setCustomVersion((v) => v + 1);
       return;
     }
-    const owners = managedBy ? [userId, managedBy] : [userId];
+    // O aluno também enxerga o que o personal dele criou (aparece na ficha e na dieta).
+    const coachId = managedBy ?? (repo.mode === "supabase" && role !== "coach" ? ((await repo.getCoach(userId).catch(() => null))?.id ?? null) : null);
+    const owners = coachId && coachId !== userId ? [userId, coachId] : [userId];
     const [exercises, foods] = await Promise.all([
       Promise.all(owners.map((o) => repo.listCustomExercises(o).catch(() => []))),
       Promise.all(owners.map((o) => repo.listCustomFoods(o).catch(() => []))),
@@ -177,7 +207,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     registerCustomExercises(exercises.flat());
     registerCustomFoods(foods.flat());
     setCustomVersion((v) => v + 1);
-  }, [repo, userId, managedBy]);
+  }, [repo, userId, managedBy, role]);
 
   useEffect(() => {
     void refreshCustom();
@@ -206,6 +236,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     ls.del(RETURN_KEY);
     setReturnTo(null);
     if (mode === "supabase" && cloudRepo) {
+      try {
+        sessionStorage.removeItem(ACTING_KEY);
+      } catch {}
+      clearCloudCache();
       await getSupabase().auth.signOut();
       // Saída de uma conta identificada: os próximos eventos voltam a ser anônimos.
       resetIdentity();
@@ -271,7 +305,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const actAs = useCallback(
     async (profileId: string) => {
-      if (mode !== "local" || !user) throw new Error("Disponível apenas com dados neste aparelho.");
+      if (!user) throw new Error("Entre na sua conta para continuar.");
+      if (mode === "supabase" && cloudRepo) {
+        // A conta logada continua sendo a do personal; o banco só entrega e aceita dados de alunos dele.
+        const target = await cloudRepo.getProfile(profileId);
+        if (!target || target.id === user.id) throw new Error("Aluno não encontrado.");
+        try {
+          sessionStorage.setItem(ACTING_KEY, JSON.stringify({ owner: user.id, target: target.id }));
+        } catch {}
+        setReturnTo({ id: user.id, name: user.name });
+        setUserState(target);
+        track("view_as_student", {});
+        return;
+      }
       const target = await localRepo.getProfile(profileId);
       const coach = target ? await localRepo.getCoach(target.id) : null;
       if (!target || (coach?.id !== user.id && target.managedBy !== user.id)) throw new Error("Aluno não encontrado.");
@@ -284,13 +330,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const returnToOwner = useCallback(async () => {
+    if (mode === "supabase" && cloudRepo) {
+      try {
+        sessionStorage.removeItem(ACTING_KEY);
+      } catch {}
+      const back = returnTo ? ((await cloudRepo.getProfile(returnTo.id).catch(() => null)) ?? cachedSelf()) : null;
+      setReturnTo(null);
+      if (back) setUserState(back);
+      return back;
+    }
     const backId = ls.get(RETURN_KEY);
     const back = backId ? await localRepo.getProfile(backId) : null;
     ls.del(RETURN_KEY);
     setReturnTo(null);
     if (back) enterLocal(back);
     return back;
-  }, [enterLocal]);
+  }, [enterLocal, mode, returnTo]);
 
   const signInPassword = useCallback(async (email: string, password: string) => {
     const { error } = await getSupabase().auth.signInWithPassword({ email, password });
@@ -324,7 +379,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [mode]);
 
   // Contexto que acompanha todos os eventos: em que modo o app está e quem está usando (sem identificar a pessoa).
-  const role = user?.role;
   const demo = Boolean(user?.id.startsWith("demo-"));
   const viewingAsStudent = Boolean(returnTo);
   useEffect(() => {
@@ -344,8 +398,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         : "pro"
       : user.plan !== "free"
         ? user.plan
-        : user.managedBy
-          ? "pro"
+        : user.managedBy || (returnTo && mode === "supabase")
+          ? // Aluno acompanhado por personal usa os recursos Pro; o mesmo vale enquanto o personal vê como aluno.
+            "pro"
           : "free";
 
   const value = useMemo<AppContextValue>(

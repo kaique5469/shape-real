@@ -133,7 +133,12 @@ export interface Profile {
   coachNotes?: string;
   /** Perfil de exemplo criado pelo modo teste (pode ser removido pelo personal). */
   sample?: boolean;
+  /** Plano que vale agora (inclui o período de teste e o personal pagante). */
   plan: PlanId;
+  /** Plano contratado de fato; só existe em contas na nuvem. */
+  paidPlan?: PlanId;
+  /** Fim do período de teste com tudo liberado (contas na nuvem). */
+  trialUntil?: string;
   onboarded: boolean;
   createdAt: string;
   /** LGPD: dados de saúde são sensíveis — consentimento explícito e datado. */
@@ -290,6 +295,8 @@ export interface Invite {
   createdAt: string;
   expiresAt: string;
   usedBy?: string | null;
+  /** Convite de um cadastro específico: quem aceita assume aquele aluno. */
+  studentId?: string;
 }
 
 export interface StudentSummary {

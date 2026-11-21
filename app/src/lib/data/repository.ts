@@ -24,7 +24,7 @@ export interface Repository {
   /**
    * O que este armazenamento permite:
    *  - invites: convite por código funciona entre aparelhos (só com contas na nuvem);
-   *  - managedStudents: o personal cadastra o aluno direto, sem conta (modo local/teste).
+   *  - managedStudents: o personal cadastra o aluno direto, sem o aluno ter conta.
    */
   readonly capabilities: { invites: boolean; managedStudents: boolean };
 
@@ -55,7 +55,8 @@ export interface Repository {
   listStudents(coachId: string): Promise<StudentSummary[]>;
   /** Cadastra um aluno sem conta, já vinculado ao personal (requer capabilities.managedStudents). */
   createStudent(coachId: string, draft: StudentDraft): Promise<Profile>;
-  createInvite(coachId: string): Promise<Invite>;
+  /** Convite geral do personal ou, com `studentId`, do cadastro de um aluno sem conta (só na nuvem). */
+  createInvite(coachId: string, studentId?: string): Promise<Invite>;
   acceptInvite(code: string, studentId: string): Promise<{ coachName: string }>;
   unlinkStudent(coachId: string, studentId: string): Promise<void>;
   getCoach(studentId: string): Promise<{ id: string; name: string } | null>;
@@ -67,6 +68,11 @@ export interface Repository {
   listCustomFoods(ownerId: string): Promise<Food[]>;
   saveCustomFood(ownerId: string, food: Food): Promise<Food>;
   deleteCustomFood(ownerId: string, id: string): Promise<void>;
+
+  /** Treinos finalizados sem rede que ainda não subiram (só na nuvem). */
+  pendingCount?(): number;
+  /** Tenta enviar o que ficou pendente; devolve quantos ainda faltam. */
+  flushPending?(): Promise<number>;
 
   recordUpgradeIntent(userId: string, plan: string): Promise<void>;
   /** LGPD: exclusão definitiva da conta e de todos os dados do usuário. */

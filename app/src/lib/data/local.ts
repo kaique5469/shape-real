@@ -247,7 +247,7 @@ export class LocalRepository implements Repository {
     this.linkDirect(coachId, profile.id, now);
     return profile;
   }
-  async createInvite(coachId: string) {
+  async createInvite(coachId: string, _studentId?: string) {
     const code = Array.from({ length: 6 }, () => "ABCDEFGHJKMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 31)]).join("");
     const invite: Invite = { code, coachId, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 7 * 86_400_000).toISOString() };
     write("invites", [...read<Invite>("invites"), invite]);
