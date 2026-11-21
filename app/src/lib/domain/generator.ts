@@ -56,16 +56,21 @@ export const TECHNIQUE_LABEL: Record<Technique, string> = {
   isometria: "Isometria",
 };
 
-/** PRNG determinístico (mulberry32) para variações reproduzíveis. */
-function rng(seed: number) {
-  let a = seed >>> 0;
-  return () => {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+/**
+ * Ruído determinístico em [0, 1) a partir de um texto (FNV-1a + mistura final).
+ * O sorteio de cada encaixe depende só de (seed, dia, encaixe, exercício): a mesma seed dá a mesma
+ * escolha mesmo quando o tempo da sessão muda e outros encaixes entram ou saem.
+ */
+function hash01(text: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  h = (h + 0x6d2b79f5) | 0;
+  let t = Math.imul(h ^ (h >>> 15), 1 | h);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
 
 // ───────────────────────── Equipamento e nível ─────────────────────────
@@ -273,7 +278,9 @@ export function analyzeLimitations(text?: string): LimitationPlan {
   const notes = new Map<string, string>();
   const floors = new Map<MuscleGroup | "*", number>();
   let population = false;
-  const t = normalize(text ?? "").replace(NEGATED, " ");
+  const raw = normalize(text ?? "");
+  const t = raw.replace(NEGATED, " ");
+  const negated = t !== raw;
   for (const rule of LIMITATION_RULES) {
     if (!rule.match.test(t) || (rule.unless && rule.unless.test(t))) continue;
     if (!labels.includes(rule.label)) labels.push(rule.label);
@@ -286,7 +293,8 @@ export function analyzeLimitations(text?: string): LimitationPlan {
   return {
     avoid,
     labels,
-    unrecognized: declared && labels.length === 0,
+    // "Sem dor no joelho, liberado pelo fisio": a negação explica o texto; não é uma limitação desconhecida.
+    unrecognized: declared && labels.length === 0 && !negated,
     population,
     minRepsFor: (group) => Math.max(floors.get("*") ?? 0, floors.get(group) ?? 0),
     noteFor: (id) => notes.get(id),
@@ -361,7 +369,7 @@ export function repScheme(goal: Goal, level: Level, ex: Exercise, system: System
 
   // Sem carga, elástico e caneleira: repetições mais altas e descanso curto, em qualquer objetivo.
   if (light) {
-    if (HARD_BODYWEIGHT.has(ex.id)) return sc(advanced ? 4 : 3, 6, 12, 90);
+    if (HARD_BODYWEIGHT.has(ex.id)) return sc(advanced ? 4 : 3, opts.style === "volume" ? 8 : 6, 12, 90);
     if (ex.compound && (ex.group === "peito" || ex.group === "triceps" || ex.group === "ombros")) return sc(3, 10, 15, 60);
     return sc(3, 12, 20, ex.compound ? 60 : 45);
   }
@@ -482,7 +490,9 @@ interface PickCtx {
   avoid: Set<string>;
   usedInDay: Set<string>;
   usedInProgram: Set<string>;
-  rand: () => number;
+  seed: number;
+  /** Identifica o encaixe em sorteio (dia + posição), para o ruído não depender da ordem das chamadas. */
+  salt: string;
 }
 
 /** Lista de preferidos do encaixe; no principal, depende de nível e objetivo. */
@@ -550,12 +560,19 @@ function pickExercise(slot: Slot, ctx: PickCtx): Exercise | undefined {
     return family === undefined || !takenFamilies.has(family);
   };
 
+  const beginnerGym = ctx.level === "iniciante" && ctx.equipment === "academia" && !fiveByFiveMain;
   const score = (e: Exercise, preferred: boolean) => {
-    let v = ctx.rand() * 1.5;
+    let v = hash01(`${ctx.seed}|${ctx.salt}|${e.id}`) * 1.5;
     if (ctx.usedInProgram.has(e.id) && !fiveByFiveMain) v -= 2;
-    if (preferred && prefer.ordered) return v - prefer.ids.indexOf(e.id) * (prefer.strict ? 3 : 0.6);
+    // Iniciante em academia: barra livre só se não houver máquina, Smith, polia ou halter para o encaixe.
+    if (beginnerGym && e.implement === "barra") v -= 3;
+    if (preferred && prefer.ordered) {
+      // Os três primeiros da lista se alternam; do quarto em diante são trocas (lesão, casa) e só entram se os primeiros faltarem.
+      const i = prefer.ids.indexOf(e.id);
+      return v - (prefer.strict ? i * 3 : i <= 2 ? i * 0.6 : 1.2 + (i - 2) * 3);
+    }
     v += (e.pri ?? 0) * 0.8;
-    if (ctx.level === "iniciante" && ctx.equipment === "academia" && (e.implement === "maquina" || e.implement === "cabo" || e.implement === "smith")) v += 1;
+    if (beginnerGym && (e.implement === "maquina" || e.implement === "cabo" || e.implement === "smith")) v += 1;
     return v;
   };
 
@@ -611,11 +628,17 @@ const FALLBACK_ISOLATED: Partial<Record<MuscleGroup, MuscleGroup[]>> = {
 function pickWithFallback(slot: Slot, ctx: PickCtx): Exercise | undefined {
   const direct = pickExercise(slot, ctx);
   if (direct || slot.optional) return direct;
-  for (const group of (slot.compound ? FALLBACK_COMPOUND : FALLBACK_ISOLATED)[slot.group] ?? []) {
-    const ex = pickExercise({ group }, ctx);
-    if (ex) return ex;
+  const salt = ctx.salt;
+  try {
+    for (const group of (slot.compound ? FALLBACK_COMPOUND : FALLBACK_ISOLATED)[slot.group] ?? []) {
+      ctx.salt = `${salt}>${group}`;
+      const ex = pickExercise({ group }, ctx);
+      if (ex) return ex;
+    }
+    return undefined;
+  } finally {
+    ctx.salt = salt;
   }
-  return undefined;
 }
 
 const SIDE_NOTE = "Repetições por lado.";
@@ -799,7 +822,7 @@ function pickCardio(ctx: PickCtx): Exercise | undefined {
   // Os três primeiros da lista se alternam entre os dias; os demais só entram como troca.
   return candidates
     .slice(0, 3)
-    .map((e) => ({ e, v: ctx.rand() + (ctx.usedInProgram.has(e.id) ? -0.5 : 0) }))
+    .map((e) => ({ e, v: hash01(`${ctx.seed}|${ctx.salt}|cardio|${e.id}`) + (ctx.usedInProgram.has(e.id) ? -0.5 : 0) }))
     .sort((a, b) => b.v - a.v || a.e.id.localeCompare(b.e.id))[0]?.e;
 }
 
@@ -819,9 +842,11 @@ const RELATED_FOCUS: Partial<Record<MuscleGroup, MuscleGroup[]>> = {
 
 function emphasisDays(system: TrainingSystem, group: MuscleGroup): Set<string> {
   const direct = system.templates.filter((t) => t.focus.includes(group) || t.slots.some((s) => s.group === group));
-  if (direct.length) return new Set(direct.map((t) => t.key));
   const related = RELATED_FOCUS[group] ?? [];
-  return new Set(system.templates.filter((t) => t.focus.some((g) => related.includes(g))).map((t) => t.key));
+  const legDays = system.templates.filter((t) => t.focus.some((g) => related.includes(g)));
+  // Glúteos, posteriores e quadríceps priorizados entram em todo dia de pernas, não só no dia que já os treina.
+  if (LEGS.includes(group)) return new Set([...direct, ...legDays].map((t) => t.key));
+  return new Set((direct.length ? direct : legDays).map((t) => t.key));
 }
 
 /**
@@ -832,7 +857,7 @@ function emphasize(slots: Slot[], group: MuscleGroup): Slot[] {
   const spec = EMPHASIS_SLOTS[group];
   if (!spec) return slots;
   const out = slots.map((s) => (s.group === group ? { ...s, optional: false, emphasis: true } : s));
-  let added = slots.some((s) => s.group === group && s.optional);
+  let added = false;
 
   if (spec.compound) {
     const at = out.findIndex((s) => s.group === group && s.compound);
@@ -861,6 +886,8 @@ interface DayCtx extends PickCtx {
   minutes: number;
   /** Mesmo treino 2x por semana (ABC 6x): sem séries extras. */
   highFrequency: boolean;
+  /** Programa trocado por um mais seguro por causa de limitação: nada de séries abaixo de 6 repetições. */
+  conservative: boolean;
   emphasisByDay: Map<MuscleGroup, Set<string>>;
 }
 
@@ -881,6 +908,12 @@ function buildDay(tpl: DayTemplate, ctx: DayCtx): WorkoutDay {
     const scheme = repScheme(input.goal, input.level, ex, ctx.system, Boolean(slot.main), { style: styled });
     const mainLift = Boolean(slot.main) && ex.compound;
     if (ctx.highFrequency) scheme.sets = Math.min(scheme.sets, mainLift ? 4 : 3);
+    if (ctx.conservative && (ex.unit ?? "reps") === "reps" && ex.pattern !== "core" && scheme.repsMin < 6) {
+      scheme.repsMin = 6;
+      scheme.repsMax = Math.max(scheme.repsMax, 8);
+      scheme.sets = Math.min(scheme.sets, 4);
+      scheme.restSec = Math.min(scheme.restSec, 150);
+    }
     // Sessões de até 60 min: acessórios com 60–90 s de descanso, iguais em todos os dias da ficha.
     if (ctx.minutes <= 60 && !mainLift && (ex.unit ?? "reps") === "reps") scheme.restSec = Math.min(scheme.restSec, ex.compound ? 90 : 60);
     const p = buildPlanned(ex, scheme);
@@ -889,8 +922,9 @@ function buildDay(tpl: DayTemplate, ctx: DayCtx): WorkoutDay {
   };
 
   // 1. Encaixes fixos, na ordem do modelo (os opcionais ficam guardando lugar).
-  const placed: (Entry | undefined)[] = slots.map((slot) => {
+  const placed: (Entry | undefined)[] = slots.map((slot, i) => {
     if (slot.optional) return undefined;
+    ctx.salt = `${tpl.key}:${i}`;
     const ex = pickWithFallback(slot, ctx);
     return ex ? make(slot, ex) : undefined;
   });
@@ -899,6 +933,7 @@ function buildDay(tpl: DayTemplate, ctx: DayCtx): WorkoutDay {
   // 2. Mínimo de 4 exercícios (sem equipamento ou com várias lesões os encaixes do modelo podem faltar).
   const extras: Entry[] = [];
   const add = (group: MuscleGroup, keep = false) => {
+    ctx.salt = `${tpl.key}:extra:${group}:${extras.length}`;
     const ex = pickExercise({ group }, ctx);
     if (ex) extras.push(make({ group, emphasis: keep }, ex));
   };
@@ -932,6 +967,7 @@ function buildDay(tpl: DayTemplate, ctx: DayCtx): WorkoutDay {
     let cardio: Entry | undefined;
     const spare = limit - total(list);
     if (CARDIO_GOALS.includes(input.goal) && spare >= 600) {
+      ctx.salt = tpl.key;
       const ex = pickCardio(ctx);
       if (ex) {
         const cap = ex.id.startsWith("hiit_") ? 15 : ex.id === "pular_corda" ? 10 : 20;
@@ -946,6 +982,7 @@ function buildDay(tpl: DayTemplate, ctx: DayCtx): WorkoutDay {
     slots.forEach((slot, i) => {
       // Iniciante: no máximo 7 exercícios de força por dia.
       if (!slot.optional || (input.level === "iniciante" && list.length >= 7)) return;
+      ctx.salt = `${tpl.key}:${i}`;
       const ex = pickExercise(slot, ctx);
       if (!ex) return;
       const wasUsed = ctx.usedInProgram.has(ex.id);
@@ -1007,19 +1044,19 @@ const NOTE_5X5 =
   "Comece leve (cerca de metade do que você faria em 5 repetições) e faça 2–3 séries de aquecimento subindo a carga antes das séries válidas. Fechou todas as séries com 5 repetições: suba 2,5 kg no agachamento, supino, desenvolvimento e remada e 5 kg no terra. Falhou: repita a carga; após duas falhas seguidas, volte 10%.";
 
 /** O 5×5 depende dos básicos com barra: sem academia ou com limitação que os tira, vira um Full Body. */
-function resolveSystem(input: GenerateInput, lim: LimitationPlan): { system: TrainingSystem; note?: string } {
-  if (input.system !== "forca_5x5") return { system: getSystem(input.system) };
-  if (input.equipment !== "academia") return { system: getSystem("fullbody"), note: "O 5×5 precisa de barra e anilhas; montei um Full Body equivalente." };
+function resolveSystem(input: GenerateInput, lim: LimitationPlan): { system: TrainingSystem; note?: string; conservative: boolean } {
+  if (input.system !== "forca_5x5") return { system: getSystem(input.system), conservative: false };
+  if (input.equipment !== "academia") return { system: getSystem("fullbody"), note: "O 5×5 precisa de barra e anilhas; montei um Full Body equivalente.", conservative: false };
   if (lim.population || FIVE_BASICS.some((id) => lim.avoid.has(id))) {
-    return { system: getSystem("fullbody"), note: "O 5×5 depende dos básicos pesados com barra; com as limitações informadas, montei um Full Body mais seguro." };
+    return { system: getSystem("fullbody"), note: "O 5×5 depende dos básicos pesados com barra; com as limitações informadas, montei um Full Body mais seguro.", conservative: true };
   }
-  return { system: getSystem("forca_5x5") };
+  return { system: getSystem("forca_5x5"), conservative: false };
 }
 
 /** Motor determinístico: gera uma ficha completa sem IA (também é o fallback da IA). Mesma seed, mesma ficha. */
 export function generateProgram(input: GenerateInput, owner: { ownerId: string; createdBy: string }): Program {
   const lim = analyzeLimitations(input.limitations);
-  const { system, note } = resolveSystem(input, lim);
+  const { system, note, conservative } = resolveSystem(input, lim);
   const emphasisByDay = new Map<MuscleGroup, Set<string>>();
   for (const g of input.emphasis ?? []) if (g !== "cardio" && !emphasisByDay.has(g)) emphasisByDay.set(g, emphasisDays(system, g));
 
@@ -1033,7 +1070,9 @@ export function generateProgram(input: GenerateInput, owner: { ownerId: string; 
     avoid: lim.avoid,
     usedInDay: new Set<string>(),
     usedInProgram: new Set<string>(),
-    rand: rng(input.seed ?? 1),
+    seed: input.seed ?? 1,
+    salt: "",
+    conservative,
     minutes: Math.max(25, input.sessionMinutes || 60),
     highFrequency: system.days > 0 && system.id !== "forca_5x5" && input.daysPerWeek >= 2 * system.days,
     emphasisByDay,

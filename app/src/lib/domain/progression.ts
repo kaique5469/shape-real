@@ -25,7 +25,8 @@ export function setVolume(s: SetLog): number {
 
 export function sessionVolume(session: Pick<Session, "exercises">): number {
   let v = 0;
-  for (const ex of session.exercises) for (const s of completedSets(ex)) v += setVolume(s);
+  // Séries por tempo (prancha, cardio) não entram no volume em kg.
+  for (const ex of session.exercises) if ((ex.unit ?? "reps") === "reps") for (const s of completedSets(ex)) v += setVolume(s);
   return Math.round(v);
 }
 

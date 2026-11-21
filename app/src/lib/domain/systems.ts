@@ -429,7 +429,7 @@ export const SYSTEMS: TrainingSystem[] = [
         title: "Push B — ombros e peito",
         style: "volume",
         focus: ["ombros", "peito", "triceps"],
-        slots: [s.desenvPrincipal(), W(C("peito", "empurrar_h"), [...INCL, ...PRESS3]), s.crucifixo(), s.lateral(), s.triceps2(), s.triceps1()],
+        slots: [s.desenvPrincipal(), W(C("peito", "empurrar_h"), INCL), s.crucifixo(), s.lateral(), s.triceps2(), s.triceps1()],
       },
       {
         key: "Pull B",

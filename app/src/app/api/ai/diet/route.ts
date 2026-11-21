@@ -108,6 +108,7 @@ export async function POST(req: Request) {
     }
     const { meals, unknown } = parseDietText(b.text);
     const fb = analyzeDiet(meals, b.targets, b.weightKg);
+    const count = meals.reduce((n, m) => n + m.items.length, 0);
     return NextResponse.json({
       source: "motor",
       notice: auth.useAI ? (aiBlocked() ? "" : "A IA não respondeu a tempo, então a análise foi feita pela base de alimentos do Shape Real.") : auth.notice,
@@ -115,7 +116,9 @@ export async function POST(req: Request) {
       meals,
       totals: fb.totals,
       score: fb.score,
-      summary: meals.length ? "Análise pela base de alimentos do Shape Real (valores aproximados)." : "Não reconheci os alimentos. Escreva quantidades e nomes, ex.: “2 ovos, 1 pão francês”.",
+      summary: meals.length
+        ? `${count === 1 ? "1 alimento lido" : `${count} alimentos lidos`} em ${meals.length === 1 ? "1 refeição" : `${meals.length} refeições`}: ${fb.totals.kcal} kcal e ${Math.round(fb.totals.proteinG)} g de proteína (valores aproximados).`
+        : "Não reconheci os alimentos. Escreva a quantidade e o nome, por exemplo: “2 ovos, 1 pão francês”.",
       highlights: fb.highlights,
       adjustments: fb.adjustments,
       unknown,
