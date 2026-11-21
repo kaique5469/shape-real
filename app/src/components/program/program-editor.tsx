@@ -14,7 +14,7 @@ import { fmtLoad, fmtRest, fmtScheme, programValidity } from "@/lib/domain/forma
 import { GOAL_LABEL, LEVEL_LABEL, TECHNIQUE_LABEL, buildPlanned, estimateDayMinutes, repScheme } from "@/lib/domain/generator";
 import { uid } from "@/lib/domain/ids";
 import { PLANS } from "@/lib/domain/plans";
-import { focusOfDay, nextDayKey, programSetsPerGroup } from "@/lib/domain/program-share";
+import { focusOfDay, nextDayKey, programSetsPerGroup, techniqueText } from "@/lib/domain/program-share";
 import { getSystem } from "@/lib/domain/systems";
 import { fmtDate } from "@/lib/hooks";
 import type { Exercise, Goal, Level, PlannedExercise, Profile, Program, Technique, Unit, WorkoutDay } from "@/lib/domain/types";
@@ -314,7 +314,7 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
               const open = openEx === e.uid;
               const unit = unitOf(e.exerciseId, e.unit);
               const labels = UNIT_FIELDS[unit];
-              const summary = [fmtScheme(e), e.loadKg ? fmtLoad(e.loadKg) : null, e.restSec ? `desc. ${fmtRest(e.restSec)}` : null, e.technique !== "normal" ? TECHNIQUE_LABEL[e.technique] : null].filter(Boolean).join(" · ");
+              const summary = [fmtScheme(e), e.loadKg ? fmtLoad(e.loadKg) : null, e.restSec ? `desc. ${fmtRest(e.restSec)}` : null, techniqueText(d.exercises, i)].filter(Boolean).join(" · ");
               return (
                 <li key={e.uid} className={cx("rounded-[8px] border bg-paper", open ? "border-iron" : "border-rule")}>
                   <div className="flex items-stretch">
@@ -457,9 +457,11 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
           </p>
         </header>
         <div className="space-y-4">
-          {program.days.map((x, i) => (
-            <FichaDay key={i} day={x} className="break-inside-avoid" />
-          ))}
+          {program.days
+            .filter((x) => x.exercises.length)
+            .map((x, i) => (
+              <FichaDay key={i} day={x} className="break-inside-avoid" />
+            ))}
         </div>
         {program.notes?.trim() ? (
           <div className="mt-4 break-inside-avoid">

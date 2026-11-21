@@ -2,7 +2,29 @@ import { getExercise } from "./exercises";
 import { fmtLoad, fmtRest, fmtScheme } from "./format";
 import { TECHNIQUE_LABEL } from "./generator";
 import { uid } from "./ids";
-import type { MuscleGroup, Program, WorkoutDay } from "./types";
+import type { MuscleGroup, PlannedExercise, Program, WorkoutDay } from "./types";
+
+/**
+ * Texto da técnica de um exercício dentro do dia. Em bi-set, tri-set e supersérie o rótulo depende da
+ * posição: o primeiro diz "com o próximo", o último "com o anterior".
+ */
+export function techniqueText(list: Pick<PlannedExercise, "technique">[], i: number): string | null {
+  const t = list[i]?.technique ?? "normal";
+  if (t === "normal") return null;
+  const label = TECHNIQUE_LABEL[t];
+  if (t !== "bi_set" && t !== "tri_set" && t !== "super_serie") return label;
+  let start = i;
+  while (start > 0 && list[start - 1]!.technique === t) start--;
+  let end = i;
+  while (end + 1 < list.length && list[end + 1]!.technique === t) end++;
+  const size = t === "tri_set" ? 3 : 2;
+  const pos = (i - start) % size;
+  const groupStart = i - pos;
+  const groupLen = Math.min(size, end - groupStart + 1);
+  if (pos === 0 || groupLen === 1) return label;
+  if (pos === groupLen - 1) return label.replace("com o próximo", "com o anterior").replace("com os próximos", "com os anteriores").replace("(antagonista)", "(com o anterior)");
+  return label.replace("com os próximos", "em sequência");
+}
 
 /**
  * Ficha em texto simples, no formato que funciona no WhatsApp (*negrito* com asteriscos, sem emoji).
@@ -14,18 +36,16 @@ export function programToText(program: Program, opts: { studentName?: string; co
   if (who.length) out.push(who.join(" · "));
   if (program.durationWeeks) out.push(`Validade: ${program.durationWeeks} semanas`);
 
+  // Treino sem exercícios (ficha ainda em montagem) não vai para o aluno.
   for (const day of program.days) {
+    if (!day.exercises.length) continue;
     out.push("", `*${day.key}${day.title.trim() ? ` — ${day.title.trim()}` : ""}*`);
-    if (!day.exercises.length) {
-      out.push("(sem exercícios)");
-      continue;
-    }
     day.exercises.forEach((e, i) => {
       const parts = [fmtScheme(e)];
       if (e.loadKg) parts.push(fmtLoad(e.loadKg));
       if (e.restSec) parts.push(`desc. ${fmtRest(e.restSec)}`);
       out.push(`${i + 1}. ${e.name} — ${parts.join(" · ")}`);
-      const extra = [e.technique !== "normal" ? TECHNIQUE_LABEL[e.technique] : null, e.notes?.trim() || null].filter(Boolean);
+      const extra = [techniqueText(day.exercises, i), e.notes?.trim() || null].filter(Boolean);
       if (extra.length) out.push(`   ${extra.join(". ")}`);
     });
   }

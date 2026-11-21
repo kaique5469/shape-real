@@ -28,6 +28,11 @@ describe("medida caseira", () => {
     expect(householdMeasure(feijao, feijao.unit!.g / 2)).toBe("½ concha");
     expect(householdMeasure(feijao, feijao.unit!.g * 1.5)).toBe("1 ½ conchas");
   });
+  it("flexiona o adjetivo da medida no plural e para antes de 'de'", () => {
+    expect(householdMeasure({ unit: { label: "xícara pequena", g: 50 } }, 100)).toBe("2 xícaras pequenas");
+    expect(householdMeasure({ unit: { label: "unidade média", g: 150 } }, 300)).toBe("2 unidades médias");
+    expect(householdMeasure({ unit: { label: "colher de sopa", g: 15 } }, 45)).toBe("3 colheres de sopa");
+  });
   it("não inventa medida quando a quantidade não fecha", () => {
     expect(householdMeasure(arroz, arroz.unit!.g * 3.27)).toBeNull();
     expect(householdMeasure(undefined, 100)).toBeNull();

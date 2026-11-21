@@ -4,10 +4,13 @@ import type { DietItem, DietPlan, MacroTargets } from "./types";
 
 const int = (v: number) => Math.round(v).toLocaleString("pt-BR");
 
+const pluralWord = (w: string) => (/[rz]$/.test(w) ? `${w}es` : /[aeiouã]$/.test(w) ? `${w}s` : w);
+
+/** Plural da medida: flexiona as palavras antes de "de" ou de um parêntese ("colheres de sopa", "unidades médias"). */
 function plural(label: string): string {
-  const [first = "", ...rest] = label.split(" ");
-  const p = /[rz]$/.test(first) ? `${first}es` : /[aeiouã]$/.test(first) ? `${first}s` : first;
-  return [p, ...rest].join(" ");
+  const words = label.split(" ");
+  const stop = words.findIndex((w) => w === "de" || w.startsWith("("));
+  return words.map((w, i) => (stop === -1 || i < stop ? pluralWord(w) : w)).join(" ");
 }
 
 /**

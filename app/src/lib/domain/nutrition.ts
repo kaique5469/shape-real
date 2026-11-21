@@ -519,7 +519,7 @@ export function analyzeDiet(meals: Meal[], targets: MacroTargets, weightKg?: num
   if (junk.length) {
     const names = [...new Set(junk.map((j) => j.name.replace(/\s*\(.*?\)/g, "").toLowerCase()))];
     const kcal = junk.reduce((a, j) => a + j.kcal, 0);
-    adjustments.push(`${names.join(", ")}: cerca de ${kcal} kcal do dia. Cabe com moderação, desde que entre na conta.`);
+    adjustments.push(`${capitalize(names.join(", "))}: cerca de ${kcal} kcal do dia. Cabe com moderação, desde que entre na conta.`);
   }
   if (weightKg && totals.proteinG / weightKg > 3) adjustments.push("Proteína acima de 3 g/kg não traz ganho extra; troque parte por carboidrato.");
 

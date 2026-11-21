@@ -1,6 +1,7 @@
 import { GROUP_LABEL } from "@/lib/domain/exercises";
 import { fmtLoad, fmtRest, fmtScheme } from "@/lib/domain/format";
-import { TECHNIQUE_LABEL, estimateDayMinutes } from "@/lib/domain/generator";
+import { estimateDayMinutes } from "@/lib/domain/generator";
+import { techniqueText } from "@/lib/domain/program-share";
 import type { WorkoutDay } from "@/lib/domain/types";
 import { cx } from "@/lib/cx";
 
@@ -34,7 +35,7 @@ export function FichaDay({ day, compact, className }: { day: WorkoutDay; compact
                   </p>
                   {!compact && (e.technique !== "normal" || e.notes) ? (
                     <p className="mt-0.5 text-xs text-steel">
-                      {e.technique !== "normal" ? <span className="font-semibold text-plate-red-ink">{TECHNIQUE_LABEL[e.technique]}{e.notes ? ". " : ""}</span> : null}
+                      {e.technique !== "normal" ? <span className="font-semibold text-plate-red-ink">{techniqueText(day.exercises, i)}{e.notes ? ". " : ""}</span> : null}
                       {e.notes}
                     </p>
                   ) : null}

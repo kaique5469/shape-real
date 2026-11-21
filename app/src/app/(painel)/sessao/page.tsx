@@ -575,7 +575,12 @@ function ExerciseBlock({ index, log, open, onToggle, suggestion, last, link, hol
   const step = ex?.implement === "halter" || ex?.implement === "kettlebell" ? 1 : ex?.implement === "maquina" ? 5 : 2.5;
   const showLoad = unit !== "min";
   const cols = showLoad ? "grid-cols-[1rem_minmax(0,1fr)_minmax(0,1fr)_2.75rem]" : "grid-cols-[1rem_minmax(0,1fr)_2.75rem]";
-  const technique = p?.technique && p.technique !== "normal" ? TECHNIQUE_LABEL[p.technique] : null;
+  const rawTechnique = p?.technique && p.technique !== "normal" ? TECHNIQUE_LABEL[p.technique] : null;
+  // Último exercício de um bi-set/tri-set: o rótulo aponta para o anterior, não para o próximo.
+  const technique =
+    rawTechnique && link && link.pos > 0 && link.pos === link.size - 1
+      ? rawTechnique.replace("com o próximo", "com o anterior").replace("com os próximos", "com os anteriores").replace("(antagonista)", "(com o anterior)")
+      : rawTechnique;
   const nextPending = log.sets.findIndex((s) => !s.done);
   const fmtSet = (s: SetLog) => (unit === "reps" ? (s.loadKg ? `${fmtNum(s.loadKg)}×${s.reps}` : `${s.reps}`) : `${s.loadKg ? `${fmtNum(s.loadKg)} kg · ` : ""}${s.reps} ${UNIT_LABEL[unit].short}`);
 
@@ -623,7 +628,7 @@ function ExerciseBlock({ index, log, open, onToggle, suggestion, last, link, hol
 
           <div className={cx("mt-3 grid gap-1.5", cols)}>
             <span className="col-head text-steel">#</span>
-            {showLoad ? <span className="col-head truncate text-steel">{optionalLoad ? "Peso extra (kg)" : "Carga (kg)"}</span> : null}
+            {showLoad ? <span className="col-head truncate text-steel">{optionalLoad ? "Extra (kg)" : "Carga (kg)"}</span> : null}
             <span className="col-head text-steel">{UNIT_LABEL[unit].column}</span>
             <span className="col-head text-center text-steel">Feito</span>
           </div>

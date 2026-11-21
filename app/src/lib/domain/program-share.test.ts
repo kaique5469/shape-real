@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cloneProgram, focusOfDay, nextDayKey, programSetsPerGroup, programToText } from "./program-share";
+import { cloneProgram, focusOfDay, nextDayKey, programSetsPerGroup, programToText, techniqueText } from "./program-share";
 import type { Program } from "./types";
 
 const program: Program = {
@@ -46,9 +46,21 @@ describe("ficha em texto para WhatsApp", () => {
   it("mostra técnica e observação na linha seguinte", () => {
     expect(text).toMatch(/Tríceps na corda[^\n]*\n {3}Drop-?set[^\n]*Cotovelos colados/i);
   });
-  it("respeita a unidade (segundos) e dias vazios", () => {
+  it("respeita a unidade (segundos) e não envia treino vazio", () => {
     expect(text).toContain("3. Prancha — 3 × 30–45 s · desc. 45s");
-    expect(text).toContain("*B*\n(sem exercícios)");
+    expect(text).not.toContain("*B*");
+  });
+  it("bi-set: o primeiro diz 'com o próximo' e o segundo 'com o anterior'", () => {
+    const list = [{ technique: "normal" }, { technique: "bi_set" }, { technique: "bi_set" }, { technique: "tri_set" }, { technique: "tri_set" }, { technique: "tri_set" }, { technique: "drop_set" }] as const;
+    expect(techniqueText([...list], 0)).toBeNull();
+    expect(techniqueText([...list], 1)).toBe("Bi-set com o próximo");
+    expect(techniqueText([...list], 2)).toBe("Bi-set com o anterior");
+    expect(techniqueText([...list], 3)).toBe("Tri-set com os próximos");
+    expect(techniqueText([...list], 4)).toBe("Tri-set em sequência");
+    expect(techniqueText([...list], 5)).toBe("Tri-set com os anteriores");
+    expect(techniqueText([...list], 6)).toMatch(/Drop-set/);
+    // Só o primeiro marcado: continua "com o próximo".
+    expect(techniqueText([{ technique: "bi_set" }, { technique: "normal" }], 0)).toBe("Bi-set com o próximo");
   });
   it("termina com as orientações e não usa emoji", () => {
     expect(text.trim().endsWith("Aqueça 5 min antes.")).toBe(true);
