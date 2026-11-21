@@ -263,8 +263,8 @@ function Body({ userId, metrics, editable, byCoach, onChange }: { userId: string
                 <tr className="border-b border-rule bg-chalk text-left">
                   <th className="col-head px-4 py-2 text-steel">Data</th>
                   {FIELDS.map((f) => (
-                    <th key={f.key} className="col-head px-2 py-2 text-right text-steel">
-                      {f.label}
+                    <th key={f.key} className="col-head whitespace-nowrap px-2 py-2 text-right text-steel">
+                      {f.key === "bodyFatPct" ? "% gord." : f.label}
                     </th>
                   ))}
                   {editable ? <th className="w-11" /> : null}

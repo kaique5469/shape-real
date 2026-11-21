@@ -49,6 +49,7 @@ export function ProgramGenerator({ owner, forName, onSaved }: { owner: Profile; 
   const [blankKind, setBlankKind] = useState<"livre" | "sistema">("livre");
   const set = (p: Partial<TrainingPrefs>) => setPrefs((s) => withSuggestion(s, p));
   const isCoach = user!.id !== owner.id;
+  const template = user!.role === "coach" && !isCoach;
   const who = forName ? firstName(forName) : null;
 
   async function generate() {
@@ -147,7 +148,7 @@ export function ProgramGenerator({ owner, forName, onSaved }: { owner: Profile; 
         {error ? <Alert tone="error">{error}</Alert> : null}
         <div className="sticky bottom-20 z-10 flex justify-end lg:bottom-4">
           <Button size="lg" onClick={save} loading={busy === "save"} disabled={busy === "generate"} className="shadow-lift">
-            {isCoach ? `Salvar ficha de ${who ?? "aluno"}` : "Salvar e ativar ficha"}
+            {isCoach ? `Salvar ficha de ${who ?? "aluno"}` : template ? "Salvar modelo" : "Salvar e ativar ficha"}
           </Button>
         </div>
       </div>

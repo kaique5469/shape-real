@@ -60,7 +60,7 @@ export function FeedbackDialog({ open, onClose }: { open: boolean; onClose: () =
         </div>
       ) : (
         <div className="space-y-4">
-          <p className="text-[0.9375rem] text-steel">O que travou, o que faltou, o que você mudaria? Vale tudo: exercício que não achou, tela confusa, ficha que a IA errou.</p>
+          <p className="text-[0.9375rem] text-steel">O que travou, o que faltou, o que você mudaria? Vale tudo: exercício que não achou, tela confusa, ficha que o app montou errado.</p>
           <fieldset>
             <legend className="mb-1.5 text-sm font-semibold">Sobre o quê</legend>
             <div className="flex flex-wrap gap-1.5">
@@ -70,7 +70,7 @@ export function FeedbackDialog({ open, onClose }: { open: boolean; onClose: () =
                   type="button"
                   aria-pressed={topic === t}
                   onClick={() => setTopic(t)}
-                  className={`rounded-full border px-3 py-1.5 text-sm font-semibold ${topic === t ? "border-iron bg-iron text-chalk" : "border-rule-strong bg-paper hover:border-iron"}`}
+                  className={`h-10 rounded-full border px-3.5 text-sm font-semibold ${topic === t ? "border-iron bg-iron text-chalk" : "border-rule-strong bg-paper hover:border-iron"}`}
                 >
                   {t}
                 </button>
@@ -115,7 +115,7 @@ export function ActingStrip() {
   const solo = user.id === "teste-solo";
   return (
     <div className="no-print flex items-center justify-between gap-3 bg-plate-yellow px-4 py-1.5 text-iron">
-      <p className="min-w-0 truncate text-[0.8125rem] font-semibold">{solo ? "Testando como aluno que treina sozinho" : `Você está vendo o app de ${user.name}`}</p>
+      <p className="min-w-0 truncate text-[0.8125rem] font-semibold">{solo ? "Modo aluno sem personal" : `Vendo como ${user.name.trim().split(/\s+/)[0]}`}</p>
       <button
         onClick={async () => {
           const back = await returnToOwner();

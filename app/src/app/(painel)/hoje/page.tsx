@@ -63,7 +63,8 @@ function Hoje() {
   const dayKey = program ? (chosen ?? nextDayKey(program, data.sessions)) : null;
   const day = program?.days.find((d) => d.key === dayKey) ?? program?.days[0];
   const today = (new Date().getDay() + 6) % 7;
-  const fromCoach = program && program.createdBy !== user!.id ? (data.coach?.name ?? "seu personal") : null;
+  const coachName = data.coach?.name && data.coach.name !== "Personal" ? data.coach.name : null;
+  const fromCoach = program && program.createdBy !== user!.id ? (coachName ? `ficha de ${coachName}` : "ficha do seu personal") : null;
   const validity = program ? programValidity(program.createdAt, program.durationWeeks) : null;
 
   return (
@@ -136,7 +137,7 @@ function Hoje() {
               </h2>
               <p className="text-sm text-steel">
                 {program.name}
-                {fromCoach ? ` · ficha de ${fromCoach}` : ""}
+                {fromCoach ? ` · ${fromCoach}` : ""}
                 {validity && validity.state !== "ok" ? <span className={cx("font-semibold", validity.state === "expired" ? "text-plate-red-ink" : "text-iron")}> · {validity.label}</span> : null}
               </p>
             </div>
@@ -180,7 +181,7 @@ function Hoje() {
           title={data.coach ? "Seu personal ainda não enviou a ficha" : "Você ainda não tem ficha ativa"}
           body={
             data.coach
-              ? `Quando ${data.coach.name} enviar a ficha, ela aparece aqui. Enquanto isso, você pode registrar um treino livre.`
+              ? `Quando ${coachName ?? "seu personal"} enviar a ficha, ela aparece aqui. Enquanto isso, você pode registrar um treino livre.`
               : ai.enabled
                 ? "Monte uma ficha com IA em segundos, no sistema que você preferir, ou registre um treino livre."
                 : "Monte sua ficha em um minuto, no sistema que você preferir, ou registre um treino livre."
@@ -257,7 +258,7 @@ function Hoje() {
               para calcular suas metas.
             </p>
           )}
-          {data.coach ? <p className="mt-3 border-t border-rule pt-3 text-sm text-steel">Acompanhado por {data.coach.name}.</p> : null}
+          {data.coach ? <p className="mt-3 border-t border-rule pt-3 text-sm text-steel">{coachName ? `Acompanhamento de ${coachName}.` : "Com acompanhamento do seu personal."}</p> : null}
         </Panel>
       </div>
 

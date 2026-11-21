@@ -255,6 +255,8 @@ function Summary({ student, justCreated, onTab, onEdit }: { student: Profile; ju
   const validity = active ? programValidity(active.createdAt, active.durationWeeks) : null;
   const last = [...data.sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0] ?? null;
   const target = student.daysPerWeek ?? 0;
+  // Só cobra frequência das semanas em que o aluno já estava cadastrado.
+  const since = weekStart(student.createdAt);
   const sortedMetrics = [...data.metrics].sort((a, b) => b.date.localeCompare(a.date));
   const latest = (key: "weightKg" | "bodyFatPct" | "waistCm") => {
     const rows = sortedMetrics.filter((m) => m[key]);
@@ -280,7 +282,7 @@ function Summary({ student, justCreated, onTab, onEdit }: { student: Profile; ju
     <div className="space-y-4">
       {justCreated ? (
         <Alert tone="done">
-          {first} foi cadastrado. O próximo passo é montar a ficha.
+          Cadastro de {first} concluído. O próximo passo é montar a ficha.
         </Alert>
       ) : null}
 
@@ -328,7 +330,7 @@ function Summary({ student, justCreated, onTab, onEdit }: { student: Profile; ju
                       <span key={k} className={cx("h-3.5 w-5 rounded-[3px] border", k < w.count ? "border-plate-green bg-plate-green" : "border-rule-strong bg-transparent")} />
                     ))}
                   </span>
-                  <span className={cx("num shrink-0 font-semibold", target > 0 && w.count < target && i < 3 && "text-plate-red-ink")}>
+                  <span className={cx("num shrink-0 font-semibold", target > 0 && w.count < target && i < 3 && w.start >= since && "text-plate-red-ink")}>
                     {w.count}
                     {target ? ` de ${target}` : ""}
                   </span>

@@ -17,7 +17,7 @@ import { PLANS } from "@/lib/domain/plans";
 import { focusOfDay, nextDayKey, programSetsPerGroup } from "@/lib/domain/program-share";
 import { getSystem } from "@/lib/domain/systems";
 import { fmtDate } from "@/lib/hooks";
-import type { Exercise, PlannedExercise, Profile, Program, Technique, Unit, WorkoutDay } from "@/lib/domain/types";
+import type { Exercise, Goal, Level, PlannedExercise, Profile, Program, Technique, Unit, WorkoutDay } from "@/lib/domain/types";
 
 const RESTS = [0, 30, 45, 60, 75, 90, 120, 150, 180, 240, 300];
 const UNIT_FIELDS: Record<Unit, { min: string; max: string; single: string; hi: number }> = {
@@ -61,7 +61,7 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
         setProgram(p);
         const q = new URLSearchParams(window.location.search);
         if (q.get("enviada")) setMsg({ tone: "done", text: "Ficha salva e ativa. Revise os detalhes e envie pelo WhatsApp ou imprima." });
-        else if (q.get("salva")) setMsg({ tone: "done", text: "Ficha salva e ativa. Ela já aparece em Hoje." });
+        else if (q.get("salva")) setMsg({ tone: "done", text: user?.role === "coach" ? "Modelo salvo. Monte os treinos e depois aplique a um aluno." : "Ficha salva e ativa. Ela já aparece em Hoje." });
         autoPrint.current = Boolean(q.get("imprimir"));
       })
       .catch(() => alive && setNotFound(true));
@@ -115,6 +115,8 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
   const index = Math.min(day, program.days.length - 1);
   const d = program.days[index]!;
   const isCoachEditing = Boolean(student) && user?.id !== program.ownerId;
+  // Ficha do próprio personal = modelo reutilizável (não tem "ativa" nem validade correndo).
+  const template = user?.role === "coach" && program.ownerId === user.id;
   const validity = programValidity(program.createdAt, program.durationWeeks);
   const names = shareNames(user, student);
 
@@ -216,12 +218,30 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
       {backLink}
 
       <div className="no-print space-y-3">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_12rem]">
-          <Field label="Nome da ficha">
-            <Input value={program.name} onChange={(e) => change((p) => ({ ...p, name: e.target.value }))} maxLength={60} />
+        <Field label={template ? "Nome do modelo" : "Nome da ficha"}>
+          <Input value={program.name} onChange={(e) => change((p) => ({ ...p, name: e.target.value }))} maxLength={60} />
+        </Field>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <Field label="Objetivo">
+            <Select value={program.goal} onChange={(e) => change((p) => ({ ...p, goal: e.target.value as Goal }))} className="px-2">
+              {(Object.keys(GOAL_LABEL) as Goal[]).map((g) => (
+                <option key={g} value={g}>
+                  {GOAL_LABEL[g]}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Nível">
+            <Select value={program.level} onChange={(e) => change((p) => ({ ...p, level: e.target.value as Level }))} className="px-2">
+              {(Object.keys(LEVEL_LABEL) as Level[]).map((l) => (
+                <option key={l} value={l}>
+                  {LEVEL_LABEL[l]}
+                </option>
+              ))}
+            </Select>
           </Field>
           <Field label="Validade">
-            <Select value={program.durationWeeks ?? 0} onChange={(e) => change((p) => ({ ...p, durationWeeks: Number(e.target.value) || undefined }))}>
+            <Select value={program.durationWeeks ?? 0} onChange={(e) => change((p) => ({ ...p, durationWeeks: Number(e.target.value) || undefined }))} className="px-2">
               <option value={0}>Sem validade</option>
               {[4, 6, 8, 10, 12, 16].map((w) => (
                 <option key={w} value={w}>
@@ -232,12 +252,10 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
           </Field>
         </div>
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-steel">
-          {program.active ? <Badge tone="done">Ativa</Badge> : <Badge>Inativa</Badge>}
-          <span>
-            {[student ? `Ficha de ${student.name}` : null, getSystem(program.system).name, GOAL_LABEL[program.goal], LEVEL_LABEL[program.level]].filter(Boolean).join(" · ")}
-          </span>
-          {validity ? <span className={cx("font-semibold", validity.state === "expired" ? "text-plate-red-ink" : "text-iron")}>· {validity.label}</span> : null}
-          {!program.active ? (
+          {template ? <Badge>Modelo</Badge> : program.active ? <Badge tone="done">Ativa</Badge> : <Badge>Inativa</Badge>}
+          <span>{[student ? `Ficha de ${student.name}` : null, getSystem(program.system).name].filter(Boolean).join(" · ")}</span>
+          {validity && !template ? <span className={cx("font-semibold", validity.state === "expired" ? "text-plate-red-ink" : "text-iron")}>{validity.label}</span> : null}
+          {!program.active && !template ? (
             <button type="button" onClick={activate} className="min-h-9 font-semibold text-iron underline">
               Tornar ativa
             </button>
@@ -423,7 +441,7 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
         <Textarea value={program.notes ?? ""} onChange={(e) => change((p) => ({ ...p, notes: e.target.value }))} rows={3} maxLength={800} placeholder="Aquecimento, progressão de carga, cardio, dias de descanso…" />
       </Field>
 
-      <Panel title={student ? `Enviar para ${student.name.split(" ")[0]}` : "Compartilhar ficha"} className="no-print">
+      <Panel title={student ? `Enviar para ${student.name.split(" ")[0]}` : template ? "Compartilhar modelo" : "Compartilhar ficha"} className="no-print">
         {dirty ? <p className="mb-3 text-sm text-steel">Salve as alterações para compartilhar a versão nova.</p> : empty ? <p className="mb-3 text-sm text-steel">Adicione exercícios antes de enviar.</p> : null}
         <ProgramShare program={program} student={student} canExport={PLANS[plan].export} onPrint={() => window.print()} disabled={dirty || empty} />
       </Panel>

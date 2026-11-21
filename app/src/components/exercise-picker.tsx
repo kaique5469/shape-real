@@ -170,7 +170,7 @@ export function ExercisePicker({ open, onClose, onPick, title = "Adicionar exerc
             className="mt-3 flex min-h-12 w-full items-center gap-2 rounded-[8px] border border-dashed border-rule-strong px-3 py-2 text-left font-semibold hover:border-iron"
           >
             <Plus className="size-4 shrink-0" aria-hidden />
-            <span className="min-w-0 truncate">{q.trim() && !exact ? `Criar exercício “${q.trim()}”` : "Criar um exercício que não está na lista"}</span>
+            <span className="min-w-0 truncate">{q.trim() && !exact ? `Criar exercício “${q.trim()}”` : "Criar exercício novo"}</span>
           </button>
           {multi ? (
             <div className="sticky bottom-0 -mx-5 -mb-5 mt-4 flex items-center justify-between gap-3 border-t border-rule bg-paper px-5 py-3">

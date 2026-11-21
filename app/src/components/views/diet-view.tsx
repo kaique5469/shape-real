@@ -740,7 +740,7 @@ function FoodPicker({ open, onClose, onAdd, swap }: { open: boolean; onClose: ()
             className="mt-3 flex min-h-12 w-full items-center gap-2 rounded-[8px] border border-dashed border-rule-strong px-3 py-2 text-left font-semibold hover:border-iron"
           >
             <Plus className="size-4 shrink-0" aria-hidden />
-            <span className="min-w-0 truncate">{q.trim() && !list.some((f) => normalize(f.name) === normalize(q)) ? `Criar alimento “${q.trim()}”` : "Criar um alimento que não está na lista"}</span>
+            <span className="min-w-0 truncate">{q.trim() && !list.some((f) => normalize(f.name) === normalize(q)) ? `Criar alimento “${q.trim()}”` : "Criar alimento novo"}</span>
           </button>
         </>
       ) : (
