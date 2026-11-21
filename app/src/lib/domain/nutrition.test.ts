@@ -172,7 +172,7 @@ describe("metas e análise", () => {
     expect(low.adjustments.some((a) => a.includes("proteína"))).toBe(true);
     expect(low.score).toBeLessThan(80);
     const junk = analyzeDiet(parseDietText("Jantar: 3 fatias de pizza e 1 lata de coca").meals, { kcal: 2200, proteinG: 160, carbsG: 250, fatG: 70 });
-    expect(junk.adjustments.some((a) => /pizza/.test(a) && /refrigerante/.test(a))).toBe(true);
+    expect(junk.adjustments.some((a) => /^Pizza/.test(a) && /refrigerante/.test(a) && /kcal/.test(a))).toBe(true);
   });
 });
 
