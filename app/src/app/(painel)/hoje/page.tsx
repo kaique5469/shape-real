@@ -142,7 +142,7 @@ function Hoje() {
             </div>
             {program.days.length > 1 ? (
               <div className="-mx-4 max-w-[calc(100%+2rem)] overflow-x-auto px-4">
-                <Segmented label="Escolher dia" size="sm" className="min-w-max flex-nowrap" value={day.key} onChange={setChosen} options={program.days.map((d) => ({ value: d.key, label: d.key }))} />
+                <Segmented label="Escolher dia" size="sm" className="min-w-max flex-nowrap" value={day.key} onChange={setChosen} options={program.days.map((d) => ({ value: d.key, label: <span className="block min-w-5 text-center">{d.key}</span> }))} />
               </div>
             ) : null}
           </div>
@@ -204,7 +204,7 @@ function Hoje() {
         <Panel
           title="Recordes recentes"
           action={
-            <Link href="/evolucao" className="text-sm font-semibold text-plate-blue-ink hover:underline">
+            <Link href="/evolucao" className="-my-2 inline-flex min-h-10 items-center text-sm font-semibold text-plate-blue-ink hover:underline">
               Evolução
             </Link>
           }
@@ -229,7 +229,7 @@ function Hoje() {
         <Panel
           title="Hoje na dieta"
           action={
-            <Link href="/dieta" className="text-sm font-semibold text-plate-blue-ink hover:underline">
+            <Link href="/dieta" className="-my-2 inline-flex min-h-10 items-center text-sm font-semibold text-plate-blue-ink hover:underline">
               Abrir dieta
             </Link>
           }
@@ -251,7 +251,7 @@ function Hoje() {
           ) : (
             <p className="text-sm text-steel">
               Informe sexo, idade, peso e altura em{" "}
-              <Link href="/conta" className="font-semibold underline">
+              <Link href="/conta" className="font-semibold text-iron underline">
                 Conta
               </Link>{" "}
               para calcular suas metas.

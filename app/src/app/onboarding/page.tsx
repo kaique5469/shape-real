@@ -170,7 +170,7 @@ export default function Onboarding() {
                 </Select>
               </Field>
               <label className="flex items-start gap-3 rounded-[8px] border border-rule bg-paper p-3 text-sm">
-                <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} className="mt-0.5 size-5 accent-[var(--color-iron)]" />
+                <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} className="mt-0.5 size-5 shrink-0 accent-[var(--color-iron)]" />
                 <span>
                   Autorizo o Shape Real a guardar meus dados de saúde (peso, medidas, fotos e dieta) para montar e acompanhar meu treino. Só eu e o personal que eu aceitar
                   teremos acesso. Posso apagar tudo quando quiser.

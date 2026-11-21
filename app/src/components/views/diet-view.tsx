@@ -227,7 +227,7 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
           title="Metas diárias"
           className="no-print"
           action={
-            <button type="button" onClick={() => setTargetsOpen(true)} className="inline-flex min-h-9 items-center gap-1.5 text-sm font-semibold underline">
+            <button type="button" onClick={() => setTargetsOpen(true)} className="-my-2 inline-flex min-h-10 items-center gap-1.5 text-sm font-semibold underline">
               <Pencil className="size-3.5" aria-hidden /> Editar metas
             </button>
           }
@@ -290,18 +290,18 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
 
       {diet ? (
         <section className="no-print space-y-3" aria-label="Cardápio">
-          <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
             <div className="min-w-0 flex-1">
               <input
                 aria-label="Nome do plano alimentar"
                 value={diet.name}
                 onChange={(e) => change((d) => ({ ...d, name: e.target.value }))}
                 maxLength={60}
-                className="w-full min-w-0 rounded border border-transparent bg-transparent text-lg font-bold hover:border-rule focus:border-iron focus:outline-none"
+                className="h-10 w-full min-w-0 rounded border border-transparent bg-transparent text-lg font-bold hover:border-rule focus:border-iron focus:outline-none"
               />
               {diet.createdBy && diet.createdBy !== owner.id && !coach ? <p className="text-sm text-steel">Enviada pelo seu personal · atualizada em {fmtDate(diet.updatedAt)}</p> : null}
             </div>
-            <Button variant="secondary" size="sm" icon={ai.enabled ? <Sparkles className="size-4" /> : <Wand2 className="size-4" />} onClick={() => setGenOpen(true)} disabled={!targets}>
+            <Button variant="secondary" size="sm" className="self-start" icon={ai.enabled ? <Sparkles className="size-4" /> : <Wand2 className="size-4" />} onClick={() => setGenOpen(true)} disabled={!targets}>
               {ai.enabled ? "Gerar outro com IA" : "Montar outro automático"}
             </Button>
           </div>
@@ -323,7 +323,7 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
                     type="time"
                     value={meal.time ?? ""}
                     onChange={(e) => changeMeal(meal.uid, (m) => ({ ...m, time: e.target.value || undefined }))}
-                    className="num h-10 w-[5.25rem] shrink-0 rounded border border-transparent bg-transparent text-sm text-steel hover:border-rule focus:border-iron focus:outline-none"
+                    className="num h-10 w-24 shrink-0 rounded border border-transparent bg-transparent text-sm text-steel hover:border-rule focus:border-iron focus:outline-none"
                   />
                   <IconButton label={`Opções de ${meal.name}`} onClick={() => setMealMenu(meal)}>
                     <MoreHorizontal className="size-5" />
@@ -915,7 +915,7 @@ function Analyzer({ owner, targets, coach, aiOn, onUse }: { owner: Profile; targ
       className="no-print"
       action={
         coach ? (
-          <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="min-h-9 text-sm font-semibold underline">
+          <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="-my-2 inline-flex min-h-10 min-w-11 items-center justify-end text-sm font-semibold underline">
             {open ? "Fechar" : "Abrir"}
           </button>
         ) : undefined

@@ -361,8 +361,7 @@ function StudentRow({ s }: { s: StudentSummary }) {
           </span>
           <span className="num block truncate text-sm text-steel">
             {s.sessions7d}
-            {target ? ` de ${target}` : ""} {s.sessions7d === 1 && !target ? "treino" : "treinos"} na semana ·{" "}
-            <span className={cx(late && "font-semibold text-plate-red-ink")}>{s.lastSessionAt ? `último ${relativeDay(s.lastSessionAt)}` : "ainda não treinou"}</span>
+            {target ? ` de ${target}` : ""} na semana · <span className={cx(late && "font-semibold text-plate-red-ink")}>{s.lastSessionAt ? relativeDay(s.lastSessionAt) : "sem treinos"}</span>
           </span>
         </span>
         {s.latestWeightKg ? (

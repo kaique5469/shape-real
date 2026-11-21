@@ -19,7 +19,7 @@ export function TesterStrip() {
         <span className="font-bold text-plate-yellow">Versão de teste</span>
         <span className="text-chalk/70"> · dados salvos só neste aparelho</span>
       </p>
-      <button onClick={() => setOpen(true)} className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[6px] bg-chalk px-2.5 text-[0.8125rem] font-bold text-iron hover:bg-white">
+      <button onClick={() => setOpen(true)} className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-[6px] bg-chalk px-3 text-[0.8125rem] font-bold text-iron hover:bg-white">
         <MessageSquareText className="size-4" aria-hidden /> Dar feedback
       </button>
       <FeedbackDialog open={open} onClose={() => setOpen(false)} />
@@ -121,7 +121,7 @@ export function ActingStrip() {
           const back = await returnToOwner();
           router.push(back?.role === "coach" && !solo ? `/alunos/${viewingId}` : "/alunos");
         }}
-        className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[6px] bg-iron px-2.5 text-[0.8125rem] font-bold text-chalk hover:bg-iron-2"
+        className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-[6px] bg-iron px-3 text-[0.8125rem] font-bold text-chalk hover:bg-iron-2"
       >
         <ArrowLeft className="size-4" aria-hidden /> Voltar ao painel
       </button>

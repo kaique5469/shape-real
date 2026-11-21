@@ -133,7 +133,7 @@ function Aluno({ id }: { id: string }) {
         ) : null}
         <div className="mt-3 flex flex-wrap gap-2">
           {mode === "local" ? (
-            <Button onClick={viewAs} loading={busy === "view"} icon={<Eye className="size-4" />} className="flex-1 sm:flex-none">
+            <Button onClick={viewAs} loading={busy === "view"} icon={<Eye className="size-4" />} className="flex-1 whitespace-nowrap px-3 sm:flex-none sm:px-4">
               Ver como aluno
             </Button>
           ) : null}
@@ -142,7 +142,7 @@ function Aluno({ id }: { id: string }) {
               href={waLink(`Oi, ${first}.`, student.phone)}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-[6px] border border-rule-strong bg-paper px-4 text-[0.9375rem] font-semibold hover:border-iron sm:flex-none"
+              className="inline-flex h-11 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-[6px] border border-rule-strong bg-paper px-3 text-[0.9375rem] font-semibold hover:border-iron sm:flex-none sm:px-4"
             >
               <MessageCircle className="size-4" aria-hidden /> WhatsApp
             </a>
@@ -380,7 +380,7 @@ function Summary({ student, justCreated, onTab, onEdit }: { student: Profile; ju
           title="Ficha ativa"
           action={
             active ? (
-              <Link href={`/alunos/${id}/ficha/${active.id}`} className="text-sm font-semibold underline">
+              <Link href={`/alunos/${id}/ficha/${active.id}`} className="-my-2 inline-flex min-h-10 items-center text-sm font-semibold underline">
                 Abrir ficha
               </Link>
             ) : null
@@ -414,7 +414,7 @@ function Summary({ student, justCreated, onTab, onEdit }: { student: Profile; ju
         <Panel
           title="Medidas"
           action={
-            <button type="button" onClick={() => onTab("evolucao")} className="text-sm font-semibold underline">
+            <button type="button" onClick={() => onTab("evolucao")} className="-my-2 inline-flex min-h-10 items-center text-sm font-semibold underline">
               {hasMeasures ? "Ver evolução" : "Registrar"}
             </button>
           }

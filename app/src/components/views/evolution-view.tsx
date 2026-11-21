@@ -46,7 +46,7 @@ export function EvolutionView({ userId, editable, byCoach = false }: { userId: s
         ]}
       />
       </div>
-      {loading ? <Skeleton className="h-80" /> : error ? <Alert tone="error">{error}</Alert> : data ? (
+      {loading && !data ? <Skeleton className="h-80" /> : error ? <Alert tone="error">{error}</Alert> : data ? (
         <>
           {tab === "cargas" && <Loads sessions={data.sessions} />}
           {tab === "corpo" && <Body userId={userId} metrics={data.metrics} editable={editable} byCoach={byCoach} onChange={reload} />}

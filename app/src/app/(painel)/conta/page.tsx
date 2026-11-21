@@ -169,7 +169,7 @@ export default function ContaPage() {
                       type="checkbox"
                       checked={Boolean(form.consentHealthAt)}
                       onChange={(e) => set({ consentHealthAt: e.target.checked ? new Date().toISOString() : undefined })}
-                      className="mt-0.5 size-5 accent-[var(--color-iron)]"
+                      className="mt-0.5 size-5 shrink-0 accent-[var(--color-iron)]"
                     />
                     <span>Autorizo guardar meus dados de saúde (peso, medidas, fotos e dieta) para acompanhar meu treino. Só eu e o personal que eu aceitar temos acesso.</span>
                   </label>

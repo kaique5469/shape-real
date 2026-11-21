@@ -1,4 +1,6 @@
 import type { Program, Session } from "./types";
+import { UNIT_LABEL, unitOf } from "./exercises";
+import { TECHNIQUE_LABEL } from "./generator";
 import { completedSets } from "./progression";
 
 /**
@@ -16,10 +18,10 @@ function toCsv(rows: (string | number | null | undefined)[][]): string {
 }
 
 export function programToCsv(program: Program): string {
-  const rows: (string | number | null)[][] = [["Ficha", "Dia", "Ordem", "Exercício", "Séries", "Reps mín", "Reps máx", "Carga (kg)", "Descanso (s)", "Técnica", "Observações"]];
+  const rows: (string | number | null)[][] = [["Ficha", "Dia", "Ordem", "Exercício", "Séries", "Mín", "Máx", "Unidade", "Carga (kg)", "Descanso (s)", "Técnica", "Observações"]];
   for (const day of program.days) {
     day.exercises.forEach((e, i) => {
-      rows.push([program.name, `${day.key} — ${day.title}`, i + 1, e.name, e.sets, e.repsMin, e.repsMax, e.loadKg ?? null, e.restSec, e.technique, e.notes ?? ""]);
+      rows.push([program.name, day.title ? `${day.key} — ${day.title}` : day.key, i + 1, e.name, e.sets, e.repsMin, e.repsMax, UNIT_LABEL[unitOf(e.exerciseId, e.unit)].noun, e.loadKg ?? null, e.restSec, e.technique === "normal" ? "" : TECHNIQUE_LABEL[e.technique], e.notes ?? ""]);
     });
   }
   return toCsv(rows);

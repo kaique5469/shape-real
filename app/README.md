@@ -19,13 +19,23 @@ navegador, a IA usa o motor determinístico e a demonstração (aluno e personal
 ## Modo teste (sem login)
 
 `/testar` entra direto no painel do personal, sem cadastro: cria um ambiente no próprio aparelho com três
-alunos de exemplo. O personal cadastra alunos, monta ficha e dieta, e usa **Ver como aluno** para registrar
-um treino do lado do aluno. Tudo fica liberado (sem limites de plano) e a faixa do topo abre o feedback,
-que vai pelo WhatsApp. `/testar?k=<TESTER_PASS>` também libera a IA real, quando ela estiver ligada.
+alunos de exemplo. Tudo fica liberado (sem limites de plano) e a faixa do topo abre o feedback, que vai
+pelo WhatsApp (`NEXT_PUBLIC_FEEDBACK_WHATSAPP`). O que dá para testar:
 
-Sem IA ligada, fichas e cardápios saem do motor do próprio app (`src/lib/domain`), e a interface não
-promete IA. Para ligar: cadastre um cartão em Vercel → AI Gateway (variável `AI_GATEWAY=1` já usa o token
-do deploy) ou defina `ANTHROPIC_API_KEY`.
+- **Alunos** — cadastro com anamnese básica, painel de quem treinou, ficha vencendo e quem está parado,
+  resumo por aluno, avaliação física e fotos registradas pelo personal, WhatsApp direto.
+- **Fichas** — base gerada pelo perfil ou montada do zero (divisão livre), editor com dias, séries por
+  repetições/segundos/minutos, técnicas, validade e exercícios próprios; envio por WhatsApp, texto, PDF e
+  planilha; modelos reutilizáveis aplicados a alunos.
+- **Ver como aluno** — abre o app do aluno para registrar um treino (cargas, descanso com aviso sonoro,
+  bi-set, cronômetro de isometria) e volta ao painel pela faixa do topo.
+- **Dieta** — metas editáveis, cardápio com porções em gramas e medida caseira, alimentos próprios,
+  análise de texto livre ("o que comeu") e envio. Em modo personal aparece o aviso do CRN.
+
+`/testar?k=<TESTER_PASS>` também libera a IA real, quando ela estiver ligada. Sem IA, fichas e cardápios
+saem do motor do próprio app (`src/lib/domain`) e a interface não promete IA. Para ligar: cadastre um
+cartão em Vercel → AI Gateway (a variável `AI_GATEWAY=1` já usa o token do deploy) ou defina
+`ANTHROPIC_API_KEY`.
 
 ## Colocar no ar (produção)
 

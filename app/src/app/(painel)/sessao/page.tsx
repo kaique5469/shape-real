@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Check, ChevronDown, Minus, Play, Plus, Replace, Square, Timer, Trash2, Trophy, Volume2, VolumeX, X } from "lucide-react";
+import { Check, ChevronDown, Minus, Play, Plus, Square, Timer, Trash2, Trophy, Volume2, VolumeX, X } from "lucide-react";
 import { BarbellView } from "@/components/brand";
 import { ExercisePicker } from "@/components/exercise-picker";
 import { Alert, Badge, Button, Dialog, Skeleton, Textarea, cx } from "@/components/ui";
@@ -394,7 +394,7 @@ function Sessao() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-2xl space-y-3 px-4 py-4">
+      <main className="mx-auto max-w-2xl space-y-3 px-3 py-4 sm:px-4">
         {draft.session.exercises.map((log, idx) => (
           <ExerciseBlock
             key={log.uid}
@@ -574,14 +574,14 @@ function ExerciseBlock({ index, log, open, onToggle, suggestion, last, link, hol
   const currentLoad = log.sets.find((s) => !s.done)?.loadKg ?? log.sets[log.sets.length - 1]?.loadKg ?? 0;
   const step = ex?.implement === "halter" || ex?.implement === "kettlebell" ? 1 : ex?.implement === "maquina" ? 5 : 2.5;
   const showLoad = unit !== "min";
-  const cols = showLoad ? "grid-cols-[1.25rem_minmax(0,1fr)_minmax(0,1fr)_3rem]" : "grid-cols-[1.25rem_minmax(0,1fr)_3rem]";
+  const cols = showLoad ? "grid-cols-[1rem_minmax(0,1fr)_minmax(0,1fr)_2.75rem]" : "grid-cols-[1rem_minmax(0,1fr)_2.75rem]";
   const technique = p?.technique && p.technique !== "normal" ? TECHNIQUE_LABEL[p.technique] : null;
   const nextPending = log.sets.findIndex((s) => !s.done);
   const fmtSet = (s: SetLog) => (unit === "reps" ? (s.loadKg ? `${fmtNum(s.loadKg)}×${s.reps}` : `${s.reps}`) : `${s.loadKg ? `${fmtNum(s.loadKg)} kg · ` : ""}${s.reps} ${UNIT_LABEL[unit].short}`);
 
   return (
     <section className={cx("overflow-hidden rounded-[8px] border bg-paper transition-colors", open ? "border-iron" : complete ? "border-plate-green/40" : "border-rule")}>
-      <button onClick={onToggle} aria-expanded={open} className="flex w-full items-center gap-3 px-4 py-3 text-left">
+      <button onClick={onToggle} aria-expanded={open} className="flex w-full items-center gap-3 px-3 py-3 text-left sm:px-4">
         <span className={cx("num grid size-8 shrink-0 place-items-center rounded text-sm font-bold", complete ? "bg-plate-green text-white" : "bg-chalk-2")}>
           {complete ? <Check className="size-4" /> : index + 1}
         </span>
@@ -596,7 +596,7 @@ function ExerciseBlock({ index, log, open, onToggle, suggestion, last, link, hol
       </button>
 
       {open ? (
-        <div className="border-t border-rule px-4 pb-4 pt-3">
+        <div className="border-t border-rule px-3 pb-4 pt-3 sm:px-4">
           {technique || p?.notes || link ? (
             <div className="mb-3 space-y-1 rounded-[6px] border border-plate-yellow/60 bg-plate-yellow/12 px-3 py-2 text-sm">
               {technique ? <p className="font-bold">{technique}</p> : null}
@@ -621,7 +621,7 @@ function ExerciseBlock({ index, log, open, onToggle, suggestion, last, link, hol
             {ex?.cue ? <p className="text-steel">{ex.cue}</p> : null}
           </div>
 
-          <div className={cx("mt-3 grid gap-2 px-0.5", cols)}>
+          <div className={cx("mt-3 grid gap-1.5", cols)}>
             <span className="col-head text-steel">#</span>
             {showLoad ? <span className="col-head truncate text-steel">{optionalLoad ? "Peso extra (kg)" : "Carga (kg)"}</span> : null}
             <span className="col-head text-steel">{UNIT_LABEL[unit].column}</span>
@@ -629,7 +629,7 @@ function ExerciseBlock({ index, log, open, onToggle, suggestion, last, link, hol
           </div>
           <ol className="mt-1.5 space-y-2">
             {log.sets.map((s, i) => (
-              <li key={i} className={cx("grid items-center gap-2", cols, s.done && "opacity-80")}>
+              <li key={i} className={cx("grid items-center gap-1.5", cols, s.done && "opacity-80")}>
                 <span className="num text-sm font-bold text-steel">{i + 1}</span>
                 {showLoad ? (
                   <NumberCell value={s.loadKg} onChange={(v) => onSet(i, { loadKg: v || (optionalLoad ? null : v) })} step={step} label={`Carga da série ${i + 1}`} placeholder={optionalLoad ? "—" : "kg"} />
@@ -670,17 +670,17 @@ function ExerciseBlock({ index, log, open, onToggle, suggestion, last, link, hol
             )
           ) : null}
 
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="secondary" onClick={onAddSet} icon={<Plus className="size-4" />}>
+          <div className="mt-3 grid grid-cols-4 gap-1.5">
+            <Button size="sm" variant="secondary" onClick={onAddSet} icon={<Plus className="size-4" />} className="px-1" aria-label="Adicionar série">
               Série
             </Button>
-            <Button size="sm" variant="ghost" onClick={onRemoveSet} icon={<Minus className="size-4" />} disabled={log.sets.length <= 1}>
+            <Button size="sm" variant="secondary" onClick={onRemoveSet} icon={<Minus className="size-4" />} disabled={log.sets.length <= 1} className="px-1" aria-label="Remover a última série">
               Série
             </Button>
-            <Button size="sm" variant="ghost" onClick={onSwap} icon={<Replace className="size-4" />} disabled={doneCount > 0} title={doneCount > 0 ? "Já há séries feitas neste exercício" : undefined}>
+            <Button size="sm" variant="secondary" onClick={onSwap} disabled={doneCount > 0} title={doneCount > 0 ? "Já há séries feitas neste exercício" : undefined} className="px-1" aria-label="Trocar exercício neste treino">
               Trocar
             </Button>
-            <Button size="sm" variant="ghost" onClick={onRemove} className="ml-auto text-plate-red-ink" icon={<Trash2 className="size-4" />}>
+            <Button size="sm" variant="danger" onClick={onRemove} className="px-1" aria-label="Remover exercício deste treino">
               Remover
             </Button>
           </div>
@@ -700,7 +700,7 @@ function ExerciseBlock({ index, log, open, onToggle, suggestion, last, link, hol
 function NumberCell({ value, onChange, step, label, placeholder }: { value: number | null; onChange: (v: number | null) => void; step: number; label: string; placeholder?: string }) {
   return (
     <div className="flex h-12 items-stretch overflow-hidden rounded-[6px] border border-rule-strong bg-paper focus-within:border-iron">
-      <button type="button" onClick={() => onChange(Math.max(0, Math.round(((value ?? 0) - step) * 100) / 100))} className="w-9 shrink-0 text-lg font-bold text-steel hover:bg-chalk-2" aria-label={`Diminuir ${label}`}>
+      <button type="button" onClick={() => onChange(Math.max(0, Math.round(((value ?? 0) - step) * 100) / 100))} className="w-8 shrink-0 text-lg font-bold text-steel hover:bg-chalk-2 sm:w-10" aria-label={`Diminuir ${label}`}>
         −
       </button>
       <input
@@ -715,9 +715,9 @@ function NumberCell({ value, onChange, step, label, placeholder }: { value: numb
           if (!Number.isNaN(n)) onChange(Math.min(999, n));
         }}
         onFocus={(e) => e.currentTarget.select()}
-        className="num w-full min-w-0 bg-transparent text-center text-lg font-bold placeholder:font-normal placeholder:text-pencil focus:outline-none"
+        className="num w-full min-w-0 bg-transparent px-0 text-center text-base font-bold placeholder:font-normal placeholder:text-pencil focus:outline-none sm:text-lg"
       />
-      <button type="button" onClick={() => onChange(Math.round(((value ?? 0) + step) * 100) / 100)} className="w-9 shrink-0 text-lg font-bold text-steel hover:bg-chalk-2" aria-label={`Aumentar ${label}`}>
+      <button type="button" onClick={() => onChange(Math.round(((value ?? 0) + step) * 100) / 100)} className="w-8 shrink-0 text-lg font-bold text-steel hover:bg-chalk-2 sm:w-10" aria-label={`Aumentar ${label}`}>
         +
       </button>
     </div>

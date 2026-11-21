@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowLeftRight, ArrowUp, ChevronDown, Copy, MoreHorizontal, MoveLeft, MoveRight, Plus, Replace, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, Copy, MoreHorizontal, MoveLeft, MoveRight, Plus, Trash2 } from "lucide-react";
 import { ExercisePicker } from "@/components/exercise-picker";
 import { FichaDay } from "@/components/ficha";
 import { ProgramShare, shareNames } from "@/components/program/program-share";
@@ -354,9 +354,9 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
                             }}
                             className="h-11 px-2 text-sm"
                           >
-                            <option value="reps">Repetições</option>
-                            <option value="seg">Segundos</option>
-                            <option value="min">Minutos</option>
+                            <option value="reps">Reps</option>
+                            <option value="seg">Seg.</option>
+                            <option value="min">Min.</option>
                           </Select>
                         </label>
                         <label className={cx("block", unit === "min" ? "col-span-3" : "col-span-3 sm:col-span-1")}>
@@ -374,22 +374,17 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
                         <span className="col-head mb-1 block text-steel">Observação para o aluno</span>
                         <Input value={e.notes ?? ""} onChange={(ev) => changeEx(e.uid, { notes: ev.target.value || undefined })} placeholder="Cadência, pegada, amplitude, ajuste do banco…" maxLength={160} />
                       </label>
-                      <div className="flex flex-wrap gap-2">
-                        <Button size="sm" variant="secondary" icon={<Replace className="size-4" />} onClick={() => setPicker({ replace: e.uid })}>
+                      <div className="grid grid-cols-3 gap-2">
+                        <Button size="sm" variant="secondary" className="px-1" onClick={() => setPicker({ replace: e.uid })}>
                           Trocar
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          icon={<Copy className="size-4" />}
-                          onClick={() => changeList((l) => [...l.slice(0, i + 1), { ...e, uid: uid() }, ...l.slice(i + 1)])}
-                        >
+                        <Button size="sm" variant="secondary" className="px-1" onClick={() => changeList((l) => [...l.slice(0, i + 1), { ...e, uid: uid() }, ...l.slice(i + 1)])}>
                           Duplicar
                         </Button>
                         <Button
                           size="sm"
                           variant="danger"
-                          icon={<Trash2 className="size-4" />}
+                          className="px-1"
                           onClick={() => {
                             changeList((l) => l.filter((x) => x.uid !== e.uid));
                             setOpenEx(null);
@@ -512,7 +507,6 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
         <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <Button
             variant="secondary"
-            icon={<ArrowLeftRight className="size-4" />}
             onClick={() => {
               setDirty(false);
               setLeave(false);
