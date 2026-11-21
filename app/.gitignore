@@ -9,3 +9,6 @@ next-env.d.ts
 .vercel
 test-results/
 playwright-report/
+
+# arquivos temporários de auditoria/revisão
+src/lib/domain/zz-*.test.ts
