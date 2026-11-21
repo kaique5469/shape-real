@@ -34,3 +34,26 @@ export function waLink(text: string, phone?: string | null): string {
   const to = waPhone(phone);
   return `https://wa.me/${to ?? ""}?text=${encodeURIComponent(text)}`;
 }
+
+export interface Validity {
+  state: "ok" | "soon" | "expired";
+  /** Dias até vencer (negativo quando já venceu). */
+  days: number;
+  label: string;
+}
+
+/** Validade da ficha a partir da data de criação e da duração planejada; null quando a ficha não tem validade. */
+export function programValidity(createdAt: string, durationWeeks: number | null | undefined, now = new Date()): Validity | null {
+  if (!durationWeeks) return null;
+  const end = new Date(createdAt).getTime() + durationWeeks * 7 * 86_400_000;
+  const days = Math.ceil((end - now.getTime()) / 86_400_000);
+  if (days < 0) return { state: "expired", days, label: days === -1 ? "vencida ontem" : `vencida há ${-days} dias` };
+  if (days === 0) return { state: "soon", days, label: "vence hoje" };
+  if (days <= 7) return { state: "soon", days, label: days === 1 ? "vence amanhã" : `vence em ${days} dias` };
+  return { state: "ok", days, label: days < 14 ? `vence em ${days} dias` : `vence em ${Math.round(days / 7)} semanas` };
+}
+
+/** Primeiro nome, para mensagens e botões. */
+export function firstName(name: string): string {
+  return name.trim().split(/\s+/)[0] ?? name;
+}

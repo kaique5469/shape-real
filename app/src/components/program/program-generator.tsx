@@ -1,129 +1,165 @@
 "use client";
 
 import { useState } from "react";
-import { PenLine, RefreshCw, Sparkles } from "lucide-react";
+import { PenLine, RefreshCw, Sparkles, Wand2 } from "lucide-react";
 import { FichaDay } from "@/components/ficha";
-import { GoalPicker, LimitsPicker, RoutinePicker, SystemChooser, type TrainingPrefs } from "@/components/preferences";
-import { Alert, Button, Field, Panel, Textarea } from "@/components/ui";
+import { GoalPicker, LimitsPicker, RoutinePicker, SystemChooser, suggestFor, withSuggestion, type TrainingPrefs } from "@/components/preferences";
+import { Alert, Button, Dialog, Field, Panel, Segmented, Skeleton, Textarea } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
-import { aiProgram } from "@/lib/ai/client";
-import { getSystem, suggestSystem } from "@/lib/domain/systems";
+import { aiProgram, useAI } from "@/lib/ai/client";
+import { firstName } from "@/lib/domain/format";
 import { GOAL_LABEL } from "@/lib/domain/generator";
 import { uid } from "@/lib/domain/ids";
+import { DAY_KEYS, getSystem } from "@/lib/domain/systems";
 import { track } from "@/lib/analytics";
 import type { Profile, Program } from "@/lib/domain/types";
 
+const clampDays = (d: number | undefined) => Math.min(6, Math.max(2, d ?? 3));
+
 /**
- * Gera uma ficha (IA com fallback do motor), mostra a prévia e salva.
+ * Cria uma ficha: base gerada (IA quando ligada, senão o motor do app), prévia e salvamento;
+ * ou ficha em branco para montar exercício por exercício.
  * Usado pelo aluno (para si) e pelo personal (para um aluno).
  */
 export function ProgramGenerator({ owner, forName, onSaved }: { owner: Profile; forName?: string; onSaved: (p: Program) => void }) {
-  const { user, repo, accessToken } = useApp();
-  const [prefs, setPrefs] = useState<TrainingPrefs>({
-    goal: owner.goal ?? "hipertrofia",
-    level: owner.level ?? "intermediario",
-    daysPerWeek: owner.daysPerWeek ?? 3,
-    sessionMinutes: owner.sessionMinutes ?? 60,
-    equipment: owner.equipment ?? "academia",
-    system: owner.preferredSystem ?? suggestSystem(owner.daysPerWeek ?? 3, owner.level ?? "intermediario"),
-    limitations: owner.limitations ?? "",
-    emphasis: [],
+  const { user, repo, mode, accessToken } = useApp();
+  const ai = useAI(mode === "supabase");
+  const [prefs, setPrefs] = useState<TrainingPrefs>(() => {
+    const base: TrainingPrefs = {
+      goal: owner.goal ?? "hipertrofia",
+      level: owner.level ?? "intermediario",
+      daysPerWeek: clampDays(owner.daysPerWeek),
+      sessionMinutes: owner.sessionMinutes ?? 60,
+      equipment: owner.equipment ?? "academia",
+      system: "abc",
+      limitations: owner.limitations ?? "",
+      emphasis: [],
+      systemTouched: Boolean(owner.preferredSystem && owner.preferredSystem !== "livre"),
+    };
+    return { ...base, system: owner.preferredSystem && owner.preferredSystem !== "livre" ? owner.preferredSystem : suggestFor(base) };
   });
   const [notes, setNotes] = useState("");
   const [preview, setPreview] = useState<Program | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [quota, setQuota] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"generate" | "save" | "blank" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const set = (p: Partial<TrainingPrefs>) => setPrefs((s) => ({ ...s, ...p }));
+  const [blankOpen, setBlankOpen] = useState(false);
+  const [blankDays, setBlankDays] = useState(clampDays(owner.daysPerWeek));
+  const [blankKind, setBlankKind] = useState<"livre" | "sistema">("livre");
+  const set = (p: Partial<TrainingPrefs>) => setPrefs((s) => withSuggestion(s, p));
   const isCoach = user!.id !== owner.id;
+  const who = forName ? firstName(forName) : null;
 
   async function generate() {
-    setBusy(true);
+    setBusy("generate");
     setError(null);
     try {
-      const r = await aiProgram({ ...prefs, notes: notes || undefined, seed: Math.floor(Math.random() * 1e6) }, { ownerId: owner.id, createdBy: user!.id }, await accessToken());
+      const { systemTouched: _touched, ...input } = prefs;
+      void _touched;
+      const r = await aiProgram({ ...input, notes: ai.enabled && notes.trim() ? notes.trim() : undefined, seed: Math.floor(Math.random() * 1e6) }, { ownerId: owner.id, createdBy: user!.id }, await accessToken());
       setPreview({ ...r.data, source: isCoach ? "personal" : r.source === "ia" ? "ia" : "modelo" });
-      setNotice(r.notice ?? null);
+      setNotice(r.notice?.trim() ? r.notice : null);
       setQuota(Boolean(r.quota));
       track("program_generated", { where: isCoach ? "coach" : "athlete", source: r.source, system: prefs.system });
+      window.scrollTo({ top: 0 });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Não foi possível gerar.");
+      setError(e instanceof Error ? e.message : "Não foi possível gerar a ficha. Tente de novo.");
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }
 
-  function blank() {
-    const sys = getSystem(prefs.system);
-    const now = new Date().toISOString();
-    setPreview({
-      id: uid(),
-      ownerId: owner.id,
-      createdBy: user!.id,
-      name: `${sys.short} · ${GOAL_LABEL[prefs.goal]}`,
-      system: prefs.system,
-      goal: prefs.goal,
-      level: prefs.level,
-      daysPerWeek: prefs.daysPerWeek,
-      days: sys.templates.map((t) => ({ key: t.key, title: t.title, focus: t.focus, exercises: [] })),
-      active: true,
-      source: isCoach ? "personal" : "manual",
-      createdAt: now,
-      updatedAt: now,
-    });
+  async function createBlank() {
+    setBusy("blank");
+    setError(null);
+    try {
+      const now = new Date().toISOString();
+      const sys = getSystem(prefs.system);
+      const fromSystem = blankKind === "sistema";
+      const program: Program = {
+        id: uid(),
+        ownerId: owner.id,
+        createdBy: user!.id,
+        name: fromSystem ? `${sys.short} · ${GOAL_LABEL[prefs.goal]}` : `Ficha ${GOAL_LABEL[prefs.goal].toLowerCase()}`,
+        system: fromSystem ? prefs.system : "livre",
+        goal: prefs.goal,
+        level: prefs.level,
+        daysPerWeek: fromSystem ? prefs.daysPerWeek : blankDays,
+        days: fromSystem
+          ? sys.templates.map((t) => ({ key: t.key, title: t.title, focus: t.focus, exercises: [] }))
+          : Array.from({ length: blankDays }, (_, i) => ({ key: DAY_KEYS[i] ?? `D${i + 1}`, title: "", focus: [], exercises: [] })),
+        active: true,
+        source: isCoach ? "personal" : "manual",
+        createdAt: now,
+        updatedAt: now,
+      };
+      const saved = await repo.saveProgram(program);
+      track(isCoach ? "program_assigned" : "program_saved", { source: "blank" });
+      onSaved(saved);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Não foi possível criar a ficha.");
+      setBusy(null);
+      setBlankOpen(false);
+    }
   }
 
   async function save() {
     if (!preview) return;
-    setBusy(true);
+    setBusy("save");
+    setError(null);
     try {
       const saved = await repo.saveProgram({ ...preview, active: true });
       track(isCoach ? "program_assigned" : "program_saved", { source: preview.source });
       onSaved(saved);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Não foi possível salvar.");
-      setBusy(false);
+      setError(e instanceof Error ? e.message : "Não foi possível salvar a ficha.");
+      setBusy(null);
     }
   }
 
   if (preview) {
-    const empty = preview.days.every((d) => !d.exercises.length);
     return (
       <div className="space-y-4">
         {notice ? <Alert tone={quota ? "warn" : "info"}>{notice}</Alert> : null}
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="plate-type text-2xl">{preview.name}</h2>
-            <p className="text-sm text-steel">{forName ? `Para ${forName} · ` : ""}{getSystem(preview.system).name}</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {!empty ? (
-              <Button variant="secondary" onClick={generate} loading={busy} icon={<RefreshCw className="size-4" />}>
-                Outra versão
-              </Button>
-            ) : null}
-            <Button variant="ghost" onClick={() => setPreview(null)}>
-              Ajustar respostas
-            </Button>
-          </div>
+        <div>
+          <h2 className="plate-type break-words text-2xl">{preview.name}</h2>
+          <p className="text-sm text-steel">
+            {forName ? `Para ${forName} · ` : ""}
+            {getSystem(preview.system).name} · {preview.days.length} treinos
+          </p>
         </div>
-        {preview.notes ? <p className="max-w-[70ch] text-[0.9375rem] text-steel">{preview.notes}</p> : null}
-        {empty ? (
-          <Alert tone="info">Ficha em branco criada com os dias do sistema {getSystem(preview.system).short}. Salve e adicione os exercícios no editor.</Alert>
-        ) : (
-          <div className="grid gap-4 lg:grid-cols-2">
-            {preview.days.map((d) => (
-              <FichaDay key={d.key} day={d} />
-            ))}
-          </div>
-        )}
-        {error ? <Alert tone="error">{error}</Alert> : null}
-        <div className="sticky bottom-20 z-10 flex justify-end lg:bottom-4">
-          <Button size="lg" onClick={save} loading={busy} className="shadow-lift">
-            {isCoach ? `Enviar ficha para ${forName?.split(" ")[0] ?? "o aluno"}` : "Salvar e ativar ficha"}
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={generate} loading={busy === "generate"} disabled={busy === "save"} icon={<RefreshCw className="size-4" />}>
+            Outra versão
+          </Button>
+          <Button variant="ghost" onClick={() => setPreview(null)} disabled={busy !== null}>
+            Ajustar respostas
           </Button>
         </div>
+        <p className="text-sm text-steel">Esta é uma base. Depois de salvar você troca exercícios, ajusta séries, cargas e observações no editor.</p>
+        {preview.notes ? <p className="max-w-[70ch] whitespace-pre-wrap rounded-[8px] border border-rule bg-paper px-4 py-3 text-[0.9375rem]">{preview.notes}</p> : null}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          {preview.days.map((d) => (
+            <FichaDay key={d.key} day={d} />
+          ))}
+        </div>
+        {error ? <Alert tone="error">{error}</Alert> : null}
+        <div className="sticky bottom-20 z-10 flex justify-end lg:bottom-4">
+          <Button size="lg" onClick={save} loading={busy === "save"} disabled={busy === "generate"} className="shadow-lift">
+            {isCoach ? `Salvar ficha de ${who ?? "aluno"}` : "Salvar e ativar ficha"}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (busy === "generate") {
+    return (
+      <div className="space-y-4" aria-busy="true">
+        <p className="font-semibold">{ai.enabled ? "A IA está montando a ficha. Costuma levar de 20 a 40 segundos." : "Montando a ficha…"}</p>
+        <Skeleton className="h-56" />
+        <Skeleton className="h-56" />
       </div>
     );
   }
@@ -136,25 +172,59 @@ export function ProgramGenerator({ owner, forName, onSaved }: { owner: Profile; 
       <Panel title="Rotina">
         <RoutinePicker prefs={prefs} set={set} />
       </Panel>
+      <Panel title="Prioridades e limitações">
+        <LimitsPicker prefs={prefs} set={set} />
+        {ai.enabled ? (
+          <Field label="Pedido livre para a IA" className="mt-5" hint="Opcional. Ex.: “quero agachamento livre e terra”, “sem leg press”, “terminar com cardio”.">
+            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="min-h-20" maxLength={500} />
+          </Field>
+        ) : null}
+      </Panel>
       <Panel title="Sistema de divisão">
         <SystemChooser prefs={prefs} set={set} />
       </Panel>
-      <Panel title="Prioridades e limitações">
-        <LimitsPicker prefs={prefs} set={set} />
-        <Field label="Pedido livre para a IA (opcional)" className="mt-5" hint="Ex.: “quero agachamento livre e terra”, “sem máquina de leg press”, “foco em glúteo”.">
-          <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="min-h-20" maxLength={500} />
-        </Field>
-      </Panel>
       {error ? <Alert tone="error">{error}</Alert> : null}
-      <div className="flex flex-wrap gap-3">
-        <Button size="lg" onClick={generate} loading={busy} icon={<Sparkles className="size-4" />}>
-          Gerar ficha com IA
+      <div className="flex flex-col gap-3 sm:flex-row">
+        <Button size="lg" onClick={generate} icon={ai.enabled ? <Sparkles className="size-4" /> : <Wand2 className="size-4" />}>
+          {ai.enabled ? "Gerar ficha com IA" : "Gerar ficha"}
         </Button>
-        <Button size="lg" variant="secondary" onClick={blank} icon={<PenLine className="size-4" />}>
+        <Button size="lg" variant="secondary" onClick={() => setBlankOpen(true)} icon={<PenLine className="size-4" />}>
           Montar do zero
         </Button>
       </div>
-      {busy ? <p className="text-sm text-steel">Montando a ficha… leva alguns segundos.</p> : null}
+      <p className="text-sm text-steel">
+        “Gerar ficha” monta uma base completa pelo perfil {who ? `de ${who}` : "informado"} para você revisar. “Montar do zero” abre o editor em branco.
+      </p>
+
+      <Dialog open={blankOpen} onClose={() => setBlankOpen(false)} title="Montar do zero">
+        <div className="space-y-5">
+          <Field label="Como você quer começar?">
+            <Segmented
+              label="Ponto de partida"
+              value={blankKind}
+              onChange={setBlankKind}
+              className="grid grid-cols-1"
+              options={[
+                { value: "livre", label: "Divisão livre", hint: "Treinos A, B, C… com os nomes e exercícios que você quiser" },
+                { value: "sistema", label: `Dias do ${getSystem(prefs.system).short}`, hint: "Os treinos já vêm com os títulos do sistema escolhido, sem exercícios" },
+              ]}
+            />
+          </Field>
+          {blankKind === "livre" ? (
+            <Field label="Quantos treinos diferentes?" hint="Você pode adicionar ou remover treinos depois.">
+              <Segmented label="Número de treinos" value={blankDays} onChange={setBlankDays} options={[1, 2, 3, 4, 5, 6, 7].map((d) => ({ value: d, label: String(d) }))} />
+            </Field>
+          ) : null}
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button variant="secondary" onClick={() => setBlankOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={createBlank} loading={busy === "blank"}>
+              Criar e abrir o editor
+            </Button>
+          </div>
+        </div>
+      </Dialog>
     </div>
   );
 }

@@ -15,6 +15,19 @@ export interface TrainingPrefs {
   system: SystemId;
   limitations: string;
   emphasis: MuscleGroup[];
+  /** O usuário escolheu o sistema à mão: a sugestão automática não sobrescreve mais. */
+  systemTouched?: boolean;
+}
+
+/** Sistema sugerido para as respostas atuais (frequência, nível, prioridades, equipamento e objetivo). */
+export function suggestFor(p: Pick<TrainingPrefs, "daysPerWeek" | "level" | "emphasis" | "equipment" | "goal">): SystemId {
+  return suggestSystem(p.daysPerWeek, p.level, { emphasis: p.emphasis, equipment: p.equipment, goal: p.goal });
+}
+
+/** Aplica a mudança e, se o sistema ainda é o sugerido, atualiza a sugestão. */
+export function withSuggestion(prefs: TrainingPrefs, patch: Partial<TrainingPrefs>): TrainingPrefs {
+  const next = { ...prefs, ...patch };
+  return next.systemTouched || patch.system ? next : { ...next, system: suggestFor(next) };
 }
 
 const GOAL_HINT: Record<Goal, string> = {
@@ -26,6 +39,7 @@ const GOAL_HINT: Record<Goal, string> = {
 };
 
 export function GoalPicker({ value, onChange }: { value: Goal; onChange: (g: Goal) => void }) {
+  // Objetivo muda a sugestão de sistema: quem chama usa withSuggestion.
   return (
     <Segmented
       label="Objetivo"
@@ -40,11 +54,11 @@ export function GoalPicker({ value, onChange }: { value: Goal; onChange: (g: Goa
 export function RoutinePicker({ prefs, set }: { prefs: TrainingPrefs; set: (p: Partial<TrainingPrefs>) => void }) {
   return (
     <div className="space-y-5">
-      <Field label="Há quanto tempo você treina?">
+      <Field label="Há quanto tempo treina?">
         <Segmented
           label="Nível"
           value={prefs.level}
-          onChange={(level) => set({ level, system: suggestSystem(prefs.daysPerWeek, level) })}
+          onChange={(level) => set({ level })}
           options={[
             { value: "iniciante", label: LEVEL_LABEL.iniciante, hint: "Menos de 6 meses" },
             { value: "intermediario", label: LEVEL_LABEL.intermediario, hint: "6 meses a 2 anos" },
@@ -56,21 +70,21 @@ export function RoutinePicker({ prefs, set }: { prefs: TrainingPrefs; set: (p: P
         <Segmented
           label="Dias por semana"
           value={prefs.daysPerWeek}
-          onChange={(d) => set({ daysPerWeek: d, system: suggestSystem(d, prefs.level) })}
+          onChange={(d) => set({ daysPerWeek: d })}
           options={[2, 3, 4, 5, 6].map((d) => ({ value: d, label: `${d}x` }))}
         />
       </Field>
       <Field label="Quanto tempo por treino?">
         <Segmented label="Minutos por treino" value={prefs.sessionMinutes} onChange={(m) => set({ sessionMinutes: m })} options={[30, 45, 60, 75, 90].map((m) => ({ value: m, label: `${m} min` }))} />
       </Field>
-      <Field label="Onde você treina?">
+      <Field label="Onde treina?">
         <Segmented
           label="Equipamento"
           value={prefs.equipment}
           onChange={(equipment) => set({ equipment })}
           options={[
             { value: "academia", label: "Academia", hint: "Máquinas, barras e halteres" },
-            { value: "home", label: "Em casa", hint: "Halteres e elástico" },
+            { value: "home", label: "Em casa", hint: "Halteres, elástico e caneleira" },
             { value: "peso_corporal", label: "Sem equipamento", hint: "Só peso do corpo" },
           ]}
         />
@@ -80,7 +94,7 @@ export function RoutinePicker({ prefs, set }: { prefs: TrainingPrefs; set: (p: P
 }
 
 export function SystemChooser({ prefs, set }: { prefs: TrainingPrefs; set: (p: Partial<TrainingPrefs>) => void }) {
-  const suggested = suggestSystem(prefs.daysPerWeek, prefs.level);
+  const suggested = suggestFor(prefs);
   return (
     <div role="radiogroup" aria-label="Sistema de treino" className="grid gap-2 sm:grid-cols-2">
       {SYSTEMS.map((s) => {
@@ -91,7 +105,7 @@ export function SystemChooser({ prefs, set }: { prefs: TrainingPrefs; set: (p: P
             type="button"
             role="radio"
             aria-checked={active}
-            onClick={() => set({ system: s.id })}
+            onClick={() => set({ system: s.id, systemTouched: true })}
             className={cx("rounded-[8px] border p-3 text-left transition-colors", active ? "border-iron bg-iron text-chalk" : "border-rule-strong bg-paper hover:border-iron")}
           >
             <span className="flex items-baseline justify-between gap-2">
@@ -107,10 +121,10 @@ export function SystemChooser({ prefs, set }: { prefs: TrainingPrefs; set: (p: P
 }
 
 export function LimitsPicker({ prefs, set }: { prefs: TrainingPrefs; set: (p: Partial<TrainingPrefs>) => void }) {
-  const groups: MuscleGroup[] = ["peito", "costas", "ombros", "biceps", "triceps", "quadriceps", "posteriores", "gluteos", "abdomen"];
+  const groups: MuscleGroup[] = ["peito", "costas", "ombros", "biceps", "triceps", "quadriceps", "posteriores", "gluteos", "panturrilhas", "adutores", "abdomen"];
   return (
     <div className="space-y-5">
-      <Field label="Algum músculo que você quer priorizar? (até 3)">
+      <Field label="Algum músculo para priorizar? (até 3)">
         <div className="flex flex-wrap gap-1.5">
           {groups.map((g) => {
             const on = prefs.emphasis.includes(g);
@@ -120,7 +134,7 @@ export function LimitsPicker({ prefs, set }: { prefs: TrainingPrefs; set: (p: Pa
                 type="button"
                 aria-pressed={on}
                 onClick={() => set({ emphasis: on ? prefs.emphasis.filter((x) => x !== g) : [...prefs.emphasis, g].slice(-3) })}
-                className={cx("rounded-full border px-3 py-1.5 text-sm font-semibold", on ? "border-iron bg-iron text-chalk" : "border-rule-strong bg-paper hover:border-iron")}
+                className={cx("h-10 rounded-full border px-3.5 text-sm font-semibold", on ? "border-iron bg-iron text-chalk" : "border-rule-strong bg-paper hover:border-iron")}
               >
                 {GROUP_LABEL[g]}
               </button>

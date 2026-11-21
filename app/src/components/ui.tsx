@@ -133,7 +133,7 @@ export function Segmented<T extends string | number>({
             onClick={() => onChange(o.value)}
             className={cx(
               "rounded-[var(--radius-ficha)] border text-left font-semibold transition-colors",
-              size === "sm" ? "px-2.5 py-1.5 text-sm" : "px-3.5 py-2.5 text-[0.9375rem]",
+              size === "sm" ? "min-h-10 px-3 py-1.5 text-sm" : "min-h-11 px-3.5 py-2.5 text-[0.9375rem]",
               active ? "border-iron bg-iron text-chalk" : "border-rule-strong bg-paper text-iron hover:border-iron",
             )}
           >

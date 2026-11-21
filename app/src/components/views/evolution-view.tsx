@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { Camera, Trash2, Trophy } from "lucide-react";
 import { BarChart, HBars, LineChart } from "@/components/charts";
-import { Alert, Button, Empty, Field, Input, Panel, Segmented, Select, Skeleton, cx } from "@/components/ui";
+import { Alert, Button, Dialog, Empty, Field, Input, Panel, Segmented, Select, Skeleton, cx } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
 import { fmtDate, fmtNum, useLoad } from "@/lib/hooks";
 import { GROUP_LABEL } from "@/lib/domain/exercises";
@@ -17,7 +17,11 @@ import { compressImage } from "./photo-tools";
 
 type Tab = "cargas" | "corpo" | "fotos" | "volume";
 
-export function EvolutionView({ userId, editable }: { userId: string; editable: boolean }) {
+/**
+ * Evolução de cargas, medidas, fotos e volume.
+ * `byCoach`: o personal registra a avaliação e as fotos pelo aluno (o consentimento é o do aluno).
+ */
+export function EvolutionView({ userId, editable, byCoach = false }: { userId: string; editable: boolean; byCoach?: boolean }) {
   const { repo } = useApp();
   const [tab, setTab] = useState<Tab>("cargas");
   const { data, loading, error, reload } = useLoad(async () => {
@@ -27,11 +31,13 @@ export function EvolutionView({ userId, editable }: { userId: string; editable: 
 
   return (
     <div className="space-y-5">
+      <div className="no-print -mx-4 overflow-x-auto px-4">
       <Segmented
         label="Seção"
         value={tab}
         onChange={setTab}
         size="sm"
+        className="min-w-max"
         options={[
           { value: "cargas", label: "Cargas" },
           { value: "corpo", label: "Peso e medidas" },
@@ -39,11 +45,12 @@ export function EvolutionView({ userId, editable }: { userId: string; editable: 
           { value: "volume", label: "Volume" },
         ]}
       />
+      </div>
       {loading ? <Skeleton className="h-80" /> : error ? <Alert tone="error">{error}</Alert> : data ? (
         <>
           {tab === "cargas" && <Loads sessions={data.sessions} />}
-          {tab === "corpo" && <Body userId={userId} metrics={data.metrics} editable={editable} onChange={reload} />}
-          {tab === "fotos" && <Photos userId={userId} editable={editable} />}
+          {tab === "corpo" && <Body userId={userId} metrics={data.metrics} editable={editable} byCoach={byCoach} onChange={reload} />}
+          {tab === "fotos" && <Photos userId={userId} editable={editable} byCoach={byCoach} />}
           {tab === "volume" && <Volume sessions={data.sessions} />}
         </>
       ) : null}
@@ -125,35 +132,72 @@ const FIELDS: { key: keyof BodyMetric; label: string; unit: string }[] = [
   { key: "thighCm", label: "Coxa", unit: "cm" },
 ];
 
-function Body({ userId, metrics, editable, onChange }: { userId: string; metrics: BodyMetric[]; editable: boolean; onChange: () => void }) {
+const BODY_LIMITS: Partial<Record<keyof BodyMetric, [number, number]>> = {
+  weightKg: [30, 300],
+  bodyFatPct: [3, 60],
+  waistCm: [40, 200],
+  hipCm: [50, 200],
+  chestCm: [50, 200],
+  armCm: [15, 70],
+  thighCm: [25, 110],
+};
+
+function Body({ userId, metrics, editable, byCoach, onChange }: { userId: string; metrics: BodyMetric[]; editable: boolean; byCoach: boolean; onChange: () => void }) {
   const { repo, user, updateProfile } = useApp();
   const [form, setForm] = useState<Record<string, string>>({ date: todayISO() });
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [toDelete, setToDelete] = useState<BodyMetric | null>(null);
   const weight = metrics.filter((m) => m.weightKg).map((m) => ({ date: m.date, value: m.weightKg! }));
-  const consented = Boolean(user?.consentHealthAt);
+  // Avaliação feita pelo personal: os dados foram informados pelo aluno a ele.
+  const consented = byCoach || Boolean(user?.consentHealthAt);
+  const sorted = useMemo(() => [...metrics].sort((a, b) => b.date.localeCompare(a.date)), [metrics]);
+
+  /** Diferença para a avaliação anterior que tem o mesmo campo. */
+  function delta(index: number, key: keyof BodyMetric): number | null {
+    const cur = sorted[index]?.[key] as number | null | undefined;
+    if (!cur) return null;
+    for (let i = index + 1; i < sorted.length; i++) {
+      const prev = sorted[i]?.[key] as number | null | undefined;
+      if (prev) return Math.round((cur - prev) * 10) / 10;
+    }
+    return null;
+  }
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
+    setSaved(false);
     const metric: BodyMetric = { id: uid(), userId, date: form.date || todayISO() };
+    if (metric.date > todayISO()) return setErr("A data não pode ser no futuro.");
     let any = false;
     for (const f of FIELDS) {
       const raw = form[f.key as string];
       if (raw) {
         const n = Number(raw.replace(",", "."));
-        if (Number.isNaN(n) || n <= 0) return setErr(`Valor inválido em ${f.label}.`);
+        const [min, max] = BODY_LIMITS[f.key] ?? [0, 999];
+        if (Number.isNaN(n) || n < min || n > max) return setErr(`Confira o valor de ${f.label.toLowerCase()}: o esperado fica entre ${min} e ${max} ${f.unit}.`);
         (metric as unknown as Record<string, number>)[f.key as string] = n;
         any = true;
       }
     }
     if (!any) return setErr("Preencha pelo menos uma medida.");
+    if (form.note?.trim()) metric.note = form.note.trim();
     setSaving(true);
     try {
       await repo.saveMetric(metric);
-      if (metric.weightKg && user?.id === userId) await updateProfile({ weightKg: metric.weightKg });
-      track("metric_logged", { fields: Object.keys(form).length - 1 });
+      const newest = !sorted[0] || metric.date >= sorted[0].date;
+      if (metric.weightKg && newest) {
+        if (user?.id === userId) await updateProfile({ weightKg: metric.weightKg });
+        else if (byCoach) {
+          const profile = await repo.getProfile(userId);
+          if (profile && profile.managedBy === user?.id) await repo.saveProfile({ ...profile, weightKg: metric.weightKg });
+        }
+      }
+      track(byCoach ? "assessment_logged" : "metric_logged", { fields: Object.keys(metric).length - 3 });
       setForm({ date: todayISO() });
+      setSaved(true);
       onChange();
     } catch (e2) {
       setErr(e2 instanceof Error ? e2.message : "Não foi possível salvar.");
@@ -161,6 +205,12 @@ function Body({ userId, metrics, editable, onChange }: { userId: string; metrics
       setSaving(false);
     }
   }
+
+  const input = (f: (typeof FIELDS)[number]) => (
+    <Field key={f.key} label={`${f.label} (${f.unit})`}>
+      <Input inputMode="decimal" value={form[f.key as string] ?? ""} onChange={(e) => setForm({ ...form, [f.key]: e.target.value.replace(/[^\d,.]/g, "").slice(0, 6) })} />
+    </Field>
+  );
 
   return (
     <div className="space-y-4">
@@ -172,21 +222,25 @@ function Body({ userId, metrics, editable, onChange }: { userId: string; metrics
 
       {editable ? (
         consented ? (
-          <Panel title="Registrar medidas">
-            <form onSubmit={save} className="space-y-3">
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <Field label="Data">
+          <Panel title={byCoach ? "Registrar avaliação" : "Registrar medidas"}>
+            <form onSubmit={save} className="space-y-4">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <Field label="Data" className="col-span-2 sm:col-span-1">
                   <Input type="date" value={form.date} max={todayISO()} onChange={(e) => setForm({ ...form, date: e.target.value })} />
                 </Field>
-                {FIELDS.map((f) => (
-                  <Field key={f.key} label={`${f.label} (${f.unit})`}>
-                    <Input inputMode="decimal" value={form[f.key as string] ?? ""} onChange={(e) => setForm({ ...form, [f.key]: e.target.value.replace(/[^\d,.]/g, "") })} />
-                  </Field>
-                ))}
+                {FIELDS.slice(0, 2).map(input)}
               </div>
+              <fieldset>
+                <legend className="col-head mb-2 text-steel">Circunferências</legend>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">{FIELDS.slice(2).map(input)}</div>
+              </fieldset>
+              <Field label="Observação" hint="Opcional. Ex.: avaliação em jejum, fita na altura do umbigo.">
+                <Input value={form.note ?? ""} onChange={(e) => setForm({ ...form, note: e.target.value })} maxLength={160} />
+              </Field>
               {err ? <Alert tone="error">{err}</Alert> : null}
+              {saved ? <Alert tone="done">{byCoach ? "Avaliação registrada." : "Medidas registradas."}</Alert> : null}
               <Button type="submit" loading={saving}>
-                Salvar medidas
+                {byCoach ? "Salvar avaliação" : "Salvar medidas"}
               </Button>
             </form>
           </Panel>
@@ -201,10 +255,10 @@ function Body({ userId, metrics, editable, onChange }: { userId: string; metrics
         )
       ) : null}
 
-      {metrics.length ? (
-        <Panel title="Histórico de medidas" pad={false}>
+      {sorted.length ? (
+        <Panel title={byCoach ? "Avaliações anteriores" : "Histórico de medidas"} pad={false}>
           <div className="overflow-x-auto">
-            <table className="num w-full min-w-[560px] text-sm">
+            <table className="num w-full min-w-[600px] text-sm">
               <thead>
                 <tr className="border-b border-rule bg-chalk text-left">
                   <th className="col-head px-4 py-2 text-steel">Data</th>
@@ -213,28 +267,33 @@ function Body({ userId, metrics, editable, onChange }: { userId: string; metrics
                       {f.label}
                     </th>
                   ))}
-                  {editable ? <th className="w-10" /> : null}
+                  {editable ? <th className="w-11" /> : null}
                 </tr>
               </thead>
               <tbody>
-                {[...metrics].reverse().map((m) => (
-                  <tr key={m.id} className="border-t border-rule">
-                    <td className="px-4 py-2">{fmtDate(m.date, { day: "2-digit", month: "2-digit", year: "2-digit" })}</td>
-                    {FIELDS.map((f) => (
-                      <td key={f.key} className="px-2 py-2 text-right">
-                        {m[f.key] ? fmtNum(m[f.key] as number) : <span className="text-pencil">—</span>}
-                      </td>
-                    ))}
+                {sorted.map((m, i) => (
+                  <tr key={m.id} className="border-t border-rule align-top">
+                    <td className="px-4 py-2">
+                      {fmtDate(m.date, { day: "2-digit", month: "2-digit", year: "2-digit" })}
+                      {m.note ? <span className="block max-w-40 whitespace-normal text-xs text-steel">{m.note}</span> : null}
+                    </td>
+                    {FIELDS.map((f) => {
+                      const d = delta(i, f.key);
+                      return (
+                        <td key={f.key} className="px-2 py-2 text-right">
+                          {m[f.key] ? fmtNum(m[f.key] as number) : <span className="text-pencil">—</span>}
+                          {d ? (
+                            <span className="block text-xs text-steel">
+                              {d > 0 ? "+" : "−"}
+                              {fmtNum(Math.abs(d))}
+                            </span>
+                          ) : null}
+                        </td>
+                      );
+                    })}
                     {editable ? (
-                      <td className="pr-2">
-                        <button
-                          onClick={async () => {
-                            await repo.deleteMetric(m.id);
-                            onChange();
-                          }}
-                          className="grid size-8 place-items-center rounded hover:bg-chalk-2"
-                          aria-label={`Excluir medida de ${m.date}`}
-                        >
+                      <td className="pr-1">
+                        <button onClick={() => setToDelete(m)} className="grid size-11 place-items-center rounded hover:bg-chalk-2" aria-label={`Excluir medidas de ${fmtDate(m.date)}`}>
                           <Trash2 className="size-4 text-plate-red-ink" />
                         </button>
                       </td>
@@ -244,16 +303,38 @@ function Body({ userId, metrics, editable, onChange }: { userId: string; metrics
               </tbody>
             </table>
           </div>
+          <p className="border-t border-rule px-4 py-2 text-xs text-steel">O número menor é a diferença para a medida anterior.</p>
         </Panel>
       ) : !editable ? (
         <Empty title="Sem medidas" body="O aluno ainda não registrou peso ou medidas." />
+      ) : !weight.length ? (
+        <p className="text-sm text-steel">{byCoach ? "Nenhuma avaliação registrada ainda. A primeira vira a linha de base para as próximas." : "Nenhuma medida registrada ainda. Pese-se sempre no mesmo horário para comparar."}</p>
       ) : null}
+
+      <Dialog open={Boolean(toDelete)} onClose={() => setToDelete(null)} title="Excluir estas medidas?">
+        <p className="text-[0.9375rem] text-steel">O registro de {toDelete ? fmtDate(toDelete.date, { day: "2-digit", month: "long" }) : ""} sai do histórico e do gráfico.</p>
+        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button variant="secondary" onClick={() => setToDelete(null)}>
+            Cancelar
+          </Button>
+          <Button
+            variant="danger"
+            onClick={async () => {
+              if (toDelete) await repo.deleteMetric(toDelete.id);
+              setToDelete(null);
+              onChange();
+            }}
+          >
+            Excluir
+          </Button>
+        </div>
+      </Dialog>
     </div>
   );
 }
 
-function Photos({ userId, editable }: { userId: string; editable: boolean }) {
-  const { repo, user } = useApp();
+function Photos({ userId, editable, byCoach }: { userId: string; editable: boolean; byCoach: boolean }) {
+  const { repo, user, plan, isTester } = useApp();
   const { data, loading, error, reload } = useLoad(() => repo.listPhotos(userId), [userId, repo]);
   const [pose, setPose] = useState<PhotoPose>("frente");
   const [date, setDate] = useState(todayISO());
@@ -261,7 +342,8 @@ function Photos({ userId, editable }: { userId: string; editable: boolean }) {
   const [err, setErr] = useState<string | null>(null);
   const [cmp, setCmp] = useState<[string, string] | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const limit = PLANS[user?.plan ?? "free"].maxPhotos;
+  const limit = PLANS[plan].maxPhotos;
+  const consented = byCoach || Boolean(user?.consentHealthAt);
 
   const byPose = (data ?? []).filter((p) => p.pose === pose);
   const a = byPose.find((p) => p.id === cmp?.[0]) ?? byPose[0];
@@ -269,7 +351,8 @@ function Photos({ userId, editable }: { userId: string; editable: boolean }) {
 
   async function upload(file: File) {
     setErr(null);
-    if ((data?.length ?? 0) >= limit && user?.id === userId) {
+    if (!file.type.startsWith("image/")) return setErr("Escolha um arquivo de imagem (foto).");
+    if (!isTester && (data?.length ?? 0) >= limit && user?.id === userId) {
       track("paywall_viewed", { where: "photos" });
       return setErr(`O plano Grátis guarda até ${limit} fotos. Assine o Pro para fotos ilimitadas.`);
     }
@@ -293,7 +376,7 @@ function Photos({ userId, editable }: { userId: string; editable: boolean }) {
     <div className="space-y-4">
       <Segmented label="Pose" value={pose} onChange={setPose} size="sm" options={(["frente", "lado", "costas"] as PhotoPose[]).map((p) => ({ value: p, label: p[0]!.toUpperCase() + p.slice(1) }))} />
       {editable ? (
-        user?.consentHealthAt ? (
+        consented ? (
           <Panel>
             <div className="flex flex-wrap items-end gap-3">
               <Field label="Data da foto">
@@ -304,7 +387,7 @@ function Photos({ userId, editable }: { userId: string; editable: boolean }) {
                 Adicionar foto de {pose}
               </Button>
             </div>
-            <p className="mt-3 text-xs text-steel">Dica: mesma luz, mesmo lugar e mesma distância a cada 2–4 semanas. As fotos são privadas e reduzidas no seu aparelho antes de salvar.</p>
+            <p className="mt-3 text-xs text-steel">Dica: mesma luz, mesmo lugar e mesma distância a cada 2–4 semanas. As fotos são privadas e reduzidas no aparelho antes de salvar.</p>
             {err ? (
               <Alert tone="warn" className="mt-3">
                 {err}
@@ -360,7 +443,7 @@ function Photos({ userId, editable }: { userId: string; editable: boolean }) {
                     await repo.deletePhoto(p);
                     void reload();
                   }}
-                  className="absolute right-1 top-1 grid size-8 place-items-center rounded bg-paper/90 opacity-0 transition-opacity focus:opacity-100 group-hover:opacity-100"
+                  className="absolute right-1 top-1 grid size-9 place-items-center rounded bg-paper/90"
                   aria-label="Excluir foto"
                 >
                   <Trash2 className="size-4 text-plate-red-ink" />
@@ -370,7 +453,7 @@ function Photos({ userId, editable }: { userId: string; editable: boolean }) {
           ))}
         </ul>
       ) : (
-        <Empty title={`Nenhuma foto de ${pose}`} body="Fotos mostram mudanças que a balança não mostra. Tire a primeira hoje para ter com o que comparar daqui a um mês." />
+        <Empty title={`Nenhuma foto de ${pose}`} body={editable ? "Fotos mostram mudanças que a balança não mostra. Tire a primeira hoje para ter com o que comparar daqui a um mês." : "Ainda não há fotos nesta pose."} />
       )}
     </div>
   );

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Suspense, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { ArrowRight, Check, Play, Sparkles, Trophy } from "lucide-react";
+import { ArrowRight, Check, Play, Plus, Trophy } from "lucide-react";
 import { FichaDay } from "@/components/ficha";
 import { Alert, Empty, LinkButton, Panel, Segmented, Skeleton, cx } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
@@ -11,6 +11,8 @@ import { fmtDate, fmtNum, nextDayKey, relativeDay, useLoad } from "@/lib/hooks";
 import { bestSet, weekStart, weekStreak } from "@/lib/domain/progression";
 import { targetsForProfile } from "@/lib/domain/nutrition";
 import { getExercise } from "@/lib/domain/exercises";
+import { programValidity } from "@/lib/domain/format";
+import { useAI } from "@/lib/ai/client";
 
 const WEEK = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 
@@ -23,11 +25,12 @@ export default function HojePage() {
 }
 
 function Hoje() {
-  const { user, repo } = useApp();
+  const { user, repo, mode } = useApp();
+  const ai = useAI(mode === "supabase");
   const params = useSearchParams();
   const { data, loading, error } = useLoad(async () => {
-    const [programs, sessions, coach] = await Promise.all([repo.listPrograms(user!.id), repo.listSessions(user!.id), repo.getCoach(user!.id)]);
-    return { program: programs.find((p) => p.active) ?? null, sessions, coach };
+    const [programs, sessions, coach, diet] = await Promise.all([repo.listPrograms(user!.id), repo.listSessions(user!.id), repo.getCoach(user!.id), repo.getDiet(user!.id)]);
+    return { program: programs.find((p) => p.active) ?? null, sessions, coach, diet };
   }, [user?.id, repo]);
   const [chosen, setChosen] = useState<string | null>(null);
 
@@ -54,11 +57,14 @@ function Hoje() {
   const first = user!.name.split(" ")[0];
   const hour = new Date().getHours();
   const hello = hour < 12 ? "Bom dia" : hour < 18 ? "Boa tarde" : "Boa noite";
-  const targets = targetsForProfile(user!);
+  // Metas da dieta salva (inclusive a enviada pelo personal) têm prioridade sobre o cálculo automático.
+  const targets = data.diet?.targets ?? targetsForProfile(user!);
   const program = data.program;
   const dayKey = program ? (chosen ?? nextDayKey(program, data.sessions)) : null;
   const day = program?.days.find((d) => d.key === dayKey) ?? program?.days[0];
   const today = (new Date().getDay() + 6) % 7;
+  const fromCoach = program && program.createdBy !== user!.id ? (data.coach?.name ?? "seu personal") : null;
+  const validity = program ? programValidity(program.createdAt, program.durationWeeks) : null;
 
   return (
     <div className="space-y-6">
@@ -124,30 +130,66 @@ function Hoje() {
       {program && day ? (
         <section aria-labelledby="proximo" className="space-y-3">
           <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
+            <div className="min-w-0">
               <h2 id="proximo" className="text-lg font-bold">
                 Próximo treino
               </h2>
-              <p className="text-sm text-steel">{program.name}</p>
+              <p className="text-sm text-steel">
+                {program.name}
+                {fromCoach ? ` · ficha de ${fromCoach}` : ""}
+                {validity && validity.state !== "ok" ? <span className={cx("font-semibold", validity.state === "expired" ? "text-plate-red-ink" : "text-iron")}> · {validity.label}</span> : null}
+              </p>
             </div>
             {program.days.length > 1 ? (
-              <Segmented label="Escolher dia" size="sm" value={day.key} onChange={setChosen} options={program.days.map((d) => ({ value: d.key, label: d.key }))} />
+              <div className="-mx-4 max-w-[calc(100%+2rem)] overflow-x-auto px-4">
+                <Segmented label="Escolher dia" size="sm" className="min-w-max flex-nowrap" value={day.key} onChange={setChosen} options={program.days.map((d) => ({ value: d.key, label: d.key }))} />
+              </div>
             ) : null}
           </div>
-          <FichaDay day={day} compact />
-          <LinkButton href={`/sessao?p=${program.id}&d=${encodeURIComponent(day.key)}`} size="lg" className="w-full sm:w-auto" icon={<Play className="size-4 fill-current" />}>
-            Começar treino {day.key}
-          </LinkButton>
+          {program.notes?.trim() ? (
+            <details className="rounded-[8px] border border-rule bg-paper px-4 py-2.5 text-[0.9375rem]">
+              <summary className="flex min-h-9 cursor-pointer items-center font-semibold">Orientações da ficha</summary>
+              <p className="mt-1 whitespace-pre-wrap pb-1 text-steel">{program.notes}</p>
+            </details>
+          ) : null}
+          {day.exercises.length ? (
+            <>
+              <FichaDay day={day} />
+              <div className="flex flex-wrap gap-2">
+                <LinkButton href={`/sessao?p=${program.id}&d=${encodeURIComponent(day.key)}`} size="lg" className="w-full sm:w-auto" icon={<Play className="size-4 fill-current" />}>
+                  Começar treino {day.key}
+                </LinkButton>
+                <LinkButton href="/sessao" size="lg" variant="ghost" className="w-full sm:w-auto">
+                  Treino livre
+                </LinkButton>
+              </div>
+            </>
+          ) : (
+            <Alert tone="info">
+              O treino {day.key} ainda não tem exercícios.{" "}
+              {fromCoach ? "Seu personal ainda está montando esta parte da ficha." : (
+                <Link href={`/treinos/${program.id}`} className="font-semibold underline">
+                  Adicionar exercícios
+                </Link>
+              )}
+            </Alert>
+          )}
         </section>
       ) : (
         <Empty
-          title={data.coach ? "Aguardando sua ficha" : "Você ainda não tem ficha ativa"}
-          body={data.coach ? `${data.coach.name} vai enviar sua ficha por aqui. Enquanto isso, você pode registrar um treino livre.` : "Monte uma ficha com IA em segundos, no sistema que você preferir — ou registre um treino livre."}
+          title={data.coach ? "Seu personal ainda não enviou a ficha" : "Você ainda não tem ficha ativa"}
+          body={
+            data.coach
+              ? `Quando ${data.coach.name} enviar a ficha, ela aparece aqui. Enquanto isso, você pode registrar um treino livre.`
+              : ai.enabled
+                ? "Monte uma ficha com IA em segundos, no sistema que você preferir, ou registre um treino livre."
+                : "Monte sua ficha em um minuto, no sistema que você preferir, ou registre um treino livre."
+          }
           action={
             <div className="flex flex-wrap gap-2">
               {!data.coach ? (
-                <LinkButton href="/treinos/novo" icon={<Sparkles className="size-4" />}>
-                  Montar ficha com IA
+                <LinkButton href="/treinos/novo" icon={<Plus className="size-4" />}>
+                  {ai.enabled ? "Montar ficha com IA" : "Montar ficha"}
                 </LinkButton>
               ) : null}
               <LinkButton href="/sessao" variant="secondary">
@@ -158,7 +200,7 @@ function Hoje() {
         />
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <Panel
           title="Recordes recentes"
           action={
@@ -208,7 +250,7 @@ function Hoje() {
             </dl>
           ) : (
             <p className="text-sm text-steel">
-              Informe peso e altura em{" "}
+              Informe sexo, idade, peso e altura em{" "}
               <Link href="/conta" className="font-semibold underline">
                 Conta
               </Link>{" "}

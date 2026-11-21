@@ -2,15 +2,17 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Check, ChevronDown, Minus, Plus, Timer, Trash2, Trophy, X } from "lucide-react";
+import { Check, ChevronDown, Minus, Play, Plus, Replace, Square, Timer, Trash2, Trophy, Volume2, VolumeX, X } from "lucide-react";
 import { BarbellView } from "@/components/brand";
 import { ExercisePicker } from "@/components/exercise-picker";
 import { Alert, Badge, Button, Dialog, Skeleton, Textarea, cx } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
-import { getExercise } from "@/lib/domain/exercises";
+import { UNIT_LABEL, getExercise, unitOf } from "@/lib/domain/exercises";
+import { fmtRest, fmtScheme } from "@/lib/domain/format";
+import { TECHNIQUE_LABEL } from "@/lib/domain/generator";
 import { uid } from "@/lib/domain/ids";
 import { completedSets, detectPRs, fmtKg, lastPerformance, sessionVolume, suggestNext, type LoadSuggestion } from "@/lib/domain/progression";
-import type { ExerciseLog, Program, Session, SetLog } from "@/lib/domain/types";
+import type { Exercise, ExerciseLog, Program, Session, SetLog, Technique, Unit } from "@/lib/domain/types";
 import { track } from "@/lib/analytics";
 import { fmtNum } from "@/lib/hooks";
 
@@ -36,18 +38,21 @@ function buildDraft(userId: string, program: Program | null, dayKey: string | nu
   const restSec: Record<string, number> = {};
   const exercises: ExerciseLog[] = (day?.exercises ?? []).map((p) => {
     const last = lastPerformance(history, p.exerciseId);
+    const unit = unitOf(p.exerciseId, p.unit);
     const sug = suggestNext(last, p, p.exerciseId);
     const logUid = uid();
-    suggestions[logUid] = sug;
+    if (unit === "reps") suggestions[logUid] = sug;
     restSec[logUid] = p.restSec;
     const impl = getExercise(p.exerciseId)?.implement;
-    // Peso corporal/elástico: carga é opcional ("peso extra"); nunca começa com 0 kg.
-    const load = impl === "peso_corporal" || impl === "elastico" ? sug.loadKg || p.loadKg || null : (sug.loadKg ?? p.loadKg ?? null);
+    // Peso corporal/elástico e séries por tempo: carga é opcional ("peso extra"); nunca começa com 0 kg.
+    const optionalLoad = unit !== "reps" || impl === "peso_corporal" || impl === "elastico";
+    const load = unit === "min" ? null : optionalLoad ? (unit === "reps" ? sug.loadKg : null) || p.loadKg || null : (sug.loadKg ?? p.loadKg ?? null);
     return {
       uid: logUid,
       exerciseId: p.exerciseId,
       name: p.name,
-      planned: { sets: p.sets, repsMin: p.repsMin, repsMax: p.repsMax, loadKg: p.loadKg, restSec: p.restSec },
+      unit,
+      planned: { sets: p.sets, repsMin: p.repsMin, repsMax: p.repsMax, loadKg: p.loadKg, restSec: p.restSec, technique: p.technique, notes: p.notes },
       sets: Array.from({ length: p.sets }, () => ({ loadKg: load, reps: null, done: false })),
     };
   });
@@ -69,6 +74,34 @@ function buildDraft(userId: string, program: Program | null, dayKey: string | nu
   };
 }
 
+const LINKED: Technique[] = ["bi_set", "tri_set", "super_serie"];
+const SOUND_KEY = "sr:sound";
+
+/**
+ * Grupos de exercícios feitos em sequência (bi-set, tri-set, supersérie).
+ * Exercícios seguidos com a mesma técnica formam o grupo; se só o primeiro foi marcado,
+ * ele se junta ao exercício seguinte.
+ */
+function linkGroups(exercises: ExerciseLog[]): Record<string, { members: string[]; pos: number }> {
+  const out: Record<string, { members: string[]; pos: number }> = {};
+  let i = 0;
+  while (i < exercises.length) {
+    const t = exercises[i]!.planned?.technique;
+    if (!t || !LINKED.includes(t)) {
+      i++;
+      continue;
+    }
+    const size = t === "tri_set" ? 3 : 2;
+    let j = i;
+    while (j + 1 < exercises.length && j - i + 1 < size && exercises[j + 1]!.planned?.technique === t) j++;
+    if (j === i && i + 1 < exercises.length) j = Math.min(exercises.length - 1, i + size - 1);
+    const members = exercises.slice(i, j + 1).map((e) => e.uid);
+    if (members.length > 1) members.forEach((u, pos) => (out[u] = { members, pos }));
+    i = j + 1;
+  }
+  return out;
+}
+
 function Sessao() {
   const { user, repo } = useApp();
   const router = useRouter();
@@ -80,6 +113,10 @@ function Sessao() {
   const [program, setProgram] = useState<Program | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [picker, setPicker] = useState(false);
+  const [swapUid, setSwapUid] = useState<string | null>(null);
+  const [hold, setHold] = useState<{ logUid: string; index: number; startedAt: number; max: number } | null>(null);
+  const [sound, setSound] = useState(true);
+  const audio = useRef<AudioContext | null>(null);
   const [rest, setRest] = useState<{ until: number; total: number } | null>(null);
   const [now, setNow] = useState(Date.now());
   const [finishing, setFinishing] = useState(false);
@@ -129,13 +166,51 @@ function Sessao() {
     return () => clearInterval(t);
   }, []);
 
-  // Fim do descanso: vibra e limpa
+  useEffect(() => {
+    try {
+      setSound(localStorage.getItem(SOUND_KEY) !== "0");
+    } catch {}
+  }, []);
+
+  /** Prepara o áudio num toque do usuário (exigência do iOS) para o aviso sonoro funcionar depois. */
+  const unlockAudio = useCallback(() => {
+    if (!sound) return;
+    try {
+      const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!Ctor) return;
+      audio.current ??= new Ctor();
+      void audio.current.resume();
+    } catch {}
+  }, [sound]);
+
+  const beep = useCallback(
+    (times = 2) => {
+      const ctx = audio.current;
+      if (!ctx || !sound) return;
+      try {
+        for (let k = 0; k < times; k++) {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.frequency.value = 880;
+          gain.gain.value = 0.18;
+          osc.connect(gain).connect(ctx.destination);
+          const t = ctx.currentTime + k * 0.28;
+          osc.start(t);
+          osc.stop(t + 0.16);
+        }
+      } catch {}
+    },
+    [sound],
+  );
+
+  // Fim do descanso: vibra, apita e limpa
   useEffect(() => {
     if (rest && now >= rest.until) {
       navigator.vibrate?.([180, 80, 180]);
+      beep(2);
       setRest(null);
     }
-  }, [now, rest]);
+  }, [now, rest, beep]);
 
   // Mantém a tela acesa durante o treino
   useEffect(() => {
@@ -155,24 +230,65 @@ function Sessao() {
   const setField = (logUid: string, i: number, patch: Partial<SetLog>) =>
     update(logUid, (log) => ({ ...log, sets: log.sets.map((s, j) => (j === i ? { ...s, ...patch } : j > i && patch.loadKg !== undefined && !s.done ? { ...s, loadKg: patch.loadKg } : s)) }));
 
+  const links = useMemo(() => linkGroups(draft?.session.exercises ?? []), [draft?.session.exercises]);
+
+  /** Depois de uma série feita: descanso (ou sequência do bi-set) e avanço para o próximo exercício. */
+  const afterDone = (log: ExerciseLog, i: number) => {
+    navigator.vibrate?.(30);
+    const all = draft?.session.exercises ?? [];
+    const link = links[log.uid];
+    const lastSet = i === log.sets.length - 1;
+    const pending = (e: ExerciseLog) => (e.uid === log.uid ? e.sets.some((s, j) => !s.done && j !== i) : e.sets.some((s) => !s.done));
+    if (link && link.pos < link.members.length - 1) {
+      // Bi-set/tri-set: vai direto para o próximo exercício do grupo, sem descanso.
+      const nextUid = link.members[link.pos + 1]!;
+      setTimeout(() => setOpen(nextUid), 250);
+      return;
+    }
+    const total = draft?.restSec[log.uid] ?? log.planned?.restSec ?? 90;
+    if (total > 0) setRest({ until: Date.now() + total * 1000, total });
+    if (link) {
+      const first = all.find((e) => e.uid === link.members[0]);
+      if (first && pending(first)) return void setTimeout(() => setOpen(first.uid), 350);
+    }
+    if (lastSet) {
+      const next = all.find((e) => e.uid !== log.uid && !(link?.members.includes(e.uid)) && e.sets.some((s) => !s.done));
+      if (next) setTimeout(() => setOpen(next.uid), 350);
+    }
+  };
+
   const toggleDone = (log: ExerciseLog, i: number) => {
     const set = log.sets[i]!;
     const done = !set.done;
-    // Sem reps digitadas, assume as reps da mesma série no último treino (ou o mínimo da faixa) —
+    unlockAudio();
+    // Sem valor digitado, assume o da mesma série no último treino (ou o mínimo da faixa) —
     // nunca o topo da faixa, que dispararia sugestão de aumento sem o atleta ter batido as reps.
     const reps = set.reps ?? (done ? defaultReps(log, i, lastPerformance(history, log.exerciseId)) : set.reps);
     update(log.uid, (l) => ({ ...l, sets: l.sets.map((s, j) => (j === i ? { ...s, done, reps } : s)) }));
-    if (done) {
-      navigator.vibrate?.(30);
-      const total = draft?.restSec[log.uid] ?? log.planned?.restSec ?? 90;
-      const lastSet = i === log.sets.length - 1;
-      setRest({ until: Date.now() + total * 1000, total });
-      if (lastSet) {
-        const next = draft?.session.exercises.find((e) => e.uid !== log.uid && e.sets.some((s) => !s.done));
-        if (next) setTimeout(() => setOpen(next.uid), 350);
-      }
-    }
+    if (hold && hold.logUid === log.uid && hold.index === i) setHold(null);
+    if (done) afterDone(log, i);
   };
+
+  /** Cronômetro de série por tempo (prancha, isometria): para sozinho no alvo e marca a série. */
+  const stopHold = useCallback(
+    (seconds: number) => {
+      if (!hold) return;
+      const log = draft?.session.exercises.find((e) => e.uid === hold.logUid);
+      setHold(null);
+      if (!log) return;
+      const i = hold.index;
+      update(log.uid, (l) => ({ ...l, sets: l.sets.map((s, j) => (j === i ? { ...s, done: true, reps: Math.max(1, Math.round(seconds)) } : s)) }));
+      navigator.vibrate?.([120, 60, 120]);
+      beep(3);
+      afterDone(log, i);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [hold, draft, update, beep],
+  );
+
+  useEffect(() => {
+    if (hold && now - hold.startedAt >= hold.max * 1000) stopHold(hold.max);
+  }, [now, hold, stopHold]);
 
   const stats = useMemo(() => {
     if (!draft) return { done: 0, total: 0, volume: 0, exDone: 0 };
@@ -226,7 +342,15 @@ function Sessao() {
     router.push("/hoje");
   }
 
-  if (error && !draft) return <div className="p-6"><Alert tone="error">{error}</Alert></div>;
+  if (error && !draft)
+    return (
+      <div className="mx-auto max-w-2xl space-y-4 p-6">
+        <Alert tone="error">{error}</Alert>
+        <Button variant="secondary" onClick={() => router.push("/hoje")}>
+          Voltar
+        </Button>
+      </div>
+    );
   if (!draft) return <SessionSkeleton />;
   if (summary) return <Summary session={summary} onDone={() => router.push("/hoje")} />;
 
@@ -237,18 +361,33 @@ function Sessao() {
     <div className="min-h-dvh pb-40">
       <header className="sticky top-0 z-20 bg-iron text-chalk">
         <div className="mx-auto flex max-w-2xl items-center gap-3 px-4 py-3">
-          <button onClick={() => setConfirmExit(true)} className="grid size-10 place-items-center rounded hover:bg-white/10" aria-label="Sair do treino">
+          <button onClick={() => setConfirmExit(true)} className="-ml-2 grid size-11 place-items-center rounded hover:bg-white/10" aria-label="Sair do treino">
             <X className="size-5" />
           </button>
           <div className="min-w-0 flex-1">
             <p className="truncate font-bold">{draft.session.dayKey ? `Treino ${draft.session.dayKey} — ${draft.session.dayTitle}` : "Treino livre"}</p>
             <p className="num text-xs text-chalk/65">
-              {stats.exDone}/{draft.session.exercises.length} exercícios · {stats.done}/{stats.total} séries · {fmtNum(stats.volume, 0)} kg
+              {stats.exDone}/{draft.session.exercises.length} exercícios · {stats.done}/{stats.total} séries{stats.volume ? ` · ${fmtNum(stats.volume, 0)} kg` : ""}
             </p>
           </div>
           <span className="num plate-type text-lg" aria-label="Tempo de treino">
             {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}
           </span>
+          <button
+            onClick={() => {
+              const on = !sound;
+              setSound(on);
+              try {
+                localStorage.setItem(SOUND_KEY, on ? "1" : "0");
+              } catch {}
+            }}
+            aria-pressed={sound}
+            aria-label={sound ? "Desligar aviso sonoro do descanso" : "Ligar aviso sonoro do descanso"}
+            title={sound ? "Som ligado" : "Som desligado"}
+            className="-mr-2 grid size-11 place-items-center rounded hover:bg-white/10"
+          >
+            {sound ? <Volume2 className="size-5" /> : <VolumeX className="size-5 text-chalk/60" />}
+          </button>
         </div>
         <div className="h-1 bg-white/10">
           <div className="h-full bg-plate-green transition-[width] duration-300" style={{ width: `${stats.total ? (stats.done / stats.total) * 100 : 0}%` }} />
@@ -265,6 +404,15 @@ function Sessao() {
             onToggle={() => setOpen(open === log.uid ? null : log.uid)}
             suggestion={draft.suggestions[log.uid]}
             last={lastPerformance(history, log.exerciseId)}
+            link={links[log.uid] ? { pos: links[log.uid]!.pos, size: links[log.uid]!.members.length, partner: draft.session.exercises.find((e) => e.uid === links[log.uid]!.members[links[log.uid]!.pos === links[log.uid]!.members.length - 1 ? links[log.uid]!.pos - 1 : links[log.uid]!.pos + 1])?.name ?? "" } : undefined}
+            hold={hold && hold.logUid === log.uid ? { index: hold.index, elapsed: Math.max(0, Math.floor((now - hold.startedAt) / 1000)), max: hold.max } : null}
+            onHoldStart={(i, max) => {
+              unlockAudio();
+              setRest(null);
+              setHold({ logUid: log.uid, index: i, startedAt: Date.now(), max });
+            }}
+            onHoldStop={() => hold && stopHold((Date.now() - hold.startedAt) / 1000)}
+            onSwap={() => setSwapUid(log.uid)}
             onSet={(i, patch) => setField(log.uid, i, patch)}
             onDone={(i) => toggleDone(log, i)}
             onAddSet={() => update(log.uid, (l) => ({ ...l, sets: [...l.sets, { loadKg: l.sets[l.sets.length - 1]?.loadKg ?? null, reps: null, done: false }] }))}
@@ -304,23 +452,57 @@ function Sessao() {
       </div>
 
       <ExercisePicker
-        open={picker}
-        onClose={() => setPicker(false)}
+        open={picker || Boolean(swapUid)}
+        title={swapUid ? "Trocar exercício neste treino" : "Adicionar exercício"}
+        onClose={() => {
+          setPicker(false);
+          setSwapUid(null);
+        }}
         onPick={(e) => {
-          const logUid = uid();
           const last = lastPerformance(history, e.id);
-          const sug = suggestNext(last, { sets: 3, repsMin: 8, repsMax: 12 }, e.id);
+          const unit = unitOf(e.id);
+          if (swapUid) {
+            // Troca só neste treino (aparelho ocupado): mantém o número de séries e a faixa quando a unidade é a mesma.
+            const target = swapUid;
+            setDraft((d) => {
+              if (!d) return d;
+              const cur = d.session.exercises.find((x) => x.uid === target);
+              if (!cur) return d;
+              const sameUnit = (cur.unit ?? "reps") === unit;
+              const planned = sameUnit && cur.planned ? { ...cur.planned, loadKg: null, notes: undefined } : { ...defaultPlan(e), technique: cur.planned?.technique };
+              const sug = unit === "reps" ? suggestNext(last, planned, e.id) : null;
+              const load = unit === "min" ? null : (sug?.loadKg ?? null);
+              const suggestions = { ...d.suggestions };
+              if (sug) suggestions[target] = sug;
+              else delete suggestions[target];
+              return {
+                ...d,
+                suggestions,
+                session: {
+                  ...d.session,
+                  exercises: d.session.exercises.map((x) =>
+                    x.uid === target ? { ...x, exerciseId: e.id, name: e.name, unit, planned, sets: Array.from({ length: Math.max(1, sameUnit ? x.sets.length : planned.sets) }, () => ({ loadKg: load, reps: null, done: false })) } : x,
+                  ),
+                },
+              };
+            });
+            setSwapUid(null);
+            return;
+          }
+          const logUid = uid();
+          const planned = defaultPlan(e);
+          const sug = unit === "reps" ? suggestNext(last, planned, e.id) : null;
           setDraft((d) =>
             d
               ? {
                   ...d,
-                  suggestions: { ...d.suggestions, [logUid]: sug },
-                  restSec: { ...d.restSec, [logUid]: e.compound ? 120 : 75 },
+                  suggestions: sug ? { ...d.suggestions, [logUid]: sug } : d.suggestions,
+                  restSec: { ...d.restSec, [logUid]: planned.restSec },
                   session: {
                     ...d.session,
                     exercises: [
                       ...d.session.exercises,
-                      { uid: logUid, exerciseId: e.id, name: e.name, planned: { sets: 3, repsMin: 8, repsMax: 12, restSec: e.compound ? 120 : 75 }, sets: Array.from({ length: 3 }, () => ({ loadKg: sug.loadKg ?? last?.sets[0]?.loadKg ?? null, reps: null, done: false })) },
+                      { uid: logUid, exerciseId: e.id, name: e.name, unit, planned, sets: Array.from({ length: planned.sets }, () => ({ loadKg: unit === "reps" ? (sug?.loadKg ?? last?.sets[0]?.loadKg ?? null) : null, reps: null, done: false })) },
                     ],
                   },
                 }
@@ -332,9 +514,9 @@ function Sessao() {
 
       <Dialog open={confirmExit} onClose={() => setConfirmExit(false)} title="Sair do treino?">
         <p className="text-[0.9375rem] text-steel">Seu progresso fica salvo neste aparelho e você pode voltar depois. Ou descarte este treino.</p>
-        <div className="mt-5 flex flex-wrap justify-end gap-2">
+        <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
           <Button variant="danger" onClick={discard} icon={<Trash2 className="size-4" />}>
-            Descartar
+            Descartar treino
           </Button>
           <Button variant="secondary" onClick={() => router.push("/hoje")}>
             Sair e continuar depois
@@ -346,46 +528,56 @@ function Sessao() {
   );
 }
 
+/** Prescrição padrão de um exercício adicionado na hora, conforme a unidade. */
+function defaultPlan(e: Exercise): { sets: number; repsMin: number; repsMax: number; restSec: number } {
+  const unit = unitOf(e.id);
+  if (unit === "min") return { sets: 1, repsMin: 15, repsMax: 15, restSec: 0 };
+  if (unit === "seg") return { sets: 3, repsMin: 30, repsMax: 45, restSec: 45 };
+  return { sets: 3, repsMin: 8, repsMax: 12, restSec: e.compound ? 120 : 75 };
+}
+
 function defaultReps(log: ExerciseLog, i: number, last: ExerciseLog | null): number | null {
   const prev = last ? completedSets(last)[i]?.reps : undefined;
   return prev ?? log.planned?.repsMin ?? null;
 }
 
-function ExerciseBlock({
-  index,
-  log,
-  open,
-  onToggle,
-  suggestion,
-  last,
-  onSet,
-  onDone,
-  onAddSet,
-  onRemoveSet,
-  onRemove,
-  onNotes,
-}: {
+interface BlockProps {
   index: number;
   log: ExerciseLog;
   open: boolean;
   onToggle: () => void;
   suggestion?: LoadSuggestion;
   last: ExerciseLog | null;
+  link?: { pos: number; size: number; partner: string };
+  hold: { index: number; elapsed: number; max: number } | null;
+  onHoldStart: (i: number, max: number) => void;
+  onHoldStop: () => void;
+  onSwap: () => void;
   onSet: (i: number, patch: Partial<SetLog>) => void;
   onDone: (i: number) => void;
   onAddSet: () => void;
   onRemoveSet: () => void;
   onRemove: () => void;
   onNotes: (n: string) => void;
-}) {
+}
+
+const clock = (sec: number) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+
+function ExerciseBlock({ index, log, open, onToggle, suggestion, last, link, hold, onHoldStart, onHoldStop, onSwap, onSet, onDone, onAddSet, onRemoveSet, onRemove, onNotes }: BlockProps) {
   const ex = getExercise(log.exerciseId);
+  const unit: Unit = log.unit ?? unitOf(log.exerciseId);
   const doneCount = log.sets.filter((s) => s.done).length;
   const complete = doneCount === log.sets.length && log.sets.length > 0;
   const p = log.planned;
   const barbell = ex?.implement === "barra";
-  const bodyweight = ex?.implement === "peso_corporal" || ex?.implement === "elastico";
+  const optionalLoad = unit !== "reps" || ex?.implement === "peso_corporal" || ex?.implement === "elastico";
   const currentLoad = log.sets.find((s) => !s.done)?.loadKg ?? log.sets[log.sets.length - 1]?.loadKg ?? 0;
   const step = ex?.implement === "halter" || ex?.implement === "kettlebell" ? 1 : ex?.implement === "maquina" ? 5 : 2.5;
+  const showLoad = unit !== "min";
+  const cols = showLoad ? "grid-cols-[1.25rem_minmax(0,1fr)_minmax(0,1fr)_3rem]" : "grid-cols-[1.25rem_minmax(0,1fr)_3rem]";
+  const technique = p?.technique && p.technique !== "normal" ? TECHNIQUE_LABEL[p.technique] : null;
+  const nextPending = log.sets.findIndex((s) => !s.done);
+  const fmtSet = (s: SetLog) => (unit === "reps" ? (s.loadKg ? `${fmtNum(s.loadKg)}×${s.reps}` : `${s.reps}`) : `${s.loadKg ? `${fmtNum(s.loadKg)} kg · ` : ""}${s.reps} ${UNIT_LABEL[unit].short}`);
 
   return (
     <section className={cx("overflow-hidden rounded-[8px] border bg-paper transition-colors", open ? "border-iron" : complete ? "border-plate-green/40" : "border-rule")}>
@@ -394,9 +586,10 @@ function ExerciseBlock({
           {complete ? <Check className="size-4" /> : index + 1}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate font-bold">{log.name}</span>
+          <span className={cx("block font-bold", !open && "truncate")}>{log.name}</span>
           <span className="num block truncate text-xs text-steel">
-            {p ? `${p.sets} × ${p.repsMin === p.repsMax ? p.repsMin : `${p.repsMin}–${p.repsMax}`}` : `${log.sets.length} séries`} · {doneCount}/{log.sets.length} feitas
+            {p ? fmtScheme({ ...p, exerciseId: log.exerciseId, unit }) : `${log.sets.length} séries`}
+            {technique ? ` · ${technique}` : ""} · {doneCount}/{log.sets.length} feitas
           </span>
         </span>
         <ChevronDown className={cx("size-5 shrink-0 text-steel transition-transform", open && "rotate-180")} aria-hidden />
@@ -404,31 +597,50 @@ function ExerciseBlock({
 
       {open ? (
         <div className="border-t border-rule px-4 pb-4 pt-3">
+          {technique || p?.notes || link ? (
+            <div className="mb-3 space-y-1 rounded-[6px] border border-plate-yellow/60 bg-plate-yellow/12 px-3 py-2 text-sm">
+              {technique ? <p className="font-bold">{technique}</p> : null}
+              {link ? (
+                <p>
+                  {link.pos < link.size - 1 ? `Faça em sequência com ${link.partner}, sem descanso entre os dois.` : `Depois desta série, descanse e volte para ${link.partner}.`}
+                </p>
+              ) : null}
+              {p?.notes ? <p>{p.notes}</p> : null}
+            </div>
+          ) : null}
+
           <div className="space-y-1 text-sm">
-            <p className="num text-steel">
-              Última vez: {last ? completedSets(last).map((s) => `${fmtNum(s.loadKg)}×${s.reps}`).join(" · ") : "primeiro registro"}
-            </p>
-            {suggestion ? (
+            <p className="num text-steel">Última vez: {last && completedSets(last).length ? completedSets(last).map(fmtSet).join(" · ") : "primeiro registro"}</p>
+            {suggestion && unit === "reps" ? (
               <p className={cx("flex items-start gap-1.5 font-semibold", suggestion.kind === "aumentar" ? "text-plate-red-ink" : "text-iron")}>
                 {suggestion.kind === "aumentar" ? <Trophy className="mt-0.5 size-4 shrink-0" aria-hidden /> : null}
                 {suggestion.text}
               </p>
             ) : null}
+            {p?.restSec && unit !== "min" ? <p className="num text-steel">Descanso: {fmtRest(p.restSec)}</p> : null}
             {ex?.cue ? <p className="text-steel">{ex.cue}</p> : null}
           </div>
 
-          <div className="mt-3 grid grid-cols-[1.5rem_1fr_1fr_2.75rem] gap-2 px-0.5">
+          <div className={cx("mt-3 grid gap-2 px-0.5", cols)}>
             <span className="col-head text-steel">#</span>
-            <span className="col-head text-steel">{bodyweight ? "Peso extra (kg)" : "Carga (kg)"}</span>
-            <span className="col-head text-steel">Reps</span>
+            {showLoad ? <span className="col-head truncate text-steel">{optionalLoad ? "Peso extra (kg)" : "Carga (kg)"}</span> : null}
+            <span className="col-head text-steel">{UNIT_LABEL[unit].column}</span>
             <span className="col-head text-center text-steel">Feito</span>
           </div>
           <ol className="mt-1.5 space-y-2">
             {log.sets.map((s, i) => (
-              <li key={i} className={cx("grid grid-cols-[1.5rem_1fr_1fr_2.75rem] items-center gap-2", s.done && "opacity-80")}>
+              <li key={i} className={cx("grid items-center gap-2", cols, s.done && "opacity-80")}>
                 <span className="num text-sm font-bold text-steel">{i + 1}</span>
-                <NumberCell value={s.loadKg} onChange={(v) => onSet(i, { loadKg: v || (bodyweight ? null : v) })} step={step} label={`Carga da série ${i + 1}`} placeholder={bodyweight ? "PC" : "kg"} />
-                <NumberCell value={s.reps} onChange={(v) => onSet(i, { reps: v === null ? null : Math.round(v) })} step={1} label={`Repetições da série ${i + 1}`} placeholder={String(defaultReps(log, i, last) ?? "")} />
+                {showLoad ? (
+                  <NumberCell value={s.loadKg} onChange={(v) => onSet(i, { loadKg: v || (optionalLoad ? null : v) })} step={step} label={`Carga da série ${i + 1}`} placeholder={optionalLoad ? "—" : "kg"} />
+                ) : null}
+                <NumberCell
+                  value={s.reps}
+                  onChange={(v) => onSet(i, { reps: v === null ? null : Math.round(v) })}
+                  step={unit === "seg" ? 5 : 1}
+                  label={`${UNIT_LABEL[unit].column} da série ${i + 1}`}
+                  placeholder={String(defaultReps(log, i, last) ?? "")}
+                />
                 <button
                   onClick={() => onDone(i)}
                   aria-pressed={s.done}
@@ -441,12 +653,32 @@ function ExerciseBlock({
             ))}
           </ol>
 
+          {unit === "seg" && nextPending >= 0 ? (
+            hold ? (
+              <div className="mt-3 flex items-center gap-3 rounded-[6px] border-2 border-iron px-3 py-2" role="timer">
+                <span className="text-sm font-semibold text-steel">Série {hold.index + 1}</span>
+                <span className="num plate-type ml-auto text-3xl">{clock(hold.elapsed)}</span>
+                <span className="num text-sm text-steel">de {clock(hold.max)}</span>
+                <Button size="sm" variant="record" onClick={onHoldStop} icon={<Square className="size-4" />}>
+                  Parar
+                </Button>
+              </div>
+            ) : (
+              <Button variant="secondary" className="mt-3 w-full" icon={<Play className="size-4" />} onClick={() => onHoldStart(nextPending, log.sets[nextPending]?.reps || p?.repsMax || 30)}>
+                Cronometrar série {nextPending + 1} (até {log.sets[nextPending]?.reps || p?.repsMax || 30} s)
+              </Button>
+            )
+          ) : null}
+
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Button size="sm" variant="secondary" onClick={onAddSet} icon={<Plus className="size-4" />}>
               Série
             </Button>
             <Button size="sm" variant="ghost" onClick={onRemoveSet} icon={<Minus className="size-4" />} disabled={log.sets.length <= 1}>
               Série
+            </Button>
+            <Button size="sm" variant="ghost" onClick={onSwap} icon={<Replace className="size-4" />} disabled={doneCount > 0} title={doneCount > 0 ? "Já há séries feitas neste exercício" : undefined}>
+              Trocar
             </Button>
             <Button size="sm" variant="ghost" onClick={onRemove} className="ml-auto text-plate-red-ink" icon={<Trash2 className="size-4" />}>
               Remover
@@ -456,7 +688,7 @@ function ExerciseBlock({
           {barbell && currentLoad ? <BarbellView totalKg={currentLoad} className="mt-3 rounded-[6px] bg-chalk px-3 py-2" /> : null}
 
           <details className="mt-3">
-            <summary className="cursor-pointer text-sm font-semibold text-steel">Anotação</summary>
+            <summary className="flex min-h-9 cursor-pointer items-center text-sm font-semibold text-steel">Anotação</summary>
             <Textarea value={log.notes ?? ""} onChange={(e) => onNotes(e.target.value)} rows={2} className="mt-2 min-h-16" placeholder="Ex.: pegada mais aberta, dor no ombro na 3ª série" />
           </details>
         </div>
@@ -515,8 +747,17 @@ function Summary({ session, onDone }: { session: Session; onDone: () => void }) 
             <dt className="text-xs text-chalk/60">séries</dt>
           </div>
           <div>
-            <dd className="num plate-type text-2xl">{session.volumeKg >= 1000 ? fmtNum(session.volumeKg / 1000, 1) : fmtNum(session.volumeKg, 0)}</dd>
-            <dt className="text-xs text-chalk/60">{session.volumeKg >= 1000 ? "toneladas" : "kg levantados"}</dt>
+            {session.volumeKg > 0 ? (
+              <>
+                <dd className="num plate-type text-2xl">{session.volumeKg >= 1000 ? fmtNum(session.volumeKg / 1000, 1) : fmtNum(session.volumeKg, 0)}</dd>
+                <dt className="text-xs text-chalk/60">{session.volumeKg >= 1000 ? "toneladas" : "kg levantados"}</dt>
+              </>
+            ) : (
+              <>
+                <dd className="num plate-type text-2xl">{session.exercises.length}</dd>
+                <dt className="text-xs text-chalk/60">{session.exercises.length === 1 ? "exercício" : "exercícios"}</dt>
+              </>
+            )}
           </div>
         </dl>
 
@@ -545,7 +786,7 @@ function Summary({ session, onDone }: { session: Session; onDone: () => void }) 
                 role="radio"
                 aria-checked={feeling === i + 1}
                 onClick={() => setFeeling((i + 1) as Session["feeling"])}
-                className={cx("rounded-[6px] border py-2.5 text-sm font-semibold", feeling === i + 1 ? "border-chalk bg-chalk text-iron" : "border-white/25 hover:border-white/60")}
+                className={cx("min-h-11 rounded-[6px] border px-0.5 text-[0.8125rem] font-semibold", feeling === i + 1 ? "border-chalk bg-chalk text-iron" : "border-white/25 hover:border-white/60")}
               >
                 {l}
               </button>

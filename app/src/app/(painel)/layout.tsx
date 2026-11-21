@@ -71,7 +71,7 @@ export default function PainelLayout({ children }: { children: ReactNode }) {
       {focus ? (
         children
       ) : (
-        <div className="lg:grid lg:grid-cols-[15rem_1fr]">
+        <div className="lg:grid lg:grid-cols-[15rem_minmax(0,1fr)]">
           <aside className="no-print sticky top-0 hidden h-dvh flex-col border-r border-rule bg-paper px-3 py-5 lg:flex">
             <Link href={nav[0]!.href} className="px-2">
               <Logo />
@@ -111,7 +111,7 @@ export default function PainelLayout({ children }: { children: ReactNode }) {
           <nav
             aria-label="Navegação do app"
             className="no-print fixed inset-x-0 bottom-0 z-30 grid border-t border-rule bg-paper/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
-            style={{ gridTemplateColumns: `repeat(${nav.length}, 1fr)` }}
+            style={{ gridTemplateColumns: `repeat(${nav.length}, minmax(0, 1fr))` }}
           >
             {nav.map((n) => (
               <Link

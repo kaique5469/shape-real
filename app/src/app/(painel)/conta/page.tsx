@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Download, LogOut, Trash2 } from "lucide-react";
+import { Check, Download, LogOut, RotateCcw, Trash2 } from "lucide-react";
 import { Alert, Badge, Button, Dialog, Field, Input, PageHeader, Panel, Segmented, Select, Textarea } from "@/components/ui";
 import { useApp, localRepo } from "@/lib/app-context";
 import { ACTIVITY_LABEL } from "@/lib/domain/nutrition";
@@ -14,9 +14,12 @@ import { track } from "@/lib/analytics";
 import type { ActivityLevel, Equipment, Goal, Level, PlanId, Profile, Sex, SystemId } from "@/lib/domain/types";
 
 export default function ContaPage() {
-  const { user, repo, mode, isDemo, updateProfile, signOut } = useApp();
+  const { user, repo, mode, isDemo, isTester, plan, returnTo, updateProfile, signOut } = useApp();
   const router = useRouter();
   const [form, setForm] = useState<Profile>(user!);
+  const [weight, setWeight] = useState(user!.weightKg ? String(user!.weightKg).replace(".", ",") : "");
+  const [wipe, setWipe] = useState(false);
+  const [wiping, setWiping] = useState(false);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ tone: "done" | "error"; text: string } | null>(null);
   const [coach, setCoach] = useState<{ id: string; name: string } | null>(null);
@@ -37,9 +40,12 @@ export default function ContaPage() {
     setSaving(true);
     setMsg(null);
     try {
-      const hasBody = form.weightKg || form.heightCm || form.birthYear;
+      const w = weight.trim() ? Number(weight.replace(",", ".")) : undefined;
+      if (w !== undefined && (!Number.isFinite(w) || w < 30 || w > 300)) throw new Error("Confira o peso: use quilos, por exemplo 72,5.");
+      if (form.heightCm && (form.heightCm < 120 || form.heightCm > 230)) throw new Error("Confira a altura: use centímetros, por exemplo 172.");
+      const hasBody = w || form.heightCm || form.birthYear;
       if (hasBody && !form.consentHealthAt) throw new Error("Para salvar peso, altura e idade, marque a autorização de dados de saúde.");
-      await updateProfile({ ...form, name: form.name.trim() || user!.name });
+      await updateProfile({ ...form, weightKg: w, name: form.name.trim() || user!.name });
       setMsg({ tone: "done", text: "Perfil atualizado." });
     } catch (err) {
       setMsg({ tone: "error", text: err instanceof Error ? err.message : "Não foi possível salvar." });
@@ -56,31 +62,37 @@ export default function ContaPage() {
     track("export_downloaded", { kind: "all" });
   }
 
-  async function upgrade(plan: PlanId) {
-    track("upgrade_clicked", { plan, from: user!.plan });
-    const url = plan === "coach" ? process.env.NEXT_PUBLIC_CHECKOUT_COACH_URL : process.env.NEXT_PUBLIC_CHECKOUT_PRO_URL;
+  async function upgrade(target: PlanId) {
+    track("upgrade_clicked", { plan: target, from: user!.plan });
+    const url = target === "coach" ? process.env.NEXT_PUBLIC_CHECKOUT_COACH_URL : process.env.NEXT_PUBLIC_CHECKOUT_PRO_URL;
     if (url) {
       window.location.href = `${url}${url.includes("?") ? "&" : "?"}client_reference_id=${encodeURIComponent(user!.id)}`;
       return;
     }
-    await repo.recordUpgradeIntent(user!.id, plan).catch(() => undefined);
-    setPlanMsg(`Anotado! As assinaturas do ${PLANS[plan].name} abrem em breve e você será avisado primeiro. Até lá, seu plano atual continua funcionando normalmente.`);
+    await repo.recordUpgradeIntent(user!.id, target).catch(() => undefined);
+    setPlanMsg(`Anotado. As assinaturas do ${PLANS[target].name} abrem em breve e você será avisado primeiro. Até lá, seu plano atual continua funcionando normalmente.`);
   }
 
-  const canExport = PLANS[user!.plan].export || isDemo;
+  const canExport = PLANS[plan].export || isDemo;
+  const viewingAsStudent = Boolean(returnTo);
 
   return (
     <>
       <PageHeader title="Conta" sub={`${user!.role === "coach" ? "Personal" : "Aluno"} · ${mode === "supabase" ? user!.email ?? "conta na nuvem" : "dados salvos neste aparelho"}`} />
+      {viewingAsStudent ? (
+        <Alert tone="info" className="mb-5">
+          Você está vendo a conta de {user!.name.split(" ")[0]} como o aluno vê. As alterações de perfil valem para o cadastro dele.
+        </Alert>
+      ) : null}
       <div className="space-y-5">
         <Panel title="Perfil">
           <form onSubmit={save} className="space-y-4">
-            <Field label="Nome">
+            <Field label="Nome" hint={user!.role === "coach" ? "Aparece como assinatura nas fichas e dietas que você envia." : undefined}>
               <Input value={form.name} onChange={(e) => set({ name: e.target.value })} maxLength={60} />
             </Field>
             {user!.role === "athlete" ? (
               <>
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                   <Field label="Objetivo">
                     <Select value={form.goal ?? "hipertrofia"} onChange={(e) => set({ goal: e.target.value as Goal })}>
                       {(Object.keys(GOAL_LABEL) as Goal[]).map((g) => (
@@ -117,7 +129,7 @@ export default function ContaPage() {
                   </Field>
                 </div>
                 <Field label="Dias por semana">
-                  <Segmented label="Dias por semana" size="sm" value={form.daysPerWeek ?? 3} onChange={(d) => set({ daysPerWeek: d })} options={[2, 3, 4, 5, 6].map((d) => ({ value: d, label: `${d}x` }))} />
+                  <Segmented label="Dias por semana" size="sm" value={form.daysPerWeek ?? 3} onChange={(d) => set({ daysPerWeek: d })} options={[1, 2, 3, 4, 5, 6, 7].map((d) => ({ value: d, label: `${d}x` }))} />
                 </Field>
                 <Field label="Limitações ou lesões">
                   <Textarea value={form.limitations ?? ""} onChange={(e) => set({ limitations: e.target.value })} rows={2} className="min-h-16" maxLength={400} />
@@ -140,7 +152,7 @@ export default function ContaPage() {
                       <Input inputMode="numeric" value={form.heightCm ?? ""} onChange={(e) => set({ heightCm: Number(e.target.value.replace(/\D/g, "")) || undefined })} />
                     </Field>
                     <Field label="Peso (kg)">
-                      <Input inputMode="decimal" defaultValue={form.weightKg ? String(form.weightKg).replace(".", ",") : ""} onChange={(e) => set({ weightKg: Number(e.target.value.replace(",", ".").replace(/[^\d.]/g, "")) || undefined })} />
+                      <Input inputMode="decimal" value={weight} onChange={(e) => setWeight(e.target.value.replace(/[^\d.,]/g, "").slice(0, 6))} placeholder="72,5" />
                     </Field>
                   </div>
                   <Field label="Nível de atividade">
@@ -171,14 +183,12 @@ export default function ContaPage() {
           </form>
         </Panel>
 
-        {user!.role === "athlete" ? (
+        {user!.role === "athlete" && (coach || repo.capabilities.invites) ? (
           <Panel title="Personal">
             {coach ? (
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p>
-                  Acompanhado por <strong>{coach.name}</strong>.
-                </p>
-              </div>
+              <p>
+                Acompanhado por <strong>{coach.name}</strong>. A ficha e a dieta enviadas aparecem em Hoje e em Dieta.
+              </p>
             ) : (
               <form
                 className="flex flex-wrap items-end gap-3"
@@ -188,14 +198,14 @@ export default function ContaPage() {
                   try {
                     const r = await repo.acceptInvite(code, user!.id);
                     setCoach(await repo.getCoach(user!.id));
-                    setCodeMsg({ tone: "done", text: `Pronto! Agora ${r.coachName} acompanha seus treinos.` });
+                    setCodeMsg({ tone: "done", text: `Pronto. Agora ${r.coachName} acompanha seus treinos.` });
                     track("invite_accepted", { where: "conta" });
                   } catch (err) {
                     setCodeMsg({ tone: "error", text: err instanceof Error ? err.message : "Código inválido." });
                   }
                 }}
               >
-                <Field label="Código do seu personal" className="flex-1">
+                <Field label="Código do seu personal" className="min-w-0 flex-1">
                   <Input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} maxLength={8} className="plate-type tracking-[0.2em]" placeholder="K7M2QX" />
                 </Field>
                 <Button type="submit" disabled={code.trim().length < 6}>
@@ -211,11 +221,27 @@ export default function ContaPage() {
           </Panel>
         ) : null}
 
+        {isTester ? (
+          <Panel title="Ambiente de teste">
+            <ul className="space-y-1.5 text-[0.9375rem]">
+              <li>Todos os recursos estão liberados, sem limite de alunos, fichas ou fotos.</li>
+              <li>Os dados ficam só neste aparelho e neste navegador. Nada é enviado para um servidor.</li>
+              <li>Achou algo estranho ou sentiu falta de alguma coisa? Use “Dar feedback” na faixa do topo.</li>
+            </ul>
+            {!viewingAsStudent ? (
+              <Button variant="danger" className="mt-4" icon={<RotateCcw className="size-4" />} onClick={() => setWipe(true)}>
+                Apagar tudo e recomeçar
+              </Button>
+            ) : null}
+          </Panel>
+        ) : null}
+
+        {isTester ? null : (
         <section id="planos">
           <Panel title="Plano">
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-[repeat(3,minmax(0,1fr))]">
               {(user!.role === "coach" ? [PLANS.free, PLANS.coach] : [PLANS.free, PLANS.pro]).map((p) => {
-                const current = user!.plan === p.id || (p.id === "free" && user!.plan === "free");
+                const current = user!.plan === p.id;
                 return (
                   <div key={p.id} className={`rounded-[8px] border p-4 ${current ? "border-iron" : "border-rule"}`}>
                     <div className="flex items-baseline justify-between gap-2">
@@ -251,30 +277,61 @@ export default function ContaPage() {
             ) : null}
           </Panel>
         </section>
+        )}
 
-        <Panel title="Seus dados">
+        <Panel title={viewingAsStudent ? "Dados do aluno" : "Seus dados"}>
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" icon={<Download className="size-4" />} onClick={exportAll} disabled={!canExport} title={!canExport ? "Exportação disponível no Pro" : undefined}>
               Exportar tudo (Excel + backup)
             </Button>
-            <Button variant="danger" icon={<Trash2 className="size-4" />} onClick={() => setDel(true)}>
-              {mode === "local" ? "Apagar dados deste aparelho" : "Excluir minha conta"}
-            </Button>
+            {isTester || viewingAsStudent ? null : (
+              <Button variant="danger" icon={<Trash2 className="size-4" />} onClick={() => setDel(true)}>
+                {mode === "local" ? "Apagar dados deste aparelho" : "Excluir minha conta"}
+              </Button>
+            )}
           </div>
           {!canExport ? <p className="mt-2 text-sm text-steel">A exportação em planilha faz parte do Pro. Seus dados continuam seus: peça uma cópia a qualquer momento.</p> : null}
         </Panel>
 
-        <Button
-          variant="ghost"
-          icon={<LogOut className="size-4" />}
-          onClick={async () => {
-            await signOut();
-            router.push("/");
-          }}
-        >
-          Sair
-        </Button>
+        {isTester || viewingAsStudent ? null : (
+          <Button
+            variant="ghost"
+            icon={<LogOut className="size-4" />}
+            onClick={async () => {
+              await signOut();
+              router.push("/");
+            }}
+          >
+            Sair
+          </Button>
+        )}
       </div>
+
+      <Dialog open={wipe} onClose={() => setWipe(false)} title="Apagar tudo e recomeçar?">
+        <p className="text-[0.9375rem] text-steel">Alunos, fichas, treinos, medidas, fotos e dietas deste aparelho são apagados, e o ambiente de teste volta ao início com os três alunos de exemplo.</p>
+        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button variant="secondary" onClick={() => setWipe(false)}>
+            Cancelar
+          </Button>
+          <Button
+            variant="danger"
+            loading={wiping}
+            onClick={async () => {
+              setWiping(true);
+              await localRepo.wipe();
+              try {
+                Object.keys(localStorage)
+                  .filter((k) => k.startsWith("sr:draft:") || k === "sr:return" || k === "sr:session")
+                  .forEach((k) => localStorage.removeItem(k));
+              } catch {}
+              // Recarrega do zero em /testar: o ambiente é recriado com os exemplos.
+              window.location.assign("/testar");
+            }}
+          >
+            Apagar e recomeçar
+          </Button>
+        </div>
+      </Dialog>
 
       <Dialog open={del} onClose={() => setDel(false)} title={mode === "local" ? "Apagar dados deste aparelho?" : "Excluir conta?"}>
         <p className="text-[0.9375rem] text-steel">
