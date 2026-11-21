@@ -12,7 +12,7 @@ import { bestSet, e1rmSeries, setsPerGroup, trackedExercises, weeklyVolume } fro
 import { todayISO, uid } from "@/lib/domain/ids";
 import { PLANS } from "@/lib/domain/plans";
 import { track } from "@/lib/analytics";
-import type { BodyMetric, MuscleGroup, PhotoPose } from "@/lib/domain/types";
+import type { BodyMetric, MuscleGroup, PhotoPose, ProgressPhoto } from "@/lib/domain/types";
 import { compressImage } from "./photo-tools";
 
 type Tab = "cargas" | "corpo" | "fotos" | "volume";
@@ -35,7 +35,10 @@ export function EvolutionView({ userId, editable, byCoach = false }: { userId: s
       <Segmented
         label="Seção"
         value={tab}
-        onChange={setTab}
+        onChange={(t) => {
+          setTab(t);
+          track("section_viewed", { area: "evolucao", tab: t, by_coach: byCoach });
+        }}
         size="sm"
         className="min-w-max"
         options={[
@@ -86,7 +89,7 @@ function Loads({ sessions }: { sessions: Parameters<typeof trackedExercises>[0] 
         <Select value={current ?? ""} onChange={(e) => setEx(e.target.value)}>
           {tracked.map((t) => (
             <option key={t.exerciseId} value={t.exerciseId}>
-              {t.name} ({t.count} treinos)
+              {t.name} ({t.count} {t.count === 1 ? "treino" : "treinos"})
             </option>
           ))}
         </Select>
@@ -341,6 +344,8 @@ function Photos({ userId, editable, byCoach }: { userId: string; editable: boole
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [cmp, setCmp] = useState<[string, string] | null>(null);
+  const [drop, setDrop] = useState<ProgressPhoto | null>(null);
+  const [dropping, setDropping] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const limit = PLANS[plan].maxPhotos;
   const consented = byCoach || Boolean(user?.consentHealthAt);
@@ -358,7 +363,9 @@ function Photos({ userId, editable, byCoach }: { userId: string; editable: boole
     }
     setBusy(true);
     try {
-      await repo.addPhoto(userId, await compressImage(file), { date, pose });
+      // Campo de data apagado ou no futuro: vale hoje (sem isso a foto ficaria com "data inválida").
+      const when = /^\d{4}-\d{2}-\d{2}$/.test(date) && date <= todayISO() ? date : todayISO();
+      await repo.addPhoto(userId, await compressImage(file), { date: when, pose });
       track("photo_added", { pose });
       void reload();
     } catch (e) {
@@ -438,15 +445,10 @@ function Photos({ userId, editable, byCoach }: { userId: string; editable: boole
               <img src={p.url} alt={`Foto de ${pose} em ${fmtDate(p.date)}`} className="aspect-[3/4] w-full rounded-[6px] bg-chalk-2 object-cover" loading="lazy" />
               <span className="num absolute bottom-1 left-1 rounded bg-iron/80 px-1.5 py-0.5 text-xs font-semibold text-chalk">{fmtDate(p.date)}</span>
               {editable ? (
-                <button
-                  onClick={async () => {
-                    await repo.deletePhoto(p);
-                    void reload();
-                  }}
-                  className="absolute right-1 top-1 grid size-9 place-items-center rounded bg-paper/90"
-                  aria-label="Excluir foto"
-                >
-                  <Trash2 className="size-4 text-plate-red-ink" />
+                <button onClick={() => setDrop(p)} className="absolute right-0 top-0 grid size-11 place-items-center" aria-label={`Excluir foto de ${fmtDate(p.date)}`}>
+                  <span className="grid size-8 place-items-center rounded bg-paper/90">
+                    <Trash2 className="size-4 text-plate-red-ink" />
+                  </span>
                 </button>
               ) : null}
             </li>
@@ -455,6 +457,34 @@ function Photos({ userId, editable, byCoach }: { userId: string; editable: boole
       ) : (
         <Empty title={`Nenhuma foto de ${pose}`} body={editable ? "Fotos mostram mudanças que a balança não mostra. Tire a primeira hoje para ter com o que comparar daqui a um mês." : "Ainda não há fotos nesta pose."} />
       )}
+      <Dialog open={Boolean(drop)} onClose={() => (dropping ? undefined : setDrop(null))} title="Excluir esta foto?">
+        <p className="text-[0.9375rem] text-steel">A foto de {drop ? fmtDate(drop.date, { day: "2-digit", month: "long", year: "numeric" }) : ""} é apagada de vez. Não dá para desfazer.</p>
+        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button variant="secondary" onClick={() => setDrop(null)} disabled={dropping}>
+            Manter
+          </Button>
+          <Button
+            variant="danger"
+            loading={dropping}
+            onClick={async () => {
+              if (!drop) return;
+              setDropping(true);
+              try {
+                await repo.deletePhoto(drop);
+                setDrop(null);
+                void reload();
+              } catch (e) {
+                setDrop(null);
+                setErr(e instanceof Error ? e.message : "Não foi possível excluir a foto.");
+              } finally {
+                setDropping(false);
+              }
+            }}
+          >
+            Excluir foto
+          </Button>
+        </div>
+      </Dialog>
     </div>
   );
 }
@@ -470,7 +500,7 @@ function Volume({ sessions }: { sessions: Parameters<typeof weeklyVolume>[0] }) 
       <Panel title="Volume semanal (toneladas levantadas)">
         <BarChart
           label="Volume semanal"
-          data={weeks.map((w) => ({ label: fmtDate(w.week, { day: "2-digit", month: "2-digit" }), value: w.volume, sub: `Semana de ${fmtDate(w.week)} · ${w.sessions} treinos` }))}
+          data={weeks.map((w) => ({ label: fmtDate(w.week, { day: "2-digit", month: "2-digit" }), value: w.volume, sub: `Semana de ${fmtDate(w.week)} · ${w.sessions} ${w.sessions === 1 ? "treino" : "treinos"}` }))}
           format={(v) => `${fmtNum(v / 1000, 1)} t`}
         />
       </Panel>

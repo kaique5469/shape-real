@@ -10,7 +10,8 @@ import { GOAL_LABEL, LEVEL_LABEL } from "@/lib/domain/generator";
 import { SYSTEMS } from "@/lib/domain/systems";
 import { PLANS, brl } from "@/lib/domain/plans";
 import { downloadText, programToCsv, sessionsToCsv } from "@/lib/domain/export";
-import { track } from "@/lib/analytics";
+import { reportError, track } from "@/lib/analytics";
+import { fileSlug } from "@/components/program/program-share";
 import type { ActivityLevel, Equipment, Goal, Level, PlanId, Profile, Sex, SystemId } from "@/lib/domain/types";
 
 export default function ContaPage() {
@@ -27,6 +28,7 @@ export default function ContaPage() {
   const [codeMsg, setCodeMsg] = useState<{ tone: "done" | "error"; text: string } | null>(null);
   const [planMsg, setPlanMsg] = useState<string | null>(null);
   const [del, setDel] = useState(false);
+  const [exportMsg, setExportMsg] = useState<{ tone: "done" | "error"; text: string } | null>(null);
   const [delText, setDelText] = useState("");
 
   useEffect(() => {
@@ -43,6 +45,8 @@ export default function ContaPage() {
       const w = weight.trim() ? Number(weight.replace(",", ".")) : undefined;
       if (w !== undefined && (!Number.isFinite(w) || w < 30 || w > 300)) throw new Error("Confira o peso: use quilos, por exemplo 72,5.");
       if (form.heightCm && (form.heightCm < 120 || form.heightCm > 230)) throw new Error("Confira a altura: use centímetros, por exemplo 172.");
+      const thisYear = new Date().getFullYear();
+      if (form.birthYear && (form.birthYear < thisYear - 100 || form.birthYear > thisYear - 10)) throw new Error("Confira o ano de nascimento: use quatro dígitos, por exemplo 1994.");
       const hasBody = w || form.heightCm || form.birthYear;
       if (hasBody && !form.consentHealthAt) throw new Error("Para salvar peso, altura e idade, marque a autorização de dados de saúde.");
       await updateProfile({ ...form, weightKg: w, name: form.name.trim() || user!.name });
@@ -55,11 +59,27 @@ export default function ContaPage() {
   }
 
   async function exportAll() {
-    const [sessions, programs, metrics, diet] = await Promise.all([repo.listSessions(user!.id), repo.listPrograms(user!.id), repo.listMetrics(user!.id), repo.getDiet(user!.id)]);
-    downloadText("shape-real-historico.csv", sessionsToCsv(sessions));
-    for (const p of programs) downloadText(`shape-real-ficha-${p.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.csv`, programToCsv(p));
-    downloadText("shape-real-backup.json", JSON.stringify({ exportedAt: new Date().toISOString(), profile: user, programs, sessions, metrics, diet }, null, 2), "application/json");
-    track("export_downloaded", { kind: "all" });
+    try {
+      const [sessions, programs, metrics, diet] = await Promise.all([repo.listSessions(user!.id), repo.listPrograms(user!.id), repo.listMetrics(user!.id), repo.getDiet(user!.id)]);
+      // Personal: o backup leva também os alunos, com fichas, treinos, medidas e dieta de cada um.
+      const students =
+        user!.role === "coach"
+          ? await Promise.all(
+              (await repo.listStudents(user!.id)).map(async ({ profile }) => {
+                const [p, s, m, d] = await Promise.all([repo.listPrograms(profile.id), repo.listSessions(profile.id), repo.listMetrics(profile.id), repo.getDiet(profile.id)]);
+                return { profile, programs: p, sessions: s, metrics: m, diet: d };
+              }),
+            )
+          : undefined;
+      if (sessions.length) downloadText("shape-real-historico.csv", sessionsToCsv(sessions));
+      for (const p of programs) downloadText(`shape-real-ficha-${fileSlug(p.name)}.csv`, programToCsv(p));
+      downloadText("shape-real-backup.json", JSON.stringify({ exportedAt: new Date().toISOString(), profile: user, programs, sessions, metrics, diet, students }, null, 2), "application/json");
+      track("export_downloaded", { kind: "all", students: students?.length ?? 0 });
+      setExportMsg({ tone: "done", text: students ? `Backup baixado com ${students.length === 1 ? "1 aluno" : `${students.length} alunos`}, modelos de ficha e seus dados.` : "Arquivos baixados. Se o navegador perguntar, permita baixar vários arquivos." });
+    } catch (e) {
+      reportError(e, "conta:exportar");
+      setExportMsg({ tone: "error", text: e instanceof Error ? e.message : "Não foi possível exportar. Tente de novo." });
+    }
   }
 
   async function upgrade(target: PlanId) {
@@ -81,7 +101,7 @@ export default function ContaPage() {
       <PageHeader title="Conta" sub={`${user!.role === "coach" ? "Personal" : "Aluno"} · ${mode === "supabase" ? user!.email ?? "conta na nuvem" : "dados salvos neste aparelho"}`} />
       {viewingAsStudent ? (
         <Alert tone="info" className="mb-5">
-          Você está vendo a conta de {user!.name.split(" ")[0]} como o aluno vê. As alterações de perfil valem para o cadastro dele.
+          Você está vendo a conta de {user!.name.split(" ")[0]} como {user!.sex === "F" ? "a aluna" : "o aluno"} vê. As alterações de perfil valem para o cadastro de {user!.name.split(" ")[0]}.
         </Alert>
       ) : null}
       <div className="space-y-5">
@@ -128,7 +148,7 @@ export default function ContaPage() {
                     </Select>
                   </Field>
                 </div>
-                <Field label="Dias por semana">
+                <Field group label="Dias por semana">
                   <Segmented label="Dias por semana" size="sm" value={form.daysPerWeek ?? 3} onChange={(d) => set({ daysPerWeek: d })} options={[1, 2, 3, 4, 5, 6, 7].map((d) => ({ value: d, label: `${d}x` }))} />
                 </Field>
                 <Field label="Limitações ou lesões">
@@ -145,7 +165,7 @@ export default function ContaPage() {
                         <option value="M">Masculino</option>
                       </Select>
                     </Field>
-                    <Field label="Nascimento (ano)">
+                    <Field label="Ano de nascimento">
                       <Input inputMode="numeric" maxLength={4} value={form.birthYear ?? ""} onChange={(e) => set({ birthYear: Number(e.target.value.replace(/\D/g, "")) || undefined })} />
                     </Field>
                     <Field label="Altura (cm)">
@@ -187,7 +207,7 @@ export default function ContaPage() {
           <Panel title="Personal">
             {coach ? (
               <p>
-                Acompanhado por <strong>{coach.name}</strong>. A ficha e a dieta enviadas aparecem em Hoje e em Dieta.
+                {user!.sex === "F" ? "Acompanhada" : "Acompanhado"} por <strong>{coach.name}</strong>. A ficha e a dieta enviadas aparecem em Hoje e em Dieta.
               </p>
             ) : (
               <form
@@ -225,7 +245,8 @@ export default function ContaPage() {
           <Panel title="Ambiente de teste">
             <ul className="space-y-1.5 text-[0.9375rem]">
               <li>Todos os recursos estão liberados, sem limite de alunos, fichas ou fotos.</li>
-              <li>Os dados ficam só neste aparelho e neste navegador. Nada é enviado para um servidor.</li>
+              <li>Alunos, fichas, treinos, medidas e dietas ficam só neste aparelho e neste navegador.</li>
+              <li>Para melhorar o app, registramos de forma anônima quais telas e recursos são usados e os erros que acontecem. Nomes, medidas e o que você digita não são enviados.</li>
               <li>Achou algo estranho ou sentiu falta de alguma coisa? Use “Dar feedback” na faixa do topo.</li>
             </ul>
             {!viewingAsStudent ? (
@@ -290,6 +311,11 @@ export default function ContaPage() {
               </Button>
             )}
           </div>
+          {exportMsg ? (
+            <Alert tone={exportMsg.tone} className="mt-3">
+              {exportMsg.text}
+            </Alert>
+          ) : null}
           {!canExport ? <p className="mt-2 text-sm text-steel">A exportação em planilha faz parte do Pro. Seus dados continuam seus: peça uma cópia a qualquer momento.</p> : null}
         </Panel>
 
@@ -318,6 +344,7 @@ export default function ContaPage() {
             loading={wiping}
             onClick={async () => {
               setWiping(true);
+              track("workspace_reset", {});
               await localRepo.wipe();
               try {
                 Object.keys(localStorage)

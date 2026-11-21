@@ -75,12 +75,26 @@ export function LinkButton({
   );
 }
 
-export function Field({ label, hint, error, children, className }: { label: string; hint?: string; error?: string; children: ReactNode; className?: string }) {
+/**
+ * Rótulo + controle. Para um conjunto de botões (Segmented, chips) use `group`: dentro de um <label>
+ * o toque no texto ou no espaço entre as opções ativaria a primeira delas.
+ */
+export function Field({ label, hint, error, children, className, group }: { label: string; hint?: string; error?: string; children: ReactNode; className?: string; group?: boolean }) {
+  const note = error ? <span className="mt-1 block text-sm text-plate-red-ink">{error}</span> : hint ? <span className="mt-1 block text-[0.8125rem] text-steel">{hint}</span> : null;
+  if (group) {
+    return (
+      <div role="group" aria-label={label} className={cx("block", className)}>
+        <span className="mb-1.5 block text-sm font-semibold text-iron">{label}</span>
+        {children}
+        {note}
+      </div>
+    );
+  }
   return (
     <label className={cx("block", className)}>
       <span className="mb-1.5 block text-sm font-semibold text-iron">{label}</span>
       {children}
-      {error ? <span className="mt-1 block text-sm text-plate-red-ink">{error}</span> : hint ? <span className="mt-1 block text-[0.8125rem] text-steel">{hint}</span> : null}
+      {note}
     </label>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { reportError } from "@/lib/analytics";
 import type { GenerateInput } from "@/lib/domain/generator";
 import type { DietPlan, MacroTargets, Meal, Program } from "@/lib/domain/types";
 
@@ -30,15 +31,32 @@ function testerPass(): string | null {
   }
 }
 
+/** O pedido nem chegou ao servidor (sem sinal, modo avião). Quem chama pode resolver no próprio aparelho. */
+export class OfflineError extends Error {
+  constructor() {
+    super("Sem conexão com a internet. Confira o sinal e tente de novo.");
+    this.name = "OfflineError";
+  }
+}
+
 async function post<T>(path: string, body: unknown, token: string | null): Promise<T> {
   const pass = testerPass();
-  const res = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(pass ? { "x-sr-pass": pass } : {}) },
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(pass ? { "x-sr-pass": pass } : {}) },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new OfflineError();
+  }
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((json as { error?: string }).error ?? "Não foi possível falar com o servidor. Tente de novo.");
+  if (!res.ok) {
+    // Resposta de erro do servidor (não inclui o que o usuário digitou): ajuda a achar rotas com problema.
+    reportError(new Error(`API ${path} respondeu ${res.status}`), "api", { status: res.status, path });
+    throw new Error((json as { error?: string }).error ?? "Não foi possível falar com o servidor. Tente de novo.");
+  }
   return json as T;
 }
 

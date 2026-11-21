@@ -1,21 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Dialog, Field, Input, Select, Textarea } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
 import { GOAL_LABEL, LEVEL_LABEL } from "@/lib/domain/generator";
+import { maskPhone } from "@/lib/domain/format";
 import { ACTIVITY_LABEL } from "@/lib/domain/nutrition";
-import { track } from "@/lib/analytics";
+import { reportError, track } from "@/lib/analytics";
 import type { ActivityLevel, Equipment, Goal, Level, Profile, Sex, StudentDraft } from "@/lib/domain/types";
 
-/** "(11) 91234-5678" enquanto digita; guardamos só os dígitos. */
-export function maskPhone(raw: string): string {
-  const d = raw.replace(/\D/g, "").slice(0, 11);
-  if (d.length <= 2) return d;
-  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
-  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
-  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
-}
+export { maskPhone };
 
 interface FormState {
   name: string;
@@ -69,13 +63,21 @@ export function StudentForm({ open, onClose, student, onSaved }: { open: boolean
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  const formRef = useRef<HTMLFormElement>(null);
+  // O que foi digitado só é trocado quando o formulário abre para OUTRO aluno ou depois de salvar:
+  // fechar sem querer (toque fora, Esc, voltar do aparelho) e reabrir não apaga a anamnese.
+  const shownFor = useRef<string | null>(null);
+  const subject = student?.id ?? "novo";
+
   useEffect(() => {
-    if (open) {
+    if (!open) return;
+    if (shownFor.current !== subject) {
+      shownFor.current = subject;
       setF(initial(student));
       setErrors({});
-      setErr(null);
     }
-  }, [open, student]);
+    setErr(null);
+  }, [open, subject, student]);
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => {
     setF((p) => ({ ...p, [k]: v }));
@@ -96,7 +98,14 @@ export function StudentForm({ open, onClose, student, onSaved }: { open: boolean
     const w = num(f.weightKg);
     if (w !== undefined && (w < 30 || w > 300)) e.weightKg = "Peso em quilos. Ex.: 72,5.";
     setErrors(e);
-    if (Object.keys(e).length) return null;
+    const firstBad = (Object.keys(e) as (keyof FormState)[])[0];
+    if (firstBad) {
+      // Leva até o primeiro campo com problema: o formulário é mais alto que a tela do celular.
+      const el = formRef.current?.querySelector<HTMLElement>(`[data-field="${firstBad}"]`);
+      el?.scrollIntoView({ block: "center", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      el?.focus({ preventScroll: true });
+      return null;
+    }
     return {
       name,
       phone: digits || undefined,
@@ -124,13 +133,17 @@ export function StudentForm({ open, onClose, student, onSaved }: { open: boolean
     try {
       if (student) {
         const saved = await repo.saveProfile({ ...student, ...draft });
+        track("student_edited", { has_phone: Boolean(draft.phone), has_body: Boolean(draft.weightKg && draft.heightCm), has_limitations: Boolean(draft.limitations) });
+        shownFor.current = null;
         onSaved(saved, false);
       } else {
         const created = await repo.createStudent(user.id, draft);
         track("student_created", { has_phone: Boolean(draft.phone), has_body: Boolean(draft.weightKg && draft.heightCm) });
+        shownFor.current = null;
         onSaved(created, true);
       }
     } catch (e) {
+      reportError(e, "aluno:salvar");
       setErr(e instanceof Error ? e.message : "Não foi possível salvar. Tente de novo.");
     } finally {
       setSaving(false);
@@ -139,15 +152,13 @@ export function StudentForm({ open, onClose, student, onSaved }: { open: boolean
 
   return (
     <Dialog open={open} onClose={onClose} title={student ? "Dados do aluno" : "Adicionar aluno"} wide>
-      <form onSubmit={submit} noValidate className="space-y-6">
-        {err ? <Alert tone="error">{err}</Alert> : null}
-
+      <form ref={formRef} onSubmit={submit} noValidate className="space-y-6">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
           <Field label="Nome" error={errors.name}>
-            <Input value={f.name} onChange={(e) => set("name", e.target.value)} autoComplete="off" placeholder="Nome e sobrenome" required autoFocus={!student} />
+            <Input data-field="name" value={f.name} onChange={(e) => set("name", e.target.value)} autoComplete="off" placeholder="Nome e sobrenome" required autoFocus={!student} />
           </Field>
           <Field label="WhatsApp" hint="Opcional. Abre a conversa ao enviar ficha e dieta." error={errors.phone}>
-            <Input value={f.phone} onChange={(e) => set("phone", maskPhone(e.target.value))} inputMode="tel" autoComplete="off" placeholder="(11) 91234-5678" />
+            <Input data-field="phone" value={f.phone} onChange={(e) => set("phone", maskPhone(e.target.value))} inputMode="tel" autoComplete="off" placeholder="(11) 91234-5678" />
           </Field>
         </div>
 
@@ -214,14 +225,14 @@ export function StudentForm({ open, onClose, student, onSaved }: { open: boolean
                 <option value="M">Masculino</option>
               </Select>
             </Field>
-            <Field label="Nascimento" error={errors.birthYear}>
-              <Input value={f.birthYear} onChange={(e) => set("birthYear", e.target.value.replace(/\D/g, "").slice(0, 4))} inputMode="numeric" placeholder="1994" />
+            <Field label="Ano de nascimento" error={errors.birthYear}>
+              <Input data-field="birthYear" value={f.birthYear} onChange={(e) => set("birthYear", e.target.value.replace(/\D/g, "").slice(0, 4))} inputMode="numeric" placeholder="1994" />
             </Field>
             <Field label="Altura (cm)" error={errors.heightCm}>
-              <Input value={f.heightCm} onChange={(e) => set("heightCm", e.target.value.replace(/\D/g, "").slice(0, 3))} inputMode="numeric" placeholder="172" />
+              <Input data-field="heightCm" value={f.heightCm} onChange={(e) => set("heightCm", e.target.value.replace(/\D/g, "").slice(0, 3))} inputMode="numeric" placeholder="172" />
             </Field>
             <Field label="Peso (kg)" error={errors.weightKg}>
-              <Input value={f.weightKg} onChange={(e) => set("weightKg", e.target.value.replace(/[^\d.,]/g, "").slice(0, 6))} inputMode="decimal" placeholder="72,5" />
+              <Input data-field="weightKg" value={f.weightKg} onChange={(e) => set("weightKg", e.target.value.replace(/[^\d.,]/g, "").slice(0, 6))} inputMode="decimal" placeholder="72,5" />
             </Field>
             <Field label="Rotina fora do treino" className="col-span-2 sm:col-span-4">
               <Select value={f.activity} onChange={(e) => set("activity", e.target.value as ActivityLevel | "")}>
@@ -240,8 +251,16 @@ export function StudentForm({ open, onClose, student, onSaved }: { open: boolean
           <Textarea value={f.coachNotes} onChange={(e) => set("coachNotes", e.target.value)} rows={3} className="min-h-24" placeholder="Ex.: treina às 6h, viaja a trabalho uma semana por mês, não gosta de agachamento livre." />
         </Field>
 
+        {err ? <Alert tone="error">{err}</Alert> : Object.values(errors).some(Boolean) ? <Alert tone="error">Confira os campos marcados acima antes de salvar.</Alert> : null}
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button type="button" variant="secondary" onClick={onClose}>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => {
+              shownFor.current = null;
+              onClose();
+            }}
+          >
             Cancelar
           </Button>
           <Button type="submit" loading={saving}>

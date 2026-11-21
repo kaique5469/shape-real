@@ -1,3 +1,4 @@
+import { todayISO } from "./ids";
 import { getExercise, unitOf } from "./exercises";
 import type { ExerciseLog, MuscleGroup, Session, SetLog, Technique, Unit } from "./types";
 
@@ -304,7 +305,8 @@ export function weekStart(iso: string): string {
   const d = new Date(iso.length === 10 ? iso + "T12:00:00" : iso);
   const day = (d.getDay() + 6) % 7;
   d.setDate(d.getDate() - day);
-  return d.toISOString().slice(0, 10);
+  // Data do calendário local: toISOString() devolveria o dia em UTC, e no Brasil um treino depois das 21h cairia na semana seguinte.
+  return todayISO(d);
 }
 
 /** Volume semanal (tonelagem) das últimas N semanas, incluindo semanas zeradas. */
@@ -314,7 +316,7 @@ export function weeklyVolume(sessions: Session[], weeks = 8, now = new Date()): 
   for (let i = weeks - 1; i >= 0; i--) {
     const d = new Date(current + "T12:00:00");
     d.setDate(d.getDate() - i * 7);
-    out.push({ week: d.toISOString().slice(0, 10), volume: 0, sessions: 0 });
+    out.push({ week: todayISO(d), volume: 0, sessions: 0 });
   }
   const idx = new Map(out.map((w, i) => [w.week, i]));
   for (const s of sessions) {
@@ -350,8 +352,8 @@ export function weekStreak(sessions: Session[], now = new Date()): number {
   let streak = 0;
   const d = new Date(weekStart(now.toISOString()) + "T12:00:00");
   // A semana atual conta se já houver treino; se ainda não houver, não quebra a sequência.
-  if (!weeks.has(d.toISOString().slice(0, 10))) d.setDate(d.getDate() - 7);
-  while (weeks.has(d.toISOString().slice(0, 10))) {
+  if (!weeks.has(todayISO(d))) d.setDate(d.getDate() - 7);
+  while (weeks.has(todayISO(d))) {
     streak++;
     d.setDate(d.getDate() - 7);
   }

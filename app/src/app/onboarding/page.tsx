@@ -126,7 +126,7 @@ export default function Onboarding() {
           title: `Bem-vindo, ${user.name.split(" ")[0]}.`,
           sub: "Vamos deixar seu painel pronto para receber alunos.",
           body: (
-            <Field label="Quantos alunos você acompanha hoje?">
+            <Field group label="Quantos alunos você acompanha hoje?">
               <Segmented label="Alunos" value={studentsCount} onChange={setStudentsCount} options={["1-10", "11-25", "26-50", "50+"].map((v) => ({ value: v, label: v }))} />
             </Field>
           ),

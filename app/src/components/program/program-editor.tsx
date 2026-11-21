@@ -8,9 +8,10 @@ import { ExercisePicker } from "@/components/exercise-picker";
 import { FichaDay } from "@/components/ficha";
 import { ProgramShare, shareNames } from "@/components/program/program-share";
 import { ActionSheet, Alert, Badge, Button, Dialog, Field, IconButton, Input, Panel, Select, Skeleton, Textarea, cx } from "@/components/ui";
+import { reportError, track } from "@/lib/analytics";
 import { useApp } from "@/lib/app-context";
 import { GROUP_LABEL, getExercise, unitOf } from "@/lib/domain/exercises";
-import { fmtLoad, fmtRest, fmtScheme, programValidity } from "@/lib/domain/format";
+import { firstName, fmtLoad, fmtRest, fmtScheme, programValidity } from "@/lib/domain/format";
 import { GOAL_LABEL, LEVEL_LABEL, TECHNIQUE_LABEL, buildPlanned, estimateDayMinutes, repScheme } from "@/lib/domain/generator";
 import { uid } from "@/lib/domain/ids";
 import { PLANS } from "@/lib/domain/plans";
@@ -45,9 +46,12 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
   const [picker, setPicker] = useState<{ replace?: string } | null>(null);
   const [dayMenu, setDayMenu] = useState(false);
   const [confirmDay, setConfirmDay] = useState(false);
-  const [leave, setLeave] = useState(false);
+  // Destino pedido enquanto havia alterações não salvas (null = ninguém pediu para sair).
+  const [leave, setLeave] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState<{ tone: "done" | "error"; text: string } | null>(null);
+  const [msg, setMsg] = useState<{ tone: "done" | "error" | "info"; text: string } | null>(null);
+  const [restored, setRestored] = useState(false);
+  const ready = useRef(false);
   const [notFound, setNotFound] = useState(false);
   const autoPrint = useRef(false);
 
@@ -58,11 +62,26 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
       .then((p) => {
         if (!alive) return;
         if (!p) return setNotFound(true);
-        setProgram(p);
         const q = new URLSearchParams(window.location.search);
-        if (q.get("enviada")) setMsg({ tone: "done", text: "Ficha salva e ativa. Revise os detalhes e envie pelo WhatsApp ou imprima." });
-        else if (q.get("salva")) setMsg({ tone: "done", text: user?.role === "coach" ? "Modelo salvo. Monte os treinos e depois aplique a um aluno." : "Ficha salva e ativa. Ela já aparece em Hoje." });
-        autoPrint.current = Boolean(q.get("imprimir"));
+        // Edição que ficou sem salvar (voltar do aparelho, recarregar, menu): volta como estava,
+        // desde que a ficha salva ainda seja a mesma versão em que a edição começou.
+        const draft = readDraft(user?.id ?? "", programId);
+        if (draft && draft.updatedAt === p.updatedAt) {
+          setProgram(draft);
+          setDirty(true);
+          setRestored(true);
+          setMsg({ tone: "info", text: "Recuperamos as alterações que você ainda não tinha salvado." });
+        } else {
+          setProgram(p);
+          const inactive = !p.active && !(user?.role === "coach" && p.ownerId === user.id);
+          if (q.get("enviada")) setMsg({ tone: "done", text: inactive ? "Ficha criada, ainda inativa: a ficha atual continua valendo até você tocar em “Tornar ativa”." : "Ficha salva e ativa. Revise os detalhes e envie pelo WhatsApp ou imprima." });
+          else if (q.get("salva"))
+            setMsg({ tone: "done", text: user?.role === "coach" ? "Modelo salvo. Monte os treinos e depois aplique a um aluno." : inactive ? "Ficha criada, ainda inativa: sua ficha atual continua valendo até você tocar em “Tornar ativa”." : "Ficha salva e ativa. Ela já aparece em Hoje." });
+          autoPrint.current = Boolean(q.get("imprimir"));
+        }
+        ready.current = true;
+        // Os avisos e a impressão automática valem uma vez: sem isto voltariam a cada recarga ou "voltar".
+        if (q.get("enviada") || q.get("salva") || q.get("imprimir")) window.history.replaceState(null, "", window.location.pathname);
       })
       .catch(() => alive && setNotFound(true));
     return () => {
@@ -79,24 +98,58 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
   }, [program]);
 
   useEffect(() => {
-    const h = (e: BeforeUnloadEvent) => {
-      if (dirty) e.preventDefault();
+    if (!dirty) return;
+    const unload = (e: BeforeUnloadEvent) => e.preventDefault();
+    // Qualquer link do app (menu inferior, logo, voltar) pergunta antes de sair com alterações pendentes.
+    const click = (e: MouseEvent) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const a = (e.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!a || a.target === "_blank" || a.hasAttribute("download")) return;
+      const url = new URL(a.href, window.location.href);
+      if (url.origin !== window.location.origin || url.pathname === window.location.pathname) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setLeave(url.pathname + url.search);
     };
-    window.addEventListener("beforeunload", h);
-    return () => window.removeEventListener("beforeunload", h);
+    window.addEventListener("beforeunload", unload);
+    document.addEventListener("click", click, true);
+    return () => {
+      window.removeEventListener("beforeunload", unload);
+      document.removeEventListener("click", click, true);
+    };
   }, [dirty]);
+
+  // Guarda o que está em edição enquanto não for salvo (cobre o "voltar" do aparelho e a recarga).
+  useEffect(() => {
+    if (!ready.current) return;
+    try {
+      if (dirty && program) sessionStorage.setItem(fichaDraftKey(user?.id ?? "", programId), JSON.stringify(program));
+      else sessionStorage.removeItem(fichaDraftKey(user?.id ?? "", programId));
+    } catch {
+      /* sem espaço ou modo privado: segue só em memória */
+    }
+  }, [program, dirty, programId, user?.id]);
+
+  function dropDraft() {
+    try {
+      sessionStorage.removeItem(fichaDraftKey(user?.id ?? "", programId));
+    } catch {}
+  }
+
+  async function discard() {
+    dropDraft();
+    setRestored(false);
+    setDirty(false);
+    setMsg(null);
+    const fresh = await repo.getProgram(programId).catch(() => null);
+    if (fresh) setProgram(fresh);
+  }
 
   const volume = useMemo(() => (program ? programSetsPerGroup(program) : []), [program]);
 
   const backLink = back ? (
     <Link
       href={back.href}
-      onClick={(e) => {
-        if (dirty) {
-          e.preventDefault();
-          setLeave(true);
-        }
-      }}
       className="no-print mb-4 inline-flex min-h-11 items-center gap-1.5 text-sm font-semibold text-steel hover:text-iron"
     >
       <ArrowLeft className="size-4" /> {back.label}
@@ -171,13 +224,17 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
     setConfirmDay(false);
   }
 
-  async function save() {
-    if (!program) return;
+  async function save(): Promise<boolean> {
+    if (!program) return false;
+    const fail = (text: string) => {
+      setMsg({ tone: "error", text });
+      return false;
+    };
     const name = program.name.trim();
-    if (!name) return setMsg({ tone: "error", text: "Dê um nome à ficha antes de salvar." });
+    if (!name) return fail("Dê um nome à ficha antes de salvar.");
     const keys = program.days.map((x) => x.key.trim().toUpperCase());
-    if (keys.some((k) => !k)) return setMsg({ tone: "error", text: "Todo treino precisa de uma letra ou nome curto (A, B, Push…)." });
-    if (new Set(keys).size !== keys.length) return setMsg({ tone: "error", text: "Dois treinos estão com a mesma letra. Use letras diferentes para cada um." });
+    if (keys.some((k) => !k)) return fail("Todo treino precisa de uma letra ou nome curto (A, B, Push…).");
+    if (new Set(keys).size !== keys.length) return fail("Dois treinos estão com a mesma letra. Use letras diferentes para cada um.");
     setSaving(true);
     try {
       const clean: Program = {
@@ -195,19 +252,51 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
       const saved = await repo.saveProgram(clean);
       setProgram(saved);
       setDirty(false);
-      setMsg({ tone: "done", text: isCoachEditing ? "Ficha salva. O aluno já vê a versão nova no app." : "Ficha salva." });
+      setRestored(false);
+      const planned = saved.days.flatMap((x) => x.exercises);
+      track("program_edited", {
+        days: saved.days.length,
+        exercises: planned.length,
+        with_technique: planned.filter((e) => e.technique !== "normal").length,
+        timed: planned.filter((e) => unitOf(e.exerciseId, e.unit) !== "reps").length,
+        custom: planned.filter((e) => e.exerciseId.startsWith("custom_")).length,
+        with_notes: planned.filter((e) => e.notes).length,
+        has_validity: Boolean(saved.durationWeeks),
+        system: saved.system,
+        kind: template ? "modelo" : isCoachEditing ? "aluno" : "propria",
+      });
+      const whoSees = student ? firstName(student.name) : "O aluno";
+      setMsg({
+        tone: "done",
+        text:
+          !saved.active && !template
+            ? `Ficha salva, ainda inativa: ${isCoachEditing ? `${whoSees} continua com a ficha atual` : "sua ficha atual continua valendo"} até você tocar em “Tornar ativa”.`
+            : !isCoachEditing
+              ? "Ficha salva."
+              : repo.capabilities.invites
+                ? `Ficha salva. ${whoSees} já vê a versão nova no app.`
+                : `Ficha salva. Envie a versão nova a ${whoSees} pelo WhatsApp ou imprima.`,
+      });
       onSaved?.(saved);
+      return true;
     } catch (e) {
+      reportError(e, "ficha:salvar");
       setMsg({ tone: "error", text: e instanceof Error ? e.message : "Não foi possível salvar. Tente de novo." });
+      return false;
     } finally {
       setSaving(false);
     }
   }
 
   async function activate() {
-    await repo.setActiveProgram(program!.ownerId, program!.id);
-    setProgram((p) => (p ? { ...p, active: true } : p));
-    setMsg({ tone: "done", text: "Esta é a ficha ativa agora." });
+    try {
+      await repo.setActiveProgram(program!.ownerId, program!.id);
+      setProgram((p) => (p ? { ...p, active: true } : p));
+      setMsg({ tone: "done", text: "Esta é a ficha ativa agora." });
+    } catch (e) {
+      reportError(e, "ficha:ativar");
+      setMsg({ tone: "error", text: e instanceof Error ? e.message : "Não foi possível ativar a ficha. Tente de novo." });
+    }
   }
 
   const recent = program.days.flatMap((x) => x.exercises.map((e) => e.exerciseId)).filter((id, i, all) => all.indexOf(id) === i);
@@ -263,10 +352,15 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
         </p>
       </div>
 
-      {msg ? (
+      {msg && !(dirty && msg.tone === "error") ? (
         <Alert tone={msg.tone} className="no-print">
           {msg.text}
         </Alert>
+      ) : null}
+      {restored && dirty ? (
+        <button type="button" onClick={() => void discard()} className="no-print min-h-11 text-sm font-semibold text-steel underline hover:text-iron">
+          Descartar essas alterações e voltar à versão salva
+        </button>
       ) : null}
 
       <div className="no-print -mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0" role="tablist" aria-label="Treinos da ficha">
@@ -295,7 +389,17 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
       <section className="no-print space-y-3" aria-label={`Treino ${d.key}`}>
         <div className="flex items-end gap-2">
           <Field label="Letra" className="w-20 shrink-0">
-            <Input value={d.key} onChange={(e) => patchDay({ key: e.target.value.slice(0, 6) })} aria-label="Letra ou nome curto do treino" className="text-center font-bold uppercase" />
+            <Input
+              value={d.key}
+              onChange={(e) => {
+                const v = e.target.value.slice(0, 6);
+                // Letra solta sai maiúscula (A, B, U1); nome curto fica como digitado (Push, Pull).
+                patchDay({ key: v.length <= 2 ? v.toUpperCase() : v });
+              }}
+              autoCapitalize="characters"
+              aria-label="Letra ou nome curto do treino"
+              className="text-center font-bold"
+            />
           </Field>
           <Field label="Título do treino" className="min-w-0 flex-1">
             <Input value={d.title} onChange={(e) => patchDay({ title: e.target.value })} maxLength={60} placeholder="Ex.: Peito e tríceps" />
@@ -437,7 +541,7 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
         </Panel>
       ) : null}
 
-      <Field label="Orientações gerais da ficha" className="no-print" hint="Aparecem para o aluno em Hoje e no texto enviado pelo WhatsApp.">
+      <Field label="Orientações gerais da ficha" className="no-print" hint={isCoachEditing || template ? "Aparecem para o aluno em Hoje e no texto enviado pelo WhatsApp." : "Aparecem em Hoje e no texto que você compartilhar."}>
         <Textarea value={program.notes ?? ""} onChange={(e) => change((p) => ({ ...p, notes: e.target.value }))} rows={3} maxLength={800} placeholder="Aquecimento, progressão de carga, cardio, dias de descanso…" />
       </Field>
 
@@ -451,7 +555,7 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
         <header className="mb-4 border-b-2 border-iron pb-2">
           <h1 className="plate-type text-2xl">{program.name}</h1>
           <p className="text-sm">
-            {[names.studentName && `Aluno: ${names.studentName}`, names.coachName && `Personal: ${names.coachName}`, `Emitida em ${fmtDate(new Date().toISOString(), { day: "2-digit", month: "2-digit", year: "numeric" })}`, program.durationWeeks && `Validade: ${program.durationWeeks} semanas`]
+            {[names.studentName && `${names.studentLabel}: ${names.studentName}`, names.coachName && `Personal: ${names.coachName}`, `Emitida em ${fmtDate(new Date().toISOString(), { day: "2-digit", month: "2-digit", year: "numeric" })}`, program.durationWeeks && `Validade: ${program.durationWeeks} semanas`]
               .filter(Boolean)
               .join(" · ")}
           </p>
@@ -472,11 +576,19 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
       </div>
 
       {dirty ? (
-        <div className="no-print sticky bottom-20 z-10 flex items-center justify-end gap-3 lg:bottom-4">
-          <span className="rounded bg-plate-yellow px-2 py-1 text-sm font-semibold">Alterações não salvas</span>
-          <Button size="lg" onClick={save} loading={saving} className="shadow-lift">
-            Salvar ficha
-          </Button>
+        <div className="no-print sticky bottom-20 z-10 space-y-2 lg:bottom-4">
+          {msg?.tone === "error" ? (
+            // Fundo opaco: a barra flutua sobre a lista de exercícios.
+            <div className="rounded-[var(--radius-ficha)] bg-paper shadow-lift">
+              <Alert tone="error">{msg.text}</Alert>
+            </div>
+          ) : null}
+          <div className="flex items-center justify-end gap-3">
+            <span className="rounded bg-plate-yellow px-2 py-1 text-sm font-semibold">Alterações não salvas</span>
+            <Button size="lg" onClick={() => void save()} loading={saving} className="shadow-lift">
+              Salvar ficha
+            </Button>
+          </div>
         </div>
       ) : null}
 
@@ -510,7 +622,7 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
 
       <Dialog open={confirmDay} onClose={() => setConfirmDay(false)} title={`Excluir o treino ${d.key}?`}>
         <p className="text-[0.9375rem] text-steel">
-          Os {d.exercises.length} exercícios deste treino saem da ficha. Os treinos já registrados pelo aluno continuam no histórico.
+          {d.exercises.length === 1 ? "O exercício deste treino sai da ficha." : `Os ${d.exercises.length} exercícios deste treino saem da ficha.`} Os treinos já registrados continuam no histórico.
         </p>
         <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <Button variant="secondary" onClick={() => setConfirmDay(false)}>
@@ -522,15 +634,26 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
         </div>
       </Dialog>
 
-      <Dialog open={leave} onClose={() => setLeave(false)} title="Sair sem salvar?">
+      <Dialog open={leave !== null} onClose={() => setLeave(null)} title="Salvar antes de sair?">
         <p className="text-[0.9375rem] text-steel">Você alterou a ficha e ainda não salvou.</p>
+        {msg?.tone === "error" ? (
+          <Alert tone="error" className="mt-3">
+            {msg.text}
+          </Alert>
+        ) : null}
         <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button variant="ghost" onClick={() => setLeave(null)} disabled={saving}>
+            Continuar editando
+          </Button>
           <Button
             variant="secondary"
+            disabled={saving}
             onClick={() => {
+              const to = leave;
+              dropDraft();
               setDirty(false);
-              setLeave(false);
-              if (back) router.push(back.href);
+              setLeave(null);
+              if (to) router.push(to);
             }}
           >
             Sair sem salvar
@@ -538,16 +661,30 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
           <Button
             loading={saving}
             onClick={async () => {
-              await save();
-              setLeave(false);
+              const to = leave;
+              if (!(await save())) return;
+              setLeave(null);
+              if (to) router.push(to);
             }}
           >
-            Salvar ficha
+            Salvar e sair
           </Button>
         </div>
       </Dialog>
     </div>
   );
+}
+
+const fichaDraftKey = (editorId: string, programId: string) => `sr:fichadraft:${editorId}:${programId}`;
+
+function readDraft(editorId: string, programId: string): Program | null {
+  try {
+    const raw = sessionStorage.getItem(fichaDraftKey(editorId, programId));
+    const p = raw ? (JSON.parse(raw) as Program) : null;
+    return p && p.id === programId && Array.isArray(p.days) && p.days.length ? p : null;
+  } catch {
+    return null;
+  }
 }
 
 function swap<T>(list: T[], a: number, b: number): T[] {
@@ -615,8 +752,9 @@ function NumField({
         onBlur={() => {
           setFocused(false);
           const n = parse(text);
-          if (n === null) onCommit(allowEmpty ? null : value ?? min, true);
-          else onCommit(Math.min(max, Math.max(min, n)), true);
+          const next = n === null ? (allowEmpty ? null : value ?? min) : Math.min(max, Math.max(min, n));
+          if (next !== value) onCommit(next, true);
+          else setText(show(value));
         }}
         className="num h-11 px-2 text-center font-bold"
       />

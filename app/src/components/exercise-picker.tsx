@@ -41,6 +41,21 @@ export function ExercisePicker({ open, onClose, onPick, title = "Adicionar exerc
   const [added, setAdded] = useState<string[]>([]);
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Exercícios criados por quem está usando agora. Em "ver como aluno" o cadastro também traz os do
+  // personal, que o aluno pode usar mas não pode excluir.
+  const [mine, setMine] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!open || !user) return;
+    let alive = true;
+    repo
+      .listCustomExercises(user.id)
+      .then((own) => alive && setMine(new Set(own.map((e) => e.id))))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [open, user, repo, customVersion]);
 
   useEffect(() => {
     if (open) {
@@ -130,7 +145,7 @@ export function ExercisePicker({ open, onClose, onPick, title = "Adicionar exerc
                     <span className="min-w-0 flex-1">
                       <span className="block font-semibold">
                         {e.name}
-                        {e.custom ? <span className="ml-2 rounded bg-plate-blue/10 px-1.5 py-0.5 text-[0.6875rem] font-bold text-plate-blue-ink">seu</span> : null}
+                        {e.custom ? <span className="ml-2 rounded bg-plate-blue/10 px-1.5 py-0.5 text-[0.6875rem] font-bold text-plate-blue-ink">{mine.has(e.id) ? "seu" : "do personal"}</span> : null}
                       </span>
                       <span className="block text-xs text-steel">
                         {GROUP_LABEL[e.group]} · {IMPLEMENT_LABEL[e.implement]}
@@ -143,7 +158,7 @@ export function ExercisePicker({ open, onClose, onPick, title = "Adicionar exerc
                       </span>
                     ) : null}
                   </button>
-                  {e.custom ? (
+                  {e.custom && mine.has(e.id) ? (
                     confirmDel === e.id ? (
                       <span className="flex shrink-0 items-center gap-1 pr-2">
                         <Button size="sm" variant="danger" onClick={() => removeCustom(e.id)}>
@@ -254,7 +269,7 @@ function CreateExercise({ initialName, initialGroup, onCancel, onCreated }: { in
           </Select>
         </Field>
       </div>
-      <Field label="Como a série é contada">
+      <Field group label="Como a série é contada">
         <Segmented
           label="Unidade"
           value={unit}

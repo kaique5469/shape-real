@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ArrowRight, Check, Play, Plus, Trophy } from "lucide-react";
 import { FichaDay } from "@/components/ficha";
@@ -13,6 +13,7 @@ import { targetsForProfile } from "@/lib/domain/nutrition";
 import { getExercise } from "@/lib/domain/exercises";
 import { programValidity } from "@/lib/domain/format";
 import { useAI } from "@/lib/ai/client";
+import { readDraftInfo, type DraftInfo } from "@/lib/workout-draft";
 
 const WEEK = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 
@@ -33,6 +34,11 @@ function Hoje() {
     return { program: programs.find((p) => p.active) ?? null, sessions, coach, diet };
   }, [user?.id, repo]);
   const [chosen, setChosen] = useState<string | null>(null);
+  // Treino começado e ainda não finalizado (fica guardado no aparelho).
+  const [ongoing, setOngoing] = useState<DraftInfo | null>(null);
+  useEffect(() => {
+    if (user) setOngoing(readDraftInfo(user.id));
+  }, [user]);
 
   const stats = useMemo(() => {
     if (!data) return null;
@@ -70,7 +76,7 @@ function Hoje() {
   return (
     <div className="space-y-6">
       <header>
-        <p className="text-sm font-semibold capitalize text-steel">{new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" })}</p>
+        <p className="text-sm font-semibold text-steel first-letter:uppercase">{new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" })}</p>
         <h1 className="plate-type mt-1 text-[2rem] leading-tight sm:text-[2.4rem]">
           {hello}, {first}.
         </h1>
@@ -85,6 +91,21 @@ function Hoje() {
         <Alert tone="done">
           Você agora é aluno de <strong>{params.get("personal")}</strong>. Quando a ficha e a dieta forem enviadas, elas aparecem aqui.
         </Alert>
+      ) : null}
+
+      {ongoing ? (
+        <section aria-label="Treino em andamento" className="flex flex-col gap-3 rounded-[8px] border-2 border-iron bg-paper p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="col-head text-plate-red-ink">Treino em andamento</p>
+            <p className="mt-1 truncate font-bold">{ongoing.dayKey ? `Treino ${ongoing.dayKey}${ongoing.dayTitle ? ` — ${ongoing.dayTitle}` : ""}` : "Treino livre"}</p>
+            <p className="num text-sm text-steel">
+              {ongoing.done} de {ongoing.total} séries feitas · iniciado {relativeDay(ongoing.startedAt)}. Ainda não está no histórico.
+            </p>
+          </div>
+          <LinkButton href={ongoing.href} icon={<Play className="size-4" />} className="shrink-0">
+            Continuar treino
+          </LinkButton>
+        </section>
       ) : null}
 
       {/* Semana */}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { cloneProgram, focusOfDay, nextDayKey, programSetsPerGroup, programToText, techniqueText } from "./program-share";
+import { maskPhone, waPhone } from "./format";
 import type { Program } from "./types";
 
 const program: Program = {
@@ -86,5 +87,33 @@ describe("cópia e resumo da ficha", () => {
   it("deriva o foco do dia e a próxima letra", () => {
     expect(focusOfDay(program.days[0]!).slice(0, 2)).toEqual(["peito", "triceps"]);
     expect(nextDayKey(program.days)).toBe("C");
+  });
+});
+
+describe("telefone do aluno", () => {
+  it("formata enquanto digita", () => {
+    expect(maskPhone("11")).toBe("11");
+    expect(maskPhone("119123")).toBe("(11) 9123");
+    expect(maskPhone("1132345678")).toBe("(11) 3234-5678");
+    expect(maskPhone("11912345678")).toBe("(11) 91234-5678");
+  });
+
+  it("aceita número colado do WhatsApp, com +55 ou zero antes do DDD", () => {
+    expect(maskPhone("+55 11 91234-5678")).toBe("(11) 91234-5678");
+    expect(maskPhone("5511912345678")).toBe("(11) 91234-5678");
+    expect(maskPhone("011 91234-5678")).toBe("(11) 91234-5678");
+    expect(maskPhone("+55 (11) 3234-5678")).toBe("(11) 3234-5678");
+    // DDD 55 (RS) sem código do país continua sendo DDD
+    expect(maskPhone("55991234567")).toBe("(55) 99123-4567");
+  });
+
+  it("o link do WhatsApp sai com um único 55", () => {
+    const digits = maskPhone("+55 11 91234-5678").replace(/\D/g, "");
+    expect(waPhone(digits)).toBe("5511912345678");
+  });
+
+  it("rótulo segue o cadastro: Aluna ou Aluno", () => {
+    expect(programToText(program, { studentName: "Juliana Prado", studentLabel: "Aluna" })).toContain("Aluna: Juliana Prado");
+    expect(programToText(program, { studentName: "Rafael" })).toContain("Aluno: Rafael");
   });
 });

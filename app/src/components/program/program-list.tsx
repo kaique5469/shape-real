@@ -213,7 +213,7 @@ export function ProgramList({ ownerId, basePath, newHref, canExport, student }: 
                   {!templates ? <Badge>{SOURCE[p.source]}</Badge> : null}
                 </span>
                 <span className="num mt-1 block text-sm text-steel">
-                  {getSystem(p.system).name} · {GOAL_LABEL[p.goal]} · {p.days.length} {p.days.length === 1 ? "treino" : "treinos"} · {count} exercícios
+                  {getSystem(p.system).name} · {GOAL_LABEL[p.goal]} · {p.days.length} {p.days.length === 1 ? "treino" : "treinos"} · {count} {count === 1 ? "exercício" : "exercícios"}
                 </span>
                 <span className="num block text-sm text-steel">
                   Atualizada em {fmtDate(p.updatedAt)}

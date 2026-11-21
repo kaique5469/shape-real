@@ -22,6 +22,20 @@ export function fmtLoad(kg: number | null | undefined): string {
   return `${kg.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} kg`;
 }
 
+/**
+ * "(11) 91234-5678" enquanto a pessoa digita; quem chama guarda só os dígitos.
+ * Aceita número colado do WhatsApp, com o código do país (+55) ou zero antes do DDD.
+ */
+export function maskPhone(raw: string): string {
+  let d = raw.replace(/\D/g, "");
+  if (d.length > 11 && d.startsWith("55")) d = d.slice(2);
+  d = d.replace(/^0+/, "").slice(0, 11);
+  if (d.length <= 2) return d;
+  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+}
+
 /** Só dígitos com DDI 55, pronto para wa.me; null se o número for curto demais. */
 export function waPhone(raw: string | null | undefined): string | null {
   const d = (raw ?? "").replace(/\D/g, "");

@@ -1,20 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Check, Copy, MessageCircle, MoreHorizontal, Pencil, Plus, Printer, Replace, Search, Sparkles, Trash2, Wand2, X } from "lucide-react";
 import { shareNames } from "@/components/program/program-share";
 import { ActionSheet, Alert, Button, Dialog, Empty, Field, IconButton, Input, Panel, Skeleton, Textarea, cx, type SheetAction } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
-import { aiDietAnalyze, aiDietGenerate, useAI, type DietAnalysis } from "@/lib/ai/client";
+import { OfflineError, aiDietAnalyze, aiDietGenerate, useAI, type DietAnalysis } from "@/lib/ai/client";
 import { dietToText, householdMeasure } from "@/lib/domain/diet-share";
 import { normalize } from "@/lib/domain/exercises";
 import { allFoods, getFood, type Food } from "@/lib/domain/foods";
 import { firstName, waLink, waPhone } from "@/lib/domain/format";
 import { uid } from "@/lib/domain/ids";
-import { dietTotals, itemFromFood, sumItems, targetsForProfile } from "@/lib/domain/nutrition";
+import { buildDietTemplate, dietTotals, itemFromFood, sumItems, targetsForProfile } from "@/lib/domain/nutrition";
 import { fmtDate } from "@/lib/hooks";
-import { track } from "@/lib/analytics";
+import { reportError, track } from "@/lib/analytics";
 import type { DietItem, DietPlan, MacroTargets, Meal, Profile } from "@/lib/domain/types";
 
 const MACROS: { key: keyof MacroTargets; label: string; short: string; unit: string; color: string }[] = [
@@ -42,6 +42,18 @@ function searchFoodsLocal(query: string): Food[] {
   return [...hit].sort((a, b) => custom(a) - custom(b) || (words.length ? a.name.length - b.name.length : 0)).slice(0, 60);
 }
 
+const dietDraftKey = (editorId: string, ownerId: string) => `sr:dietdraft:${editorId}:${ownerId}`;
+
+function readDraft(editorId: string, ownerId: string): DietPlan | null {
+  try {
+    const raw = sessionStorage.getItem(dietDraftKey(editorId, ownerId));
+    const d = raw ? (JSON.parse(raw) as DietPlan) : null;
+    return d && d.ownerId === ownerId && Array.isArray(d.meals) ? d : null;
+  } catch {
+    return null;
+  }
+}
+
 export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coach" }) {
   const { repo, user, mode: dataMode, accessToken } = useApp();
   const ai = useAI(dataMode === "supabase");
@@ -62,6 +74,9 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
   const [pendingPlan, setPendingPlan] = useState<Meal[] | null>(null);
   const [copied, setCopied] = useState(false);
   const [crnSeen, setCrnSeen] = useState(true);
+  const [restored, setRestored] = useState(false);
+  const [dropMeal, setDropMeal] = useState<Meal | null>(null);
+  const ready = useRef(false);
 
   const computed = useMemo(() => targetsForProfile(owner), [owner]);
   const who = firstName(owner.name);
@@ -70,9 +85,25 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
   useEffect(() => {
     let alive = true;
     setLoading(true);
+    ready.current = false;
     repo
       .getDiet(owner.id)
-      .then((d) => alive && setDiet(d))
+      .then((d) => {
+        if (!alive) return;
+        // Edição que não chegou a ser salva (troca de aba, menu, voltar do aparelho): volta como estava.
+        const draft = readDraft(user!.id, owner.id);
+        if (draft) {
+          setDiet(draft);
+          setDirty(true);
+          setRestored(true);
+          setMsg({ tone: "info", text: "Recuperamos as alterações que você ainda não tinha salvado." });
+        } else {
+          setDiet(d);
+          setDirty(false);
+          setRestored(false);
+        }
+        ready.current = true;
+      })
       .catch((e) => alive && setLoadErr(e instanceof Error ? e.message : "Não foi possível carregar a dieta."))
       .finally(() => alive && setLoading(false));
     try {
@@ -83,7 +114,8 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
     return () => {
       alive = false;
     };
-  }, [repo, owner.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repo, owner.id, user?.id]);
 
   useEffect(() => {
     const h = (e: BeforeUnloadEvent) => {
@@ -92,6 +124,32 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
     window.addEventListener("beforeunload", h);
     return () => window.removeEventListener("beforeunload", h);
   }, [dirty]);
+
+  // Guarda o que está em edição enquanto não for salvo; some ao salvar ou descartar.
+  useEffect(() => {
+    if (!ready.current) return;
+    try {
+      if (dirty && diet) sessionStorage.setItem(dietDraftKey(user!.id, owner.id), JSON.stringify(diet));
+      else sessionStorage.removeItem(dietDraftKey(user!.id, owner.id));
+    } catch {
+      /* sem espaço ou modo privado: segue só em memória */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [diet, dirty, owner.id, user?.id]);
+
+  async function discard() {
+    try {
+      sessionStorage.removeItem(dietDraftKey(user!.id, owner.id));
+    } catch {}
+    setRestored(false);
+    setMsg(null);
+    setDirty(false);
+    try {
+      setDiet(await repo.getDiet(owner.id));
+    } catch (e) {
+      setMsg({ tone: "error", text: e instanceof Error ? e.message : "Não foi possível recarregar a dieta." });
+    }
+  }
 
   const targets: MacroTargets | null = diet?.targets ?? draftTargets ?? (computed ? { kcal: computed.kcal, proteinG: computed.proteinG, carbsG: computed.carbsG, fatG: computed.fatG } : null);
   const totals = diet ? dietTotals(diet) : null;
@@ -118,8 +176,15 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
   }
 
   function applyTargets(t: MacroTargets) {
+    track("diet_targets_edited", { where: mode, had_computed: Boolean(computed) });
     if (diet) change((d) => ({ ...d, targets: t }));
-    else setDraftTargets(t);
+    else {
+      // Sem cardápio ainda: as metas só ficam guardadas junto com um plano, então abre um em branco para salvar.
+      setDraftTargets(t);
+      setDiet(blankDiet(t));
+      setDirty(true);
+      setMsg({ tone: "info", text: "Metas definidas. Monte o cardápio e toque em “Salvar dieta” para guardar." });
+    }
     setTargetsOpen(false);
   }
 
@@ -130,8 +195,15 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
       const saved = await repo.saveDiet({ ...diet, name: diet.name.trim() || (coach ? `Plano alimentar de ${who}` : "Minha dieta"), createdBy: coach ? user!.id : diet.createdBy || user!.id });
       setDiet(saved);
       setDirty(false);
-      setMsg({ tone: "done", text: coach ? `Dieta salva. ${who} já vê no app; use os botões abaixo para enviar pelo WhatsApp.` : "Dieta salva." });
+      setRestored(false);
+      const dietItems = saved.meals.flatMap((m) => m.items);
+      track("diet_saved", { where: mode, meals: saved.meals.length, items: dietItems.length, custom_items: dietItems.filter((i) => i.foodId?.startsWith("custom_")).length, has_notes: Boolean(saved.notes?.trim()) });
+      setMsg({
+        tone: "done",
+        text: !coach ? "Dieta salva." : repo.capabilities.invites ? `Dieta salva. ${who} já vê no app; use os botões abaixo para enviar pelo WhatsApp.` : `Dieta salva. Use os botões abaixo para enviar a ${who} pelo WhatsApp.`,
+      });
     } catch (e) {
+      reportError(e, "dieta:salvar");
       setMsg({ tone: "error", text: e instanceof Error ? e.message : "Não foi possível salvar. Tente de novo." });
     } finally {
       setSaving(false);
@@ -150,6 +222,16 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
       track("diet_generated", { source: r.source, where: mode });
     } catch (e) {
       setGenOpen(false);
+      // Sem internet: o cardápio base é calculado no aparelho, com as mesmas metas.
+      if (e instanceof OfflineError) {
+        const local = buildDietTemplate(targets, { ownerId: owner.id, createdBy: user!.id });
+        setDiet({ ...local, id: diet?.id ?? local.id, name: diet?.name ?? blankDiet(targets).name, targets, notes: local.notes ?? diet?.notes });
+        setDirty(true);
+        setMsg({ tone: "info", text: ai.enabled ? "Sem conexão agora: este cardápio base foi montado pelo app, sem a IA. Ajuste as porções e salve." : "Cardápio montado. Ajuste as porções e salve." });
+        track("diet_generated", { source: "offline", where: mode });
+        return;
+      }
+      reportError(e, "dieta:gerar");
       setMsg({ tone: "error", text: e instanceof Error ? e.message : "Não foi possível montar o cardápio. Tente de novo." });
     } finally {
       setGenBusy(false);
@@ -193,7 +275,7 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
     return [
       { label: "Mover para cima", icon: <ArrowUp className="size-5" />, disabled: i <= 0, onSelect: () => move(-1) },
       { label: "Mover para baixo", icon: <ArrowDown className="size-5" />, disabled: i < 0 || i >= (diet?.meals.length ?? 0) - 1, onSelect: () => move(1) },
-      { label: "Excluir refeição", icon: <Trash2 className="size-5" />, tone: "danger", onSelect: () => change((d) => ({ ...d, meals: d.meals.filter((m) => m.uid !== meal.uid) })) },
+      { label: "Excluir refeição", icon: <Trash2 className="size-5" />, tone: "danger", onSelect: () => (meal.items.length ? setDropMeal(meal) : change((d) => ({ ...d, meals: d.meals.filter((m) => m.uid !== meal.uid) }))) },
     ];
   };
 
@@ -261,7 +343,7 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
             })}
           </div>
           <p className="mt-3 text-xs text-steel">
-            {computed ? `Gasto diário estimado ${coach ? `de ${who}` : ""}: ${int(computed.tdee)} kcal. ` : ""}
+            {computed ? `Gasto diário estimado${coach ? ` de ${who}` : ""}: ${int(computed.tdee)} kcal. ` : ""}
             {hasItems ? "Os números grandes são o total do cardápio abaixo." : "Monte o cardápio para comparar com as metas."}
           </p>
         </Panel>
@@ -302,7 +384,7 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
               {diet.createdBy && diet.createdBy !== owner.id && !coach ? <p className="text-sm text-steel">Enviada pelo seu personal · atualizada em {fmtDate(diet.updatedAt)}</p> : null}
             </div>
             <Button variant="secondary" size="sm" className="self-start" icon={ai.enabled ? <Sparkles className="size-4" /> : <Wand2 className="size-4" />} onClick={() => setGenOpen(true)} disabled={!targets}>
-              {ai.enabled ? "Gerar outro com IA" : "Montar outro automático"}
+              {hasItems ? (ai.enabled ? "Gerar outro com IA" : "Montar outro automático") : ai.enabled ? "Gerar cardápio com IA" : "Montar cardápio automático"}
             </Button>
           </div>
 
@@ -376,6 +458,11 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
           </Field>
 
           {msg ? <Alert tone={msg.tone}>{msg.text}</Alert> : null}
+          {restored && dirty ? (
+            <button type="button" onClick={() => void discard()} className="min-h-11 text-sm font-semibold text-steel underline hover:text-iron">
+              Descartar essas alterações e voltar à versão salva
+            </button>
+          ) : null}
 
           <Panel title={coach ? `Enviar para ${who}` : "Compartilhar"}>
             {dirty ? <p className="mb-3 text-sm text-steel">Salve as alterações para compartilhar a versão nova.</p> : !hasItems ? <p className="mb-3 text-sm text-steel">Adicione alimentos antes de enviar.</p> : null}
@@ -450,6 +537,27 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
           />
         </div>
       )}
+
+      <Dialog open={Boolean(dropMeal)} onClose={() => setDropMeal(null)} title="Excluir esta refeição?">
+        <p className="text-[0.9375rem] text-steel">
+          {dropMeal ? `“${dropMeal.name}” sai do cardápio com ${dropMeal.items.length === 1 ? "o alimento que está nela" : `os ${dropMeal.items.length} alimentos que estão nela`}.` : ""}
+        </p>
+        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button variant="secondary" onClick={() => setDropMeal(null)}>
+            Cancelar
+          </Button>
+          <Button
+            variant="danger"
+            onClick={() => {
+              const gone = dropMeal;
+              setDropMeal(null);
+              if (gone) change((d) => ({ ...d, meals: d.meals.filter((m) => m.uid !== gone.uid) }));
+            }}
+          >
+            Excluir refeição
+          </Button>
+        </div>
+      </Dialog>
 
       {/* Versão de impressão */}
       {diet && hasItems ? (

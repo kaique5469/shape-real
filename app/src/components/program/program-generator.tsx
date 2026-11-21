@@ -6,12 +6,12 @@ import { FichaDay } from "@/components/ficha";
 import { GoalPicker, LimitsPicker, RoutinePicker, SystemChooser, suggestFor, withSuggestion, type TrainingPrefs } from "@/components/preferences";
 import { Alert, Button, Dialog, Field, Panel, Segmented, Skeleton, Textarea } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
-import { aiProgram, useAI } from "@/lib/ai/client";
+import { OfflineError, aiProgram, useAI } from "@/lib/ai/client";
 import { firstName } from "@/lib/domain/format";
-import { GOAL_LABEL } from "@/lib/domain/generator";
+import { GOAL_LABEL, generateProgram } from "@/lib/domain/generator";
 import { uid } from "@/lib/domain/ids";
 import { DAY_KEYS, getSystem } from "@/lib/domain/systems";
-import { track } from "@/lib/analytics";
+import { reportError, track } from "@/lib/analytics";
 import type { Profile, Program } from "@/lib/domain/types";
 
 const clampDays = (d: number | undefined) => Math.min(6, Math.max(2, d ?? 3));
@@ -55,9 +55,9 @@ export function ProgramGenerator({ owner, forName, onSaved }: { owner: Profile; 
   async function generate() {
     setBusy("generate");
     setError(null);
+    const { systemTouched: _touched, ...input } = prefs;
+    void _touched;
     try {
-      const { systemTouched: _touched, ...input } = prefs;
-      void _touched;
       const r = await aiProgram({ ...input, notes: ai.enabled && notes.trim() ? notes.trim() : undefined, seed: Math.floor(Math.random() * 1e6) }, { ownerId: owner.id, createdBy: user!.id }, await accessToken());
       setPreview({ ...r.data, source: isCoach ? "personal" : r.source === "ia" ? "ia" : "modelo" });
       setNotice(r.notice?.trim() ? r.notice : null);
@@ -65,6 +65,21 @@ export function ProgramGenerator({ owner, forName, onSaved }: { owner: Profile; 
       track("program_generated", { where: isCoach ? "coach" : "athlete", source: r.source, system: prefs.system });
       window.scrollTo({ top: 0 });
     } catch (e) {
+      // Sem internet (academia, elevador): o motor do app roda no aparelho e entrega a ficha do mesmo jeito.
+      if (e instanceof OfflineError) {
+        try {
+          const local = generateProgram({ ...input, seed: Math.floor(Math.random() * 1e6) }, { ownerId: owner.id, createdBy: user!.id });
+          setPreview({ ...local, source: isCoach ? "personal" : "modelo" });
+          setNotice(ai.enabled ? "Sem conexão agora: esta base foi montada pelo motor do app, sem a IA." : null);
+          setQuota(false);
+          track("program_generated", { where: isCoach ? "coach" : "athlete", source: "offline", system: prefs.system });
+          window.scrollTo({ top: 0 });
+          return;
+        } catch (inner) {
+          reportError(inner, "ficha:gerar-offline");
+        }
+      }
+      if (!(e instanceof OfflineError)) reportError(e, "ficha:gerar");
       setError(e instanceof Error ? e.message : "Não foi possível gerar a ficha. Tente de novo.");
     } finally {
       setBusy(null);
@@ -77,6 +92,8 @@ export function ProgramGenerator({ owner, forName, onSaved }: { owner: Profile; 
     try {
       const now = new Date().toISOString();
       const sys = getSystem(prefs.system);
+      // Ficha em branco não derruba a ficha que já está valendo: fica inativa até ser montada e ativada.
+      const hasActive = template ? false : (await repo.listPrograms(owner.id)).some((p) => p.active);
       const fromSystem = blankKind === "sistema";
       const program: Program = {
         id: uid(),
@@ -90,7 +107,7 @@ export function ProgramGenerator({ owner, forName, onSaved }: { owner: Profile; 
         days: fromSystem
           ? sys.templates.map((t) => ({ key: t.key, title: t.title, focus: t.focus, exercises: [] }))
           : Array.from({ length: blankDays }, (_, i) => ({ key: DAY_KEYS[i] ?? `D${i + 1}`, title: "", focus: [], exercises: [] })),
-        active: true,
+        active: !hasActive,
         source: isCoach ? "personal" : "manual",
         createdAt: now,
         updatedAt: now,
@@ -99,6 +116,7 @@ export function ProgramGenerator({ owner, forName, onSaved }: { owner: Profile; 
       track(isCoach ? "program_assigned" : "program_saved", { source: "blank" });
       onSaved(saved);
     } catch (e) {
+      reportError(e, "ficha:criar-em-branco");
       setError(e instanceof Error ? e.message : "Não foi possível criar a ficha.");
       setBusy(null);
       setBlankOpen(false);
@@ -114,6 +132,7 @@ export function ProgramGenerator({ owner, forName, onSaved }: { owner: Profile; 
       track(isCoach ? "program_assigned" : "program_saved", { source: preview.source });
       onSaved(saved);
     } catch (e) {
+      reportError(e, "ficha:salvar-nova");
       setError(e instanceof Error ? e.message : "Não foi possível salvar a ficha.");
       setBusy(null);
     }
@@ -199,7 +218,7 @@ export function ProgramGenerator({ owner, forName, onSaved }: { owner: Profile; 
 
       <Dialog open={blankOpen} onClose={() => setBlankOpen(false)} title="Montar do zero">
         <div className="space-y-5">
-          <Field label="Como você quer começar?">
+          <Field group label="Como você quer começar?">
             <Segmented
               label="Ponto de partida"
               value={blankKind}
@@ -212,7 +231,7 @@ export function ProgramGenerator({ owner, forName, onSaved }: { owner: Profile; 
             />
           </Field>
           {blankKind === "livre" ? (
-            <Field label="Quantos treinos diferentes?" hint="Você pode adicionar ou remover treinos depois.">
+            <Field group label="Quantos treinos diferentes?" hint="Você pode adicionar ou remover treinos depois.">
               <Segmented label="Número de treinos" value={blankDays} onChange={setBlankDays} options={[1, 2, 3, 4, 5, 6, 7].map((d) => ({ value: d, label: String(d) }))} />
             </Field>
           ) : null}

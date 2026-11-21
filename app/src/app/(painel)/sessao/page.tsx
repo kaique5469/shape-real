@@ -13,8 +13,9 @@ import { TECHNIQUE_LABEL } from "@/lib/domain/generator";
 import { uid } from "@/lib/domain/ids";
 import { completedSets, detectPRs, fmtKg, lastPerformance, sessionVolume, suggestNext, type LoadSuggestion } from "@/lib/domain/progression";
 import type { Exercise, ExerciseLog, Program, Session, SetLog, Technique, Unit } from "@/lib/domain/types";
-import { track } from "@/lib/analytics";
+import { reportError, track } from "@/lib/analytics";
 import { fmtNum } from "@/lib/hooks";
+import { draftHref, draftKey } from "@/lib/workout-draft";
 
 export default function SessaoPage() {
   return (
@@ -30,7 +31,6 @@ interface Draft {
   restSec: Record<string, number>;
 }
 
-const draftKey = (userId: string) => `sr:draft:${userId}`;
 
 function buildDraft(userId: string, program: Program | null, dayKey: string | null, history: Session[]): Draft {
   const day = program?.days.find((d) => d.key === dayKey) ?? null;
@@ -63,7 +63,7 @@ function buildDraft(userId: string, program: Program | null, dayKey: string | nu
       programId: program?.id ?? null,
       programName: program?.name,
       dayKey: day?.key,
-      dayTitle: day?.title,
+      dayTitle: day?.title?.trim() || undefined,
       startedAt: new Date().toISOString(),
       exercises,
       volumeKg: 0,
@@ -123,6 +123,10 @@ function Sessao() {
   const [summary, setSummary] = useState<Session | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmExit, setConfirmExit] = useState(false);
+  const [confirmFinish, setConfirmFinish] = useState(false);
+  const [dropLog, setDropLog] = useState<ExerciseLog | null>(null);
+  // Outro treino ficou em andamento: nada é sobrescrito até a pessoa escolher o que fazer com ele.
+  const [conflict, setConflict] = useState<{ saved: Draft; fresh: Draft } | null>(null);
   const loaded = useRef(false);
 
   // Carrega ficha + histórico; retoma rascunho salvo se for do mesmo treino.
@@ -135,25 +139,51 @@ function Sessao() {
         setProgram(prog);
         setHistory(hist);
         let d: Draft | null = null;
+        let pending: Draft | null = null;
         try {
           const saved = localStorage.getItem(draftKey(user.id));
           if (saved) {
             const parsed = JSON.parse(saved) as Draft;
             const sameDay = parsed.session.programId === (prog?.id ?? null) && (parsed.session.dayKey ?? null) === (dayKey ?? parsed.session.dayKey ?? null);
             const fresh = Date.now() - new Date(parsed.session.startedAt).getTime() < 6 * 3_600_000;
+            const hasWork = parsed.session.exercises.some((e) => e.sets.some((x) => x.done));
             if (sameDay && fresh) d = parsed;
+            else if (hasWork) pending = parsed;
           }
         } catch {}
+        const resumed = Boolean(d);
         d ??= buildDraft(user.id, prog, dayKey, hist);
-        setDraft(d);
-        setOpen(d.session.exercises.find((e) => e.sets.some((s) => !s.done))?.uid ?? d.session.exercises[0]?.uid ?? null);
-        if (!d.session.exercises.length) setPicker(true);
-        track("workout_started", { program: Boolean(prog), day: dayKey ?? "livre" });
+        if (pending) {
+          setConflict({ saved: pending, fresh: d });
+          return;
+        }
+        begin(d, !resumed);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Não foi possível abrir o treino.");
       }
     })();
   }, [user, repo, programId, dayKey]);
+
+  /** Abre um rascunho na tela (novo ou retomado). */
+  function begin(d: Draft, isNew: boolean) {
+    setDraft(d);
+    setOpen(d.session.exercises.find((e) => e.sets.some((x) => !x.done))?.uid ?? d.session.exercises[0]?.uid ?? null);
+    if (!d.session.exercises.length) setPicker(true);
+    if (isNew) track("workout_started", { program: Boolean(d.session.programId), day: d.session.dayKey ?? "livre" });
+  }
+
+  /** Retoma o treino que tinha ficado em andamento (pode ser de outro dia ou de outra ficha). */
+  async function resumeSaved() {
+    if (!conflict) return;
+    const saved = conflict.saved;
+    setConflict(null);
+    if ((saved.session.programId ?? null) !== (program?.id ?? null)) {
+      const prog = saved.session.programId ? await repo.getProgram(saved.session.programId).catch(() => null) : null;
+      setProgram(prog);
+    }
+    begin(saved, false);
+    router.replace(draftHref(saved.session), { scroll: false });
+  }
 
   // Salva rascunho a cada alteração (sobrevive a recarregar a página ou fechar o app).
   useEffect(() => {
@@ -212,20 +242,35 @@ function Sessao() {
     }
   }, [now, rest, beep]);
 
-  // Mantém a tela acesa durante o treino
+  // Mantém a tela acesa durante o treino. O sistema solta a trava ao trocar de app, então pede de novo na volta.
   useEffect(() => {
     let lock: { release: () => Promise<void> } | null = null;
+    let gone = false;
     const nav = navigator as Navigator & { wakeLock?: { request: (t: "screen") => Promise<{ release: () => Promise<void> }> } };
-    nav.wakeLock
-      ?.request("screen")
-      .then((l) => (lock = l))
-      .catch(() => {});
-    return () => void lock?.release().catch(() => {});
+    const acquire = () => {
+      if (document.visibilityState !== "visible") return;
+      nav.wakeLock
+        ?.request("screen")
+        .then((l) => {
+          if (gone) void l.release().catch(() => {});
+          else lock = l;
+        })
+        .catch(() => {});
+    };
+    acquire();
+    document.addEventListener("visibilitychange", acquire);
+    return () => {
+      gone = true;
+      document.removeEventListener("visibilitychange", acquire);
+      void lock?.release().catch(() => {});
+    };
   }, []);
 
   const update = useCallback((logUid: string, fn: (log: ExerciseLog) => ExerciseLog) => {
     setDraft((d) => (d ? { ...d, session: { ...d.session, exercises: d.session.exercises.map((e) => (e.uid === logUid ? fn(e) : e)) } } : d));
   }, []);
+
+  const removeLog = (logUid: string) => setDraft((d) => (d ? { ...d, session: { ...d.session, exercises: d.session.exercises.filter((e) => e.uid !== logUid) } } : d));
 
   const setField = (logUid: string, i: number, patch: Partial<SetLog>) =>
     update(logUid, (log) => ({ ...log, sets: log.sets.map((s, j) => (j === i ? { ...s, ...patch } : j > i && patch.loadKg !== undefined && !s.done ? { ...s, loadKg: patch.loadKg } : s)) }));
@@ -263,7 +308,7 @@ function Sessao() {
     unlockAudio();
     // Sem valor digitado, assume o da mesma série no último treino (ou o mínimo da faixa) —
     // nunca o topo da faixa, que dispararia sugestão de aumento sem o atleta ter batido as reps.
-    const reps = set.reps ?? (done ? defaultReps(log, i, lastPerformance(history, log.exerciseId)) : set.reps);
+    const reps = set.reps || (done ? defaultReps(log, i, lastPerformance(history, log.exerciseId)) : set.reps);
     update(log.uid, (l) => ({ ...l, sets: l.sets.map((s, j) => (j === i ? { ...s, done, reps } : s)) }));
     if (hold && hold.logUid === log.uid && hold.index === i) setHold(null);
     if (done) afterDone(log, i);
@@ -326,11 +371,21 @@ function Sessao() {
         await repo.saveProgram(updated).catch(() => undefined);
       }
       localStorage.removeItem(draftKey(user.id));
-      track("workout_completed", { sets: stats.done, prs: s.prs.length, minutes: Math.round((Date.now() - new Date(s.startedAt).getTime()) / 60000) });
+      track("workout_completed", {
+        sets: stats.done,
+        prs: s.prs.length,
+        minutes: Math.round((Date.now() - new Date(s.startedAt).getTime()) / 60000),
+        exercises: exercises.length,
+        timed_exercises: exercises.filter((e) => (e.unit ?? "reps") !== "reps").length,
+        linked_exercises: Object.keys(links).length,
+        from_program: Boolean(program),
+        completed_all: stats.done === stats.total,
+      });
       if (s.prs.length) track("pr_achieved", { count: s.prs.length });
       setSummary(saved);
       setRest(null);
     } catch (e) {
+      reportError(e, "treino:salvar");
       setError(e instanceof Error ? e.message : "Não foi possível salvar. Seus dados continuam nesta tela.");
     } finally {
       setFinishing(false);
@@ -351,6 +406,41 @@ function Sessao() {
         </Button>
       </div>
     );
+  if (conflict && !draft) {
+    const sv = conflict.saved.session;
+    const all = sv.exercises.flatMap((e) => e.sets);
+    const when = new Date(sv.startedAt);
+    const sameDate = when.toDateString() === new Date().toDateString();
+    return (
+      <div className="mx-auto max-w-md px-4 py-12">
+        <h1 className="plate-type text-[1.6rem] leading-tight">Você tem um treino em andamento</h1>
+        <p className="mt-3 text-[0.9375rem] text-steel">
+          <strong className="text-iron">{sv.dayKey ? `Treino ${sv.dayKey}${sv.dayTitle ? ` — ${sv.dayTitle}` : ""}` : "Treino livre"}</strong>, iniciado{" "}
+          {sameDate ? "hoje" : `em ${when.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}`} às {when.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}, com{" "}
+          {all.filter((x) => x.done).length} de {all.length} séries feitas. Ele ainda não foi salvo no histórico.
+        </p>
+        <div className="mt-6 flex flex-col gap-2">
+          <Button size="lg" onClick={() => void resumeSaved()}>
+            Continuar aquele treino
+          </Button>
+          <Button
+            size="lg"
+            variant="danger"
+            onClick={() => {
+              const fresh = conflict.fresh;
+              setConflict(null);
+              begin(fresh, true);
+            }}
+          >
+            Descartar e começar este
+          </Button>
+          <Button variant="ghost" onClick={() => router.push("/hoje")}>
+            Voltar
+          </Button>
+        </div>
+      </div>
+    );
+  }
   if (!draft) return <SessionSkeleton />;
   if (summary) return <Summary session={summary} onDone={() => router.push("/hoje")} />;
 
@@ -365,7 +455,7 @@ function Sessao() {
             <X className="size-5" />
           </button>
           <div className="min-w-0 flex-1">
-            <p className="truncate font-bold">{draft.session.dayKey ? `Treino ${draft.session.dayKey} — ${draft.session.dayTitle}` : "Treino livre"}</p>
+            <p className="truncate font-bold">{draft.session.dayKey ? `Treino ${draft.session.dayKey}${draft.session.dayTitle ? ` — ${draft.session.dayTitle}` : ""}` : "Treino livre"}</p>
             <p className="num text-xs text-chalk/65">
               {stats.exDone}/{draft.session.exercises.length} exercícios · {stats.done}/{stats.total} séries{stats.volume ? ` · ${fmtNum(stats.volume, 0)} kg` : ""}
             </p>
@@ -377,6 +467,7 @@ function Sessao() {
             onClick={() => {
               const on = !sound;
               setSound(on);
+              track("session_feature_used", { feature: "som", on });
               try {
                 localStorage.setItem(SOUND_KEY, on ? "1" : "0");
               } catch {}
@@ -410,6 +501,7 @@ function Sessao() {
               unlockAudio();
               setRest(null);
               setHold({ logUid: log.uid, index: i, startedAt: Date.now(), max });
+              track("session_feature_used", { feature: "cronometro_serie" });
             }}
             onHoldStop={() => hold && stopHold((Date.now() - hold.startedAt) / 1000)}
             onSwap={() => setSwapUid(log.uid)}
@@ -417,7 +509,7 @@ function Sessao() {
             onDone={(i) => toggleDone(log, i)}
             onAddSet={() => update(log.uid, (l) => ({ ...l, sets: [...l.sets, { loadKg: l.sets[l.sets.length - 1]?.loadKg ?? null, reps: null, done: false }] }))}
             onRemoveSet={() => update(log.uid, (l) => ({ ...l, sets: l.sets.length > 1 ? l.sets.slice(0, -1) : l.sets }))}
-            onRemove={() => setDraft((d) => (d ? { ...d, session: { ...d.session, exercises: d.session.exercises.filter((e) => e.uid !== log.uid) } } : d))}
+            onRemove={() => (log.sets.some((x) => x.done) ? setDropLog(log) : removeLog(log.uid))}
             onNotes={(notes) => update(log.uid, (l) => ({ ...l, notes }))}
           />
         ))}
@@ -425,7 +517,6 @@ function Sessao() {
         <Button variant="secondary" className="w-full" onClick={() => setPicker(true)} icon={<Plus className="size-4" />}>
           Adicionar exercício
         </Button>
-        {error ? <Alert tone="error">{error}</Alert> : null}
       </main>
 
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-rule bg-paper/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
@@ -436,16 +527,41 @@ function Sessao() {
             <span className="num plate-type ml-auto text-3xl">
               {Math.floor(restLeft / 60)}:{String(restLeft % 60).padStart(2, "0")}
             </span>
-            <Button size="sm" variant="secondary" onClick={() => setRest((r) => (r ? { ...r, until: r.until + 15_000 } : r))}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setRest((r) => (r ? { ...r, until: r.until + 15_000 } : r));
+                track("session_feature_used", { feature: "descanso_mais_15" });
+              }}
+            >
               +15s
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => setRest(null)}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setRest(null);
+                track("session_feature_used", { feature: "descanso_pular" });
+              }}
+            >
               Pular
             </Button>
           </div>
         ) : null}
         <div className="mx-auto max-w-2xl px-4 py-3">
-          <Button size="lg" className="w-full" onClick={finish} loading={finishing} variant={stats.done === stats.total && stats.total > 0 ? "record" : "primary"}>
+          {error ? (
+            <Alert tone="error" className="mb-2">
+              {error}
+            </Alert>
+          ) : null}
+          <Button
+            size="lg"
+            className="w-full"
+            onClick={() => (stats.done > 0 && stats.done < stats.total ? setConfirmFinish(true) : void finish())}
+            loading={finishing}
+            variant={stats.done === stats.total && stats.total > 0 ? "record" : "primary"}
+          >
             Finalizar treino
           </Button>
         </div>
@@ -487,8 +603,10 @@ function Sessao() {
               };
             });
             setSwapUid(null);
+            track("session_feature_used", { feature: "trocar_exercicio" });
             return;
           }
+          track("session_feature_used", { feature: "adicionar_exercicio" });
           const logUid = uid();
           const planned = defaultPlan(e);
           const sug = unit === "reps" ? suggestNext(last, planned, e.id) : null;
@@ -512,8 +630,50 @@ function Sessao() {
         }}
       />
 
+      <Dialog open={Boolean(dropLog)} onClose={() => setDropLog(null)} title="Remover este exercício?">
+        <p className="text-[0.9375rem] text-steel">
+          {dropLog
+            ? `${dropLog.name} sai deste treino e ${dropLog.sets.filter((x) => x.done).length === 1 ? "a série já feita é descartada" : `as ${dropLog.sets.filter((x) => x.done).length} séries já feitas são descartadas`}. A ficha não muda.`
+            : ""}
+        </p>
+        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button variant="secondary" onClick={() => setDropLog(null)}>
+            Manter
+          </Button>
+          <Button
+            variant="danger"
+            onClick={() => {
+              const gone = dropLog;
+              setDropLog(null);
+              if (gone) removeLog(gone.uid);
+            }}
+          >
+            Remover exercício
+          </Button>
+        </div>
+      </Dialog>
+
+      <Dialog open={confirmFinish} onClose={() => setConfirmFinish(false)} title="Finalizar com séries pendentes?">
+        <p className="text-[0.9375rem] text-steel">
+          {stats.total - stats.done === 1 ? "Falta 1 série" : `Faltam ${stats.total - stats.done} séries`} das {stats.total} do treino. Só as séries marcadas como feitas entram no histórico.
+        </p>
+        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button variant="secondary" onClick={() => setConfirmFinish(false)}>
+            Voltar ao treino
+          </Button>
+          <Button
+            onClick={() => {
+              setConfirmFinish(false);
+              void finish();
+            }}
+          >
+            Finalizar assim mesmo
+          </Button>
+        </div>
+      </Dialog>
+
       <Dialog open={confirmExit} onClose={() => setConfirmExit(false)} title="Sair do treino?">
-        <p className="text-[0.9375rem] text-steel">Seu progresso fica salvo neste aparelho e você pode voltar depois. Ou descarte este treino.</p>
+        <p className="text-[0.9375rem] text-steel">Seu progresso fica salvo neste aparelho: ele aparece em Hoje para você continuar depois. Ou descarte este treino.</p>
         <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
           <Button variant="danger" onClick={discard} icon={<Trash2 className="size-4" />}>
             Descartar treino
@@ -645,6 +805,7 @@ function ExerciseBlock({ index, log, open, onToggle, suggestion, last, link, hol
                   step={unit === "seg" ? 5 : 1}
                   label={`${UNIT_LABEL[unit].column} da série ${i + 1}`}
                   placeholder={String(defaultReps(log, i, last) ?? "")}
+                  fallback={defaultReps(log, i, last)}
                 />
                 <button
                   onClick={() => onDone(i)}
@@ -702,27 +863,43 @@ function ExerciseBlock({ index, log, open, onToggle, suggestion, last, link, hol
   );
 }
 
-function NumberCell({ value, onChange, step, label, placeholder }: { value: number | null; onChange: (v: number | null) => void; step: number; label: string; placeholder?: string }) {
+/**
+ * Campo numérico do treino. Guarda o texto enquanto a pessoa digita (senão "42," voltaria a "42" e
+ * 42,5 viraria 425) e, com o campo vazio, os botões − e + partem do valor sugerido, não de zero.
+ */
+function NumberCell({ value, onChange, step, label, placeholder, fallback }: { value: number | null; onChange: (v: number | null) => void; step: number; label: string; placeholder?: string; fallback?: number | null }) {
+  const [text, setText] = useState<string | null>(null);
+  const shown = text ?? (value === null ? "" : String(value).replace(".", ","));
+  const base = value ?? fallback ?? 0;
+  const bump = (delta: number) => {
+    setText(null);
+    onChange(Math.min(999, Math.max(0, Math.round((base + delta) * 100) / 100)));
+  };
   return (
     <div className="flex h-12 items-stretch overflow-hidden rounded-[6px] border border-rule-strong bg-paper focus-within:border-iron">
-      <button type="button" onClick={() => onChange(Math.max(0, Math.round(((value ?? 0) - step) * 100) / 100))} className="w-8 shrink-0 text-lg font-bold text-steel hover:bg-chalk-2 sm:w-10" aria-label={`Diminuir ${label}`}>
+      <button type="button" onClick={() => bump(value === null && fallback ? 0 : -step)} className="w-8 shrink-0 text-lg font-bold text-steel hover:bg-chalk-2 sm:w-10" aria-label={`Diminuir ${label}`}>
         −
       </button>
       <input
         aria-label={label}
         inputMode="decimal"
         placeholder={placeholder}
-        value={value === null ? "" : String(value).replace(".", ",")}
+        value={shown}
         onChange={(e) => {
-          const raw = e.target.value.replace(",", ".").replace(/[^\d.]/g, "");
-          if (raw === "") return onChange(null);
-          const n = Number(raw);
+          // Só dígitos e um separador decimal; aceita vírgula ou ponto.
+          const cleaned = e.target.value.replace(/[^\d.,]/g, "").replace(".", ",");
+          const [int = "", ...rest] = cleaned.split(",");
+          const raw = rest.length ? `${int},${rest.join("").slice(0, 2)}` : int;
+          setText(raw.slice(0, 7));
+          if (raw === "" || raw === ",") return onChange(null);
+          const n = Number(raw.replace(",", "."));
           if (!Number.isNaN(n)) onChange(Math.min(999, n));
         }}
         onFocus={(e) => e.currentTarget.select()}
+        onBlur={() => setText(null)}
         className="num w-full min-w-0 bg-transparent px-0 text-center text-base font-bold placeholder:font-normal placeholder:text-pencil focus:outline-none sm:text-lg"
       />
-      <button type="button" onClick={() => onChange(Math.round(((value ?? 0) + step) * 100) / 100)} className="w-8 shrink-0 text-lg font-bold text-steel hover:bg-chalk-2 sm:w-10" aria-label={`Aumentar ${label}`}>
+      <button type="button" onClick={() => bump(value === null && fallback ? 0 : step)} className="w-8 shrink-0 text-lg font-bold text-steel hover:bg-chalk-2 sm:w-10" aria-label={`Aumentar ${label}`}>
         +
       </button>
     </div>
@@ -775,7 +952,7 @@ function Summary({ session, onDone }: { session: Session; onDone: () => void }) 
                 <li key={id} className="flex animate-stamp items-center gap-3 rounded-[8px] bg-plate-red px-4 py-3" style={{ animationDelay: `${i * 120}ms` }}>
                   <Trophy className="size-5 shrink-0" aria-hidden />
                   <span className="min-w-0 flex-1 truncate font-bold">{log?.name}</span>
-                  <span className="num font-bold">{best ? `${fmtKg(best.loadKg)} × ${best.reps}` : ""}</span>
+                  <span className="num font-bold">{best ? (best.loadKg ? `${fmtKg(best.loadKg)} × ${best.reps}` : `${best.reps} ${UNIT_LABEL[log?.unit ?? "reps"].short}`) : ""}</span>
                 </li>
               );
             })}

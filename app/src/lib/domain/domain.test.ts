@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { EXERCISES, getExercise } from "./exercises";
 import { SYSTEMS, suggestSystem } from "./systems";
 import { avoidedByLimitations, estimateDayMinutes, generateProgram, type GenerateInput } from "./generator";
-import { bestSet, detectPRs, e1rm, sessionVolume, suggestNext, weeklyVolume, weekStreak } from "./progression";
+import { bestSet, detectPRs, e1rm, sessionVolume, suggestNext, weekStart, weeklyVolume, weekStreak } from "./progression";
 import { platesFor } from "./plates";
 import { programToCsv, sessionsToCsv } from "./export";
 import type { ExerciseLog, Session } from "./types";
@@ -135,6 +135,28 @@ describe("progressão", () => {
     expect(w).toHaveLength(4);
     expect(w[3]!.volume).toBe(500);
     expect(weekStreak([s1, s2], now)).toBe(2);
+  });
+});
+
+describe("semana no fuso do usuário", () => {
+  it("treino à noite no Brasil fica na semana certa (a chave é a data local, não a de UTC)", () => {
+    const previous = process.env.TZ;
+    process.env.TZ = "America/Sao_Paulo";
+    try {
+      // Quarta, 18/11/2026, 21h30 em Brasília = quinta 00h30 em UTC. A segunda-feira daquela semana é 16/11.
+      expect(weekStart("2026-11-19T00:30:00Z")).toBe("2026-11-16");
+      // Segunda às 22h em Brasília (terça 01h em UTC) ainda é a semana que começa na própria segunda.
+      expect(weekStart("2026-11-17T01:00:00Z")).toBe("2026-11-16");
+      // Domingo às 23h em Brasília continua na semana anterior.
+      expect(weekStart("2026-11-16T02:00:00Z")).toBe("2026-11-09");
+      const now = new Date("2026-11-19T00:30:00Z");
+      const monday = { ...session("m", "2026-11-16T22:00:00Z", [log([[50, 10]])]), volumeKg: 500 };
+      expect(weeklyVolume([monday], 2, now)[1]).toEqual({ week: "2026-11-16", volume: 500, sessions: 1 });
+      expect(weekStreak([monday], now)).toBe(1);
+    } finally {
+      if (previous === undefined) delete process.env.TZ;
+      else process.env.TZ = previous;
+    }
   });
 });
 

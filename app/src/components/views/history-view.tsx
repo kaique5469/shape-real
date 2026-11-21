@@ -69,7 +69,7 @@ export function HistoryView({ userId, editable, canExport }: { userId: string; e
                   <button onClick={() => setOpen(isOpen ? null : s.id)} aria-expanded={isOpen} className="flex w-full items-center gap-3 px-4 py-3 text-left">
                     <span className="plate-type grid h-10 min-w-10 place-items-center rounded bg-iron px-1.5 text-chalk">{s.dayKey ?? "L"}</span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate font-bold">{s.dayTitle ?? "Treino livre"}</span>
+                      <span className="block truncate font-bold">{s.dayTitle?.trim() || (s.dayKey ? `Treino ${s.dayKey}` : "Treino livre")}</span>
                       <span className="num block text-xs text-steel">
                         {new Date(s.startedAt).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "short" })}
                         {minutes ? ` · ${minutes} min` : ""} · {fmtNum(s.volumeKg, 0)} kg
@@ -98,6 +98,7 @@ export function HistoryView({ userId, editable, canExport }: { userId: string; e
                                 {completedSets(e)
                                   .map((x) => (x.loadKg ? `${fmtNum(x.loadKg)}×${x.reps}` : `${x.reps}`))
                                   .join(" · ")}
+                                {e.unit === "seg" ? " seg" : e.unit === "min" ? " min" : ""}
                               </td>
                             </tr>
                           ))}

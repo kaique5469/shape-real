@@ -142,6 +142,7 @@ function Aluno({ id }: { id: string }) {
               href={waLink(`Oi, ${first}.`, student.phone)}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={() => track("student_contacted", { where: "pagina_aluno" })}
               className="inline-flex h-11 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-[6px] border border-rule-strong bg-paper px-3 text-[0.9375rem] font-semibold hover:border-iron sm:flex-none sm:px-4"
             >
               <MessageCircle className="size-4" aria-hidden /> WhatsApp
@@ -229,11 +230,11 @@ interface SummaryData {
 
 /** O que o personal confere antes da aula: frequência, último treino, medidas e validade da ficha. */
 function Summary({ student, justCreated, onTab, onEdit }: { student: Profile; justCreated: boolean; onTab: (t: Tab) => void; onEdit: () => void }) {
-  const { repo } = useApp();
+  const { repo, mode } = useApp();
   const id = student.id;
   const { data, loading, error } = useLoad<SummaryData>(async () => {
     const [sessions, programs, metrics, diet] = await Promise.all([repo.listSessions(id), repo.listPrograms(id), repo.listMetrics(id), repo.getDiet(id)]);
-    return { sessions, programs, metrics, hasDiet: Boolean(diet?.meals.length) };
+    return { sessions, programs, metrics, hasDiet: Boolean(diet?.meals.some((m) => m.items.length)) };
   }, [id, repo]);
 
   const weeks = useMemo(() => {
@@ -373,7 +374,7 @@ function Summary({ student, justCreated, onTab, onEdit }: { student: Profile; ju
             </div>
           ) : (
             <p className="text-sm text-steel">
-              {first} ainda não registrou treino. Toque em “Ver como aluno” para registrar um e ver como fica.
+              {first} ainda não registrou treino.{mode === "local" ? " Toque em “Ver como aluno” para registrar um e ver como fica." : " Os treinos aparecem aqui assim que forem registrados no app."}
             </p>
           )}
         </Panel>

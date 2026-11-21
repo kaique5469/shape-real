@@ -137,7 +137,7 @@ function Alunos() {
           <div className="flex items-start justify-between gap-3 border-b border-rule px-4 py-3">
             <div>
               <h2 className="text-lg font-bold">Você está no painel do personal</h2>
-              <p className="mt-0.5 text-sm text-steel">Sem cadastro: tudo fica salvo neste aparelho. Os três alunos abaixo são exemplos para você explorar.</p>
+              <p className="mt-0.5 text-sm text-steel">Sem cadastro: tudo fica salvo neste aparelho.{samples.length ? (samples.length === 1 ? " O aluno marcado como exemplo abaixo é fictício, para você explorar." : ` Os ${samples.length} alunos marcados como exemplo abaixo são fictícios, para você explorar.`) : ""}</p>
             </div>
             <button type="button" onClick={dismissWelcome} aria-label="Fechar instruções" className="-mr-1.5 -mt-1 grid size-11 shrink-0 place-items-center rounded-[6px] hover:bg-chalk-2">
               <X className="size-5" />
@@ -228,6 +228,7 @@ function Alunos() {
                         href={waLink(`Oi, ${firstName(s.profile.name)}. Senti sua falta nos treinos esta semana. Bora retomar? Se precisar ajustar a ficha ou os horários, me avisa.`, s.profile.phone)}
                         target="_blank"
                         rel="noopener noreferrer"
+                        onClick={() => track("student_contacted", { where: "alerta_parados" })}
                         className="inline-flex h-9 items-center gap-1.5 rounded-[6px] border border-rule-strong bg-paper px-3 text-sm font-semibold hover:border-iron"
                       >
                         <MessageCircle className="size-4" aria-hidden /> Chamar {firstName(s.profile.name)}

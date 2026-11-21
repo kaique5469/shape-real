@@ -54,7 +54,7 @@ export function GoalPicker({ value, onChange }: { value: Goal; onChange: (g: Goa
 export function RoutinePicker({ prefs, set }: { prefs: TrainingPrefs; set: (p: Partial<TrainingPrefs>) => void }) {
   return (
     <div className="space-y-5">
-      <Field label="Há quanto tempo treina?">
+      <Field group label="Há quanto tempo treina?">
         <Segmented
           label="Nível"
           value={prefs.level}
@@ -66,7 +66,7 @@ export function RoutinePicker({ prefs, set }: { prefs: TrainingPrefs; set: (p: P
           ]}
         />
       </Field>
-      <Field label="Quantos dias por semana?">
+      <Field group label="Quantos dias por semana?">
         <Segmented
           label="Dias por semana"
           value={prefs.daysPerWeek}
@@ -74,10 +74,10 @@ export function RoutinePicker({ prefs, set }: { prefs: TrainingPrefs; set: (p: P
           options={[2, 3, 4, 5, 6].map((d) => ({ value: d, label: `${d}x` }))}
         />
       </Field>
-      <Field label="Quanto tempo por treino?">
+      <Field group label="Quanto tempo por treino?">
         <Segmented label="Minutos por treino" value={prefs.sessionMinutes} onChange={(m) => set({ sessionMinutes: m })} options={[30, 45, 60, 75, 90].map((m) => ({ value: m, label: `${m} min` }))} />
       </Field>
-      <Field label="Onde treina?">
+      <Field group label="Onde treina?">
         <Segmented
           label="Equipamento"
           value={prefs.equipment}
@@ -124,7 +124,7 @@ export function LimitsPicker({ prefs, set }: { prefs: TrainingPrefs; set: (p: Pa
   const groups: MuscleGroup[] = ["peito", "costas", "ombros", "biceps", "triceps", "quadriceps", "posteriores", "gluteos", "panturrilhas", "adutores", "abdomen"];
   return (
     <div className="space-y-5">
-      <Field label="Algum músculo para priorizar? (até 3)">
+      <Field group label="Algum músculo para priorizar? (até 3)">
         <div className="flex flex-wrap gap-1.5">
           {groups.map((g) => {
             const on = prefs.emphasis.includes(g);

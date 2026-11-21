@@ -30,9 +30,9 @@ export function techniqueText(list: Pick<PlannedExercise, "technique">[], i: num
  * Ficha em texto simples, no formato que funciona no WhatsApp (*negrito* com asteriscos, sem emoji).
  * Uma linha por exercício: "1. Supino reto com barra — 4 × 6–8 · 80 kg · desc. 2:00".
  */
-export function programToText(program: Program, opts: { studentName?: string; coachName?: string } = {}): string {
+export function programToText(program: Program, opts: { studentName?: string; studentLabel?: string; coachName?: string } = {}): string {
   const out: string[] = [`*${program.name.trim()}*`];
-  const who = [opts.studentName && `Aluno: ${opts.studentName}`, opts.coachName && `Personal: ${opts.coachName}`].filter(Boolean);
+  const who = [opts.studentName && `${opts.studentLabel ?? "Aluno"}: ${opts.studentName}`, opts.coachName && `Personal: ${opts.coachName}`].filter(Boolean);
   if (who.length) out.push(who.join(" · "));
   if (program.durationWeeks) out.push(`Validade: ${program.durationWeeks} semanas`);
 
