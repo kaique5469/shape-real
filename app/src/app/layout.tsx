@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { PwaRegister } from "@/components/pwa";
 import { AppProvider } from "@/lib/app-context";
 
 const SITE = process.env.NEXT_PUBLIC_SITE_URL || "https://app.shapereal.com.br";
@@ -21,6 +22,8 @@ export const metadata: Metadata = {
   twitter: { card: "summary_large_image" },
   robots: { index: true, follow: true },
   formatDetection: { telephone: false },
+  icons: { apple: "/icons/apple-touch-icon.png" },
+  appleWebApp: { capable: true, title: "Shape Real", statusBarStyle: "default" },
 };
 
 export const viewport: Viewport = {
@@ -35,6 +38,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="pt-BR">
       <body>
         <AppProvider>{children}</AppProvider>
+        <PwaRegister />
       </body>
     </html>
   );

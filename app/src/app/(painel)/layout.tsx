@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
 import { CalendarCheck, ClipboardList, LineChart, Salad, UserRound, Users } from "lucide-react";
 import { Logo } from "@/components/brand";
+import { OfflineBar } from "@/components/pwa";
 import { Skeleton, cx } from "@/components/ui";
 import { ActingStrip, TesterStrip } from "@/components/tester";
 import { useApp } from "@/lib/app-context";
@@ -28,7 +29,7 @@ const COACH_ONLY = ["/alunos"];
 const under = (pathname: string, list: string[]) => list.some((p) => pathname === p || pathname.startsWith(p + "/"));
 
 export default function PainelLayout({ children }: { children: ReactNode }) {
-  const { ready, user, isDemo, isTester, plan, signOut } = useApp();
+  const { ready, user, isDemo, isTester, plan, signOut, mode } = useApp();
   const pathname = usePathname();
   const router = useRouter();
 
@@ -66,6 +67,7 @@ export default function PainelLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-dvh">
+      <OfflineBar cloud={mode === "supabase"} />
       {!focus && isTester ? <TesterStrip /> : null}
       {!focus ? <ActingStrip /> : null}
       {isDemo && !isTester ? (

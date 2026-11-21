@@ -11,7 +11,7 @@ import { UNIT_LABEL, getExercise, unitOf } from "@/lib/domain/exercises";
 import { fmtRest, fmtScheme } from "@/lib/domain/format";
 import { TECHNIQUE_LABEL } from "@/lib/domain/generator";
 import { uid } from "@/lib/domain/ids";
-import { completedSets, detectPRs, fmtKg, lastPerformance, sessionVolume, suggestNext, type LoadSuggestion } from "@/lib/domain/progression";
+import { assumedReps, completedSets, detectPRs, fmtKg, lastPerformance, sessionVolume, suggestNext, type LoadSuggestion } from "@/lib/domain/progression";
 import type { Exercise, ExerciseLog, Program, Session, SetLog, Technique, Unit } from "@/lib/domain/types";
 import { reportError, track } from "@/lib/analytics";
 import { fmtNum } from "@/lib/hooks";
@@ -697,8 +697,10 @@ function defaultPlan(e: Exercise): { sets: number; repsMin: number; repsMax: num
 }
 
 function defaultReps(log: ExerciseLog, i: number, last: ExerciseLog | null): number | null {
-  const prev = last ? completedSets(last)[i]?.reps : undefined;
-  return prev ?? log.planned?.repsMin ?? null;
+  const prev = last ? completedSets(last)[i] : undefined;
+  // Séries por tempo repetem a marca anterior; com carga, subir o peso volta ao mínimo da faixa.
+  if ((log.unit ?? "reps") !== "reps") return prev?.reps ?? log.planned?.repsMin ?? null;
+  return assumedReps(log.sets[i] ?? { loadKg: null }, prev, log.planned?.repsMin);
 }
 
 interface BlockProps {

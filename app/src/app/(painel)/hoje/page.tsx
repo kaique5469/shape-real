@@ -5,6 +5,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ArrowRight, Check, Play, Plus, Trophy } from "lucide-react";
 import { FichaDay } from "@/components/ficha";
+import { InstallCard } from "@/components/pwa";
 import { Alert, Empty, LinkButton, Panel, Segmented, Skeleton, cx } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
 import { fmtDate, fmtNum, nextDayKey, relativeDay, useLoad } from "@/lib/hooks";
@@ -92,6 +93,8 @@ function Hoje() {
           Você agora é aluno de <strong>{params.get("personal")}</strong>. Quando a ficha e a dieta forem enviadas, elas aparecem aqui.
         </Alert>
       ) : null}
+
+      <InstallCard variant="banner" where="hoje" />
 
       {ongoing ? (
         <section aria-label="Treino em andamento" className="flex flex-col gap-3 rounded-[8px] border-2 border-iron bg-paper p-4 sm:flex-row sm:items-center sm:justify-between">

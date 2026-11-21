@@ -5,6 +5,7 @@ import { Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronRight, Copy, MessageCircle, Search, Trash2, UserPlus, X } from "lucide-react";
 import { StudentForm } from "@/components/student-form";
+import { InstallCard } from "@/components/pwa";
 import { Alert, Badge, Button, Dialog, Empty, Input, PageHeader, Skeleton, cx } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
 import { fmtNum, relativeDay, useLoad } from "@/lib/hooks";
@@ -131,6 +132,12 @@ function Alunos() {
   return (
     <>
       <PageHeader title="Alunos" sub="Quem treinou, quem está com a ficha vencendo e quem precisa de um empurrão." actions={addAction} />
+
+      {!welcome ? (
+        <div className="mb-4">
+          <InstallCard variant="banner" where="alunos" />
+        </div>
+      ) : null}
 
       {welcome && isTester ? (
         <section aria-label="Por onde começar" className="mb-6 rounded-[8px] border border-rule-strong bg-paper">

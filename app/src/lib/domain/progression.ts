@@ -16,6 +16,17 @@ export function e1rm(loadKg: number, reps: number): number {
   return Math.round(loadKg * (1 + r / 30) * 10) / 10;
 }
 
+/**
+ * Repetições assumidas quando a série é marcada como feita sem digitar.
+ * Repete as da última vez, a não ser que a carga tenha subido: aí vale o mínimo da faixa,
+ * senão o app registraria o topo da faixa com a carga nova e mandaria subir de novo.
+ */
+export function assumedReps(current: Pick<SetLog, "loadKg">, previous: Pick<SetLog, "loadKg" | "reps"> | undefined, repsMin: number | undefined): number | null {
+  if (!previous?.reps) return repsMin ?? null;
+  const heavier = (current.loadKg ?? 0) > (previous.loadKg ?? 0);
+  return heavier && repsMin ? Math.min(previous.reps, repsMin) : previous.reps;
+}
+
 export function completedSets(log: ExerciseLog): SetLog[] {
   return log.sets.filter((s) => s.done && (s.reps ?? 0) > 0);
 }

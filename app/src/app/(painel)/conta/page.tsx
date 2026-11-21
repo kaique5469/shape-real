@@ -12,6 +12,7 @@ import { PLANS, brl } from "@/lib/domain/plans";
 import { downloadText, programToCsv, sessionsToCsv } from "@/lib/domain/export";
 import { reportError, track } from "@/lib/analytics";
 import { fileSlug } from "@/components/program/program-share";
+import { InstallCard } from "@/components/pwa";
 import type { ActivityLevel, Equipment, Goal, Level, PlanId, Profile, Sex, SystemId } from "@/lib/domain/types";
 
 export default function ContaPage() {
@@ -299,6 +300,10 @@ export default function ContaPage() {
           </Panel>
         </section>
         )}
+
+        <Panel title="App no celular">
+          <InstallCard variant="panel" where="conta" />
+        </Panel>
 
         <Panel title={viewingAsStudent ? "Dados do aluno" : "Seus dados"}>
           <div className="flex flex-wrap gap-2">

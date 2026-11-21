@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { EXERCISES, getExercise } from "./exercises";
 import { SYSTEMS, suggestSystem } from "./systems";
 import { avoidedByLimitations, estimateDayMinutes, generateProgram, type GenerateInput } from "./generator";
-import { bestSet, detectPRs, e1rm, sessionVolume, suggestNext, weekStart, weeklyVolume, weekStreak } from "./progression";
+import { assumedReps, bestSet, detectPRs, e1rm, sessionVolume, suggestNext, weekStart, weeklyVolume, weekStreak } from "./progression";
 import { platesFor } from "./plates";
 import { programToCsv, sessionsToCsv } from "./export";
 import type { ExerciseLog, Session } from "./types";
@@ -135,6 +135,26 @@ describe("progressão", () => {
     expect(w).toHaveLength(4);
     expect(w[3]!.volume).toBe(500);
     expect(weekStreak([s1, s2], now)).toBe(2);
+  });
+});
+
+describe("repetições assumidas ao marcar a série sem digitar", () => {
+  it("mesma carga: repete as da última vez", () => {
+    expect(assumedReps({ loadKg: 27.5 }, { loadKg: 27.5, reps: 12 }, 8)).toBe(12);
+  });
+  it("carga maior: volta ao mínimo da faixa, não ao topo", () => {
+    expect(assumedReps({ loadKg: 30 }, { loadKg: 27.5, reps: 12 }, 8)).toBe(8);
+  });
+  it("carga maior, mas da última vez fez menos que o mínimo: mantém o que fez", () => {
+    expect(assumedReps({ loadKg: 30 }, { loadKg: 27.5, reps: 6 }, 8)).toBe(6);
+  });
+  it("carga menor ou sem carga: repete as da última vez", () => {
+    expect(assumedReps({ loadKg: 20 }, { loadKg: 27.5, reps: 10 }, 8)).toBe(10);
+    expect(assumedReps({ loadKg: null }, { loadKg: null, reps: 15 }, 10)).toBe(15);
+  });
+  it("sem histórico: mínimo da faixa; sem faixa: nada", () => {
+    expect(assumedReps({ loadKg: 30 }, undefined, 8)).toBe(8);
+    expect(assumedReps({ loadKg: 30 }, undefined, undefined)).toBeNull();
   });
 });
 
