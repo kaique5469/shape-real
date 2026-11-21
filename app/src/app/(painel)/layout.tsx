@@ -22,6 +22,11 @@ const COACH_NAV = [
   { href: "/conta", label: "Conta", icon: UserRound },
 ];
 
+/** Telas que só fazem sentido para um dos papéis (evita cair nelas pelo botão voltar ao trocar de visão). */
+const ATHLETE_ONLY = ["/hoje", "/sessao", "/historico", "/evolucao", "/dieta"];
+const COACH_ONLY = ["/alunos"];
+const under = (pathname: string, list: string[]) => list.some((p) => pathname === p || pathname.startsWith(p + "/"));
+
 export default function PainelLayout({ children }: { children: ReactNode }) {
   const { ready, user, isDemo, isTester, plan, signOut } = useApp();
   const pathname = usePathname();
@@ -35,8 +40,18 @@ export default function PainelLayout({ children }: { children: ReactNode }) {
   }, [ready, user, router, isTester]);
 
   const focus = pathname.startsWith("/sessao");
+  const wrongRole = Boolean(user) && (user!.role === "coach" ? under(pathname, ATHLETE_ONLY) : under(pathname, COACH_ONLY));
+  const home = user?.role === "coach" ? "/alunos" : "/hoje";
 
-  if (!ready || !user || !user.onboarded) {
+  // Tela do outro papel (ex.: botão voltar depois de "ver como aluno"): espera um instante,
+  // porque a troca de visão já costuma vir acompanhada de uma navegação, e só então redireciona.
+  useEffect(() => {
+    if (!wrongRole) return;
+    const t = setTimeout(() => router.replace(home), 900);
+    return () => clearTimeout(t);
+  }, [wrongRole, home, router]);
+
+  if (!ready || !user || !user.onboarded || wrongRole) {
     return (
       <div className="mx-auto max-w-5xl space-y-4 px-4 py-10" aria-busy="true" aria-label="Carregando">
         <Skeleton className="h-10 w-56" />
