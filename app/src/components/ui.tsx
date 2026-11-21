@@ -273,3 +273,66 @@ export function Stepper({ value, onChange, step = 1, min = 0, max = 999, label, 
     </div>
   );
 }
+
+/** Botão só com ícone, com área de toque de 44 px e rótulo acessível obrigatório. */
+export function IconButton({ label, children, className, tone = "neutral", ...rest }: { label: string; tone?: "neutral" | "danger" } & ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      className={cx(
+        "grid size-11 shrink-0 place-items-center rounded-[var(--radius-ficha)] transition-colors hover:bg-chalk-2 disabled:cursor-not-allowed disabled:opacity-30",
+        tone === "danger" ? "text-plate-red-ink" : "text-iron",
+        className,
+      )}
+      {...rest}
+    >
+      {children}
+    </button>
+  );
+}
+
+export interface SheetAction {
+  label: string;
+  icon?: ReactNode;
+  onSelect: () => void;
+  tone?: "neutral" | "danger";
+  hint?: string;
+  disabled?: boolean;
+}
+
+/**
+ * Folha de ações (lista de botões grandes num diálogo): o padrão do app para "mais opções".
+ * Mais confiável no celular do que menus flutuantes.
+ */
+export function ActionSheet({ open, onClose, title, actions }: { open: boolean; onClose: () => void; title: string; actions: SheetAction[] }) {
+  return (
+    <Dialog open={open} onClose={onClose} title={title}>
+      <ul className="-m-2 space-y-1">
+        {actions.map((a) => (
+          <li key={a.label}>
+            <button
+              type="button"
+              disabled={a.disabled}
+              onClick={() => {
+                onClose();
+                a.onSelect();
+              }}
+              className={cx(
+                "flex min-h-12 w-full items-center gap-3 rounded-[var(--radius-ficha)] px-3 py-2.5 text-left font-semibold transition-colors hover:bg-chalk disabled:cursor-not-allowed disabled:opacity-40",
+                a.tone === "danger" ? "text-plate-red-ink" : "text-iron",
+              )}
+            >
+              {a.icon ? <span className="grid size-5 shrink-0 place-items-center">{a.icon}</span> : null}
+              <span className="min-w-0 flex-1">
+                <span className="block">{a.label}</span>
+                {a.hint ? <span className="block text-sm font-normal text-steel">{a.hint}</span> : null}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </Dialog>
+  );
+}

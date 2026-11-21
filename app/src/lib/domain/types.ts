@@ -23,7 +23,9 @@ export type SystemId =
   | "upper_lower"
   | "ppl"
   | "ppl6"
-  | "forca_5x5";
+  | "forca_5x5"
+  | "abc_inferiores"
+  | "abcd_inferiores";
 
 export type MuscleGroup =
   | "peito"
@@ -98,6 +100,12 @@ export interface Exercise {
   unit?: Unit;
   /** Criado pelo usuário (não faz parte da biblioteca padrão). */
   custom?: boolean;
+  /** Nível mínimo para o motor escolher este exercício sozinho (o personal pode prescrever sempre). */
+  minLevel?: "intermediario" | "avancado";
+  /** Prioridade de escolha pelo motor: 2 = básico de quase toda ficha, 1 = muito comum. */
+  pri?: 1 | 2;
+  /** Executado um lado por vez (as repetições são por lado). */
+  unilateral?: boolean;
 }
 
 export interface Profile {
@@ -186,7 +194,8 @@ export interface ExerciseLog {
   uid: string;
   exerciseId: string;
   name: string;
-  planned?: { sets: number; repsMin: number; repsMax: number; loadKg?: number | null; restSec?: number };
+  /** Cópia do que a ficha pedia quando o treino começou (inclui técnica e observação do personal). */
+  planned?: { sets: number; repsMin: number; repsMax: number; loadKg?: number | null; restSec?: number; technique?: Technique; notes?: string };
   sets: SetLog[];
   notes?: string;
   unit?: Unit;
@@ -290,6 +299,8 @@ export interface StudentSummary {
   sessions7d: number;
   sessions28d: number;
   activeProgramName: string | null;
+  /** Ficha ativa do aluno (para avisar validade e abrir direto). */
+  activeProgram: { id: string; name: string; createdAt: string; updatedAt: string; durationWeeks?: number; days: number } | null;
   latestWeightKg: number | null;
   weightDelta28d: number | null;
 }

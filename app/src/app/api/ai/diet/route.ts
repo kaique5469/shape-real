@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { authorizeAI, structuredCall } from "@/lib/ai/server";
+import { aiBlocked, authorizeAI, structuredCall } from "@/lib/ai/server";
 import { analyzeDiet, buildDietTemplate, parseDietText, sumItems } from "@/lib/domain/nutrition";
 import { uid } from "@/lib/domain/ids";
 import type { DietItem, Meal } from "@/lib/domain/types";
@@ -110,7 +110,7 @@ export async function POST(req: Request) {
     const fb = analyzeDiet(meals, b.targets, b.weightKg);
     return NextResponse.json({
       source: "motor",
-      notice: auth.useAI ? "A IA não respondeu a tempo — análise feita pelo motor do Shape Real." : auth.notice,
+      notice: auth.useAI ? (aiBlocked() ? "" : "A IA não respondeu a tempo, então a análise foi feita pela base de alimentos do Shape Real.") : auth.notice,
       quota: !auth.useAI && auth.status === 402,
       meals,
       totals: fb.totals,
@@ -141,7 +141,7 @@ export async function POST(req: Request) {
   }
   return NextResponse.json({
     source: "motor",
-    notice: auth.useAI ? "A IA não respondeu a tempo — cardápio montado pelo motor do Shape Real." : auth.notice,
+    notice: auth.useAI ? (aiBlocked() ? "" : "A IA não respondeu a tempo, então o cardápio foi montado pelo motor do Shape Real.") : auth.notice,
     quota: !auth.useAI && auth.status === 402,
     diet: buildDietTemplate(b.targets, owner),
   });

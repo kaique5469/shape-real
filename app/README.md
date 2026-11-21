@@ -16,6 +16,17 @@ npm run build
 Sem nenhuma variável de ambiente o app já funciona em **modo local**: os dados ficam no
 navegador, a IA usa o motor determinístico e a demonstração (aluno e personal) fica disponível.
 
+## Modo teste (sem login)
+
+`/testar` entra direto no painel do personal, sem cadastro: cria um ambiente no próprio aparelho com três
+alunos de exemplo. O personal cadastra alunos, monta ficha e dieta, e usa **Ver como aluno** para registrar
+um treino do lado do aluno. Tudo fica liberado (sem limites de plano) e a faixa do topo abre o feedback,
+que vai pelo WhatsApp. `/testar?k=<TESTER_PASS>` também libera a IA real, quando ela estiver ligada.
+
+Sem IA ligada, fichas e cardápios saem do motor do próprio app (`src/lib/domain`), e a interface não
+promete IA. Para ligar: cadastre um cartão em Vercel → AI Gateway (variável `AI_GATEWAY=1` já usa o token
+do deploy) ou defina `ANTHROPIC_API_KEY`.
+
 ## Colocar no ar (produção)
 
 1. **Supabase** — crie um projeto (região `sa-east-1`, São Paulo, para latência e LGPD) e rode

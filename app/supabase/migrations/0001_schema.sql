@@ -94,6 +94,7 @@ create table public.programs (
   level text not null,
   days_per_week int not null check (days_per_week between 1 and 7),
   notes text,
+  duration_weeks int check (duration_weeks between 1 and 52),
   days jsonb not null default '[]'::jsonb,
   active boolean not null default false,
   source text not null default 'manual' check (source in ('ia', 'manual', 'modelo', 'personal')),

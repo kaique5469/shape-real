@@ -30,14 +30,34 @@ interface Provider {
 
 let direct: Anthropic | null = null;
 
+/**
+ * Saúde do provedor. Quando a conta não pode atender (sem cartão/créditos no gateway,
+ * chave inválida), a IA é tratada como desligada por alguns minutos: a interface deixa
+ * de oferecer "IA" e as rotas usam o motor sem mostrar erro a cada geração.
+ */
+const RECHECK_MS = 5 * 60_000;
+let blockedUntil = 0;
+let probedAt = 0;
+let probeOk = true;
+
+function markBlocked(reason: string) {
+  blockedUntil = Date.now() + RECHECK_MS;
+  console.warn(`[ai] provedor indisponível (${reason}); usando o motor por ${RECHECK_MS / 60_000} min`);
+}
+
+function gatewayToken(req: Request): string | null {
+  // Em produção na Vercel o token OIDC chega no cabeçalho da requisição e expira.
+  return process.env.AI_GATEWAY_API_KEY || req.headers.get("x-vercel-oidc-token") || process.env.VERCEL_OIDC_TOKEN || null;
+}
+
 function resolveProvider(req: Request): Provider | null {
+  if (Date.now() < blockedUntil) return null;
   if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) {
     direct ??= new Anthropic({ timeout: 55_000, maxRetries: 1 });
     return { kind: "anthropic", client: direct, model: DIRECT_MODEL };
   }
   if (process.env.AI_GATEWAY === "1") {
-    // Em produção na Vercel o token OIDC chega no cabeçalho da requisição e expira; por isso o cliente é criado por chamada.
-    const token = process.env.AI_GATEWAY_API_KEY || req.headers.get("x-vercel-oidc-token") || process.env.VERCEL_OIDC_TOKEN;
+    const token = gatewayToken(req);
     if (token) return { kind: "gateway", client: new Anthropic({ apiKey: token, baseURL: GATEWAY_URL, timeout: 55_000, maxRetries: 1 }), model: GATEWAY_MODEL };
   }
   return null;
@@ -47,6 +67,26 @@ export function aiConfigured(): boolean {
   return Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || process.env.AI_GATEWAY === "1");
 }
 
+/** Sonda barata (sem custo de modelo): o gateway tem saldo para atender? Resultado em cache por instância. */
+async function gatewayReady(req: Request): Promise<boolean> {
+  if (Date.now() - probedAt < RECHECK_MS) return probeOk;
+  const token = gatewayToken(req);
+  if (!token) return false;
+  try {
+    const res = await fetch(`${GATEWAY_URL}/v1/credits`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(4000) });
+    if (!res.ok) {
+      probeOk = false;
+    } else {
+      const c = (await res.json()) as { balance?: string; token_pass?: { remaining?: string | null } | null };
+      probeOk = Number(c.balance ?? 0) > 0 || Number(c.token_pass?.remaining ?? 0) > 0;
+    }
+  } catch {
+    probeOk = false;
+  }
+  probedAt = Date.now();
+  return probeOk;
+}
+
 function supabaseEnv() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -54,8 +94,10 @@ function supabaseEnv() {
 }
 
 /** O que o cliente pode saber sobre a IA deste ambiente (sem segredos). */
-export function aiStatus(): { configured: boolean; access: "account" | "pass" | "open" | "off" } {
-  if (!aiConfigured()) return { configured: false, access: "off" };
+export async function aiStatus(req: Request): Promise<{ configured: boolean; access: "account" | "pass" | "open" | "off" }> {
+  if (!aiConfigured() || Date.now() < blockedUntil) return { configured: false, access: "off" };
+  const direct = Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
+  if (!direct && !(await gatewayReady(req))) return { configured: false, access: "off" };
   if (supabaseEnv()) return { configured: true, access: "account" };
   if (process.env.DEMO_AI === "1") return { configured: true, access: process.env.TESTER_PASS ? "pass" : "open" };
   return { configured: false, access: "off" };
@@ -139,6 +181,12 @@ function extractJson(text: string): unknown {
 }
 
 function logFailure(where: string, err: unknown) {
+  // Conta sem condição de atender (cartão/créditos/chave): desliga a IA por alguns minutos em vez de falhar a cada pedido.
+  if (err instanceof Anthropic.AuthenticationError || err instanceof Anthropic.PermissionDeniedError || (err instanceof Anthropic.APIError && err.status === 402)) {
+    markBlocked(`${where} ${err.status}`);
+    probeOk = false;
+    probedAt = Date.now();
+  }
   if (err instanceof Anthropic.RateLimitError) console.warn(`[ai] ${where}: limite de requisições`);
   else if (err instanceof Anthropic.APIError) console.error(`[ai] ${where}: erro ${err.status}`, err.message);
   else if (err instanceof SyntaxError) console.error(`[ai] ${where}: JSON inválido na resposta`);
@@ -209,4 +257,9 @@ export async function structuredCall<T>(
     logFailure(provider.kind, err);
     return null;
   }
+}
+
+/** O provedor está em pausa por indisponibilidade da conta? (as rotas usam para não exibir aviso de erro) */
+export function aiBlocked(): boolean {
+  return Date.now() < blockedUntil;
 }

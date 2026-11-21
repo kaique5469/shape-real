@@ -105,6 +105,10 @@ export function summarizeStudent(
     sessions7d: sessions.filter((s) => t - new Date(s.startedAt).getTime() <= 7 * day).length,
     sessions28d: sessions.filter((s) => t - new Date(s.startedAt).getTime() <= 28 * day).length,
     activeProgramName: programs.find((p) => p.active)?.name ?? null,
+    activeProgram: (() => {
+      const p = programs.find((x) => x.active);
+      return p ? { id: p.id, name: p.name, createdAt: p.createdAt, updatedAt: p.updatedAt, durationWeeks: p.durationWeeks, days: p.days.length } : null;
+    })(),
     latestWeightKg: latest,
     weightDelta28d: latest && older?.weightKg && older !== withWeight[0] ? Math.round((latest - older.weightKg) * 10) / 10 : null,
   };

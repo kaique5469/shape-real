@@ -1,4 +1,4 @@
-import type { MuscleGroup, Pattern, SystemId } from "./types";
+import type { Equipment, Goal, MuscleGroup, Pattern, SystemId } from "./types";
 
 /** Um "encaixe" de exercício dentro de um dia de treino. */
 export interface Slot {
@@ -6,6 +6,8 @@ export interface Slot {
   pattern?: Pattern;
   compound?: boolean;
   main?: boolean;
+  /** Encaixe acrescentado pela prioridade do aluno: é o último a ser cortado por tempo. */
+  emphasis?: boolean;
 }
 
 export interface DayTemplate {
@@ -198,8 +200,16 @@ export function getSystem(id: SystemId): TrainingSystem {
   return s;
 }
 
-/** Sistema sugerido para uma frequência semanal e nível. */
-export function suggestSystem(daysPerWeek: number, level: string): SystemId {
+export interface SuggestOptions {
+  /** Grupos prioritários (ex.: glúteos pede inferiores 2x por semana). */
+  emphasis?: MuscleGroup[];
+  equipment?: Equipment;
+  goal?: Goal;
+}
+
+/** Sistema sugerido para a frequência semanal e o nível; `opts` refina a sugestão. */
+export function suggestSystem(daysPerWeek: number, level: string, opts: SuggestOptions = {}): SystemId {
+  void opts;
   if (daysPerWeek <= 2) return level === "iniciante" ? "fullbody" : "ab";
   if (daysPerWeek === 3) return level === "iniciante" ? "fullbody" : "abc";
   if (daysPerWeek === 4) return level === "avancado" ? "abcd" : "upper_lower";

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { authorizeAI, structuredCall } from "@/lib/ai/server";
+import { aiBlocked, authorizeAI, structuredCall } from "@/lib/ai/server";
 import { PROGRAM_JSON_SCHEMA, PROGRAM_SYSTEM, fallbackProgram, programFromAI, programInputSchema, programUserPrompt } from "@/lib/ai/program";
 
 export const runtime = "nodejs";
@@ -26,7 +26,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       program: fallbackProgram(input, owner),
       source: "motor",
-      notice: "A IA não respondeu a tempo — montamos com o motor do Shape Real. Seu crédito foi usado; tente de novo se quiser outra versão.",
+      notice: aiBlocked() ? "" : "A IA não respondeu a tempo, então esta ficha foi montada pelo motor do Shape Real. Toque em “Outra versão” para tentar de novo.",
     });
   }
   // Sem IA disponível a ficha ainda é entregue (motor determinístico); `quota` aciona o paywall no cliente.

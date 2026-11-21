@@ -5,6 +5,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /** Diz ao cliente se a IA real está ligada neste ambiente e como se tem acesso (sem expor segredos). */
-export function GET() {
-  return NextResponse.json(aiStatus(), { headers: { "Cache-Control": "no-store" } });
+export async function GET(req: Request) {
+  return NextResponse.json(await aiStatus(req), { headers: { "Cache-Control": "no-store" } });
 }
