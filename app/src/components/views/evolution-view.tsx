@@ -12,16 +12,17 @@ import { bestSet, e1rmSeries, setsPerGroup, trackedExercises, weeklyVolume } fro
 import { todayISO, uid } from "@/lib/domain/ids";
 import { PLANS } from "@/lib/domain/plans";
 import { track } from "@/lib/analytics";
-import type { BodyMetric, MuscleGroup, PhotoPose, ProgressPhoto } from "@/lib/domain/types";
+import type { BodyMetric, MuscleGroup, PhotoPose, Profile, ProgressPhoto } from "@/lib/domain/types";
 import { compressImage } from "./photo-tools";
+import { ReportView } from "./report-view";
 
-type Tab = "cargas" | "corpo" | "fotos" | "volume";
+type Tab = "cargas" | "corpo" | "fotos" | "volume" | "resumo";
 
 /**
  * Evolução de cargas, medidas, fotos e volume.
  * `byCoach`: o personal registra a avaliação e as fotos pelo aluno (o consentimento é o do aluno).
  */
-export function EvolutionView({ userId, editable, byCoach = false }: { userId: string; editable: boolean; byCoach?: boolean }) {
+export function EvolutionView({ userId, editable, byCoach = false, subject }: { userId: string; editable: boolean; byCoach?: boolean; /** Quem treina: com ele a aba "Resumo" (relatório do período) aparece. */ subject?: Profile }) {
   const { repo } = useApp();
   const [tab, setTab] = useState<Tab>("cargas");
   const { data, loading, error, reload } = useLoad(async () => {
@@ -46,6 +47,7 @@ export function EvolutionView({ userId, editable, byCoach = false }: { userId: s
           { value: "corpo", label: "Peso e medidas" },
           { value: "fotos", label: "Fotos" },
           { value: "volume", label: "Volume" },
+          ...(subject ? [{ value: "resumo" as Tab, label: "Resumo do período" }] : []),
         ]}
       />
       </div>
@@ -55,6 +57,7 @@ export function EvolutionView({ userId, editable, byCoach = false }: { userId: s
           {tab === "corpo" && <Body userId={userId} metrics={data.metrics} editable={editable} byCoach={byCoach} onChange={reload} />}
           {tab === "fotos" && <Photos userId={userId} editable={editable} byCoach={byCoach} />}
           {tab === "volume" && <Volume sessions={data.sessions} />}
+          {tab === "resumo" && subject ? <ReportView subject={subject} byCoach={false} /> : null}
         </>
       ) : null}
     </div>

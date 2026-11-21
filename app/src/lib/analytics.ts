@@ -49,7 +49,11 @@ export type EventName =
   | "student_edited"
   | "student_contacted"
   | "workspace_reset"
-  | "error_screen_shown";
+  | "error_screen_shown"
+  | "report_viewed"
+  | "report_shared"
+  | "app_install_prompted"
+  | "app_installed";
 
 const enabled = Boolean(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN ?? process.env.NEXT_PUBLIC_POSTHOG_KEY);
 

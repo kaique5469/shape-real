@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { Suspense, use, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, ClipboardList, Eye, MessageCircle, MoreHorizontal, Pencil, Plus, Ruler, Salad, Trophy, UserMinus } from "lucide-react";
+import { ArrowLeft, ClipboardList, Eye, FileText, MessageCircle, MoreHorizontal, Pencil, Plus, Ruler, Salad, Trophy, UserMinus } from "lucide-react";
 import { ProgramList } from "@/components/program/program-list";
 import { StudentForm } from "@/components/student-form";
 import { DietView } from "@/components/views/diet-view";
 import { EvolutionView } from "@/components/views/evolution-view";
+import { ReportView } from "@/components/views/report-view";
 import { HistoryView } from "@/components/views/history-view";
 import { ActionSheet, Alert, Badge, Button, Dialog, IconButton, LinkButton, Panel, Segmented, Skeleton, cx } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
@@ -19,13 +20,14 @@ import { track } from "@/lib/analytics";
 import type { BodyMetric, Equipment, Profile, Program, Session } from "@/lib/domain/types";
 import { useStudent } from "./student";
 
-type Tab = "resumo" | "ficha" | "dieta" | "evolucao" | "historico";
+type Tab = "resumo" | "ficha" | "dieta" | "evolucao" | "historico" | "relatorio";
 const TABS: { value: Tab; label: string }[] = [
   { value: "resumo", label: "Resumo" },
   { value: "ficha", label: "Ficha" },
   { value: "dieta", label: "Dieta" },
   { value: "evolucao", label: "Evolução" },
   { value: "historico", label: "Histórico" },
+  { value: "relatorio", label: "Relatório" },
 ];
 const EQUIPMENT_LABEL: Record<Equipment, string> = { academia: "Academia", home: "Em casa", peso_corporal: "Sem equipamento" };
 
@@ -175,6 +177,7 @@ function Aluno({ id }: { id: string }) {
       {tab === "dieta" ? <DietView owner={student} mode="coach" /> : null}
       {tab === "evolucao" ? <EvolutionView userId={id} editable byCoach /> : null}
       {tab === "historico" ? <HistoryView userId={id} editable={false} canExport /> : null}
+      {tab === "relatorio" ? <ReportView subject={student} byCoach /> : null}
 
       <ActionSheet
         open={menu}
@@ -444,6 +447,18 @@ function Summary({ student, justCreated, onTab, onEdit }: { student: Profile; ju
           )}
         </Panel>
       </div>
+
+      {data.sessions.length || sortedMetrics.length ? (
+        <div className="flex flex-col gap-3 rounded-[var(--radius-ficha)] border border-rule bg-paper p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h2 className="text-[0.9375rem] font-bold">Relatório de evolução</h2>
+            <p className="mt-0.5 text-sm text-steel">Presença, cargas que subiram e medidas do período, prontos para enviar a {first} pelo WhatsApp ou em PDF.</p>
+          </div>
+          <Button variant="secondary" onClick={() => onTab("relatorio")} icon={<FileText className="size-4" />} className="shrink-0">
+            Abrir relatório
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

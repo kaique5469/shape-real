@@ -9,6 +9,7 @@ export default function EvolucaoPage() {
   const { user } = useApp();
   return (
     <>
+      <div className="no-print">
       <PageHeader
         title="Evolução"
         sub="Força, corpo e constância ao longo do tempo."
@@ -18,7 +19,8 @@ export default function EvolucaoPage() {
           </Link>
         }
       />
-      <EvolutionView userId={user!.id} editable />
+      </div>
+      <EvolutionView userId={user!.id} editable subject={user!} />
     </>
   );
 }
