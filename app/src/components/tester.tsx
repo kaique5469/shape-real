@@ -91,7 +91,7 @@ export function FeedbackDialog({ open, onClose }: { open: boolean; onClose: () =
               aria-disabled={text.trim().length < 3}
               onClick={(e) => {
                 if (text.trim().length < 3) return e.preventDefault();
-                track("feedback_sent", { topic, text: text.trim().slice(0, 1000) });
+                track("feedback_sent", { topic, length: text.trim().length });
                 setSent(true);
               }}
               className={`inline-flex h-11 items-center justify-center rounded-[6px] bg-plate-green px-4 font-semibold text-white hover:bg-plate-green-ink ${text.trim().length < 3 ? "pointer-events-none opacity-50" : ""}`}

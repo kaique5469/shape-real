@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { reportError } from "@/lib/analytics";
 import type { Program, Session } from "@/lib/domain/types";
 
 /** Carrega dados assíncronos com estados de carregamento/erro e recarga manual. */
@@ -17,6 +18,7 @@ export function useLoad<T>(fn: () => Promise<T>, deps: unknown[]) {
     try {
       setData(await fnRef.current());
     } catch (e) {
+      reportError(e, "carregar");
       setError(e instanceof Error ? e.message : "Não foi possível carregar.");
     } finally {
       setLoading(false);

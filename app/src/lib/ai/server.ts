@@ -1,6 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
+import { captureServerError } from "@/lib/posthog-server";
 
 /**
  * Infra compartilhada das rotas de IA (somente servidor).
@@ -180,13 +181,17 @@ function extractJson(text: string): unknown {
   return JSON.parse(raw.slice(start, end + 1));
 }
 
-function logFailure(where: string, err: unknown) {
+async function logFailure(where: string, err: unknown): Promise<void> {
   // Conta sem condição de atender (cartão/créditos/chave): desliga a IA por alguns minutos em vez de falhar a cada pedido.
   if (err instanceof Anthropic.AuthenticationError || err instanceof Anthropic.PermissionDeniedError || (err instanceof Anthropic.APIError && err.status === 402)) {
     markBlocked(`${where} ${err.status}`);
     probeOk = false;
     probedAt = Date.now();
   }
+  // Falha inesperada (não é conta sem crédito nem limite de requisições): vai para o acompanhamento de erros.
+  const expected =
+    err instanceof Anthropic.AuthenticationError || err instanceof Anthropic.PermissionDeniedError || err instanceof Anthropic.RateLimitError || (err instanceof Anthropic.APIError && err.status === 402);
+  if (!expected) await captureServerError(err, { source: "ia", where });
   if (err instanceof Anthropic.RateLimitError) console.warn(`[ai] ${where}: limite de requisições`);
   else if (err instanceof Anthropic.APIError) console.error(`[ai] ${where}: erro ${err.status}`, err.message);
   else if (err instanceof SyntaxError) console.error(`[ai] ${where}: JSON inválido na resposta`);
@@ -250,11 +255,11 @@ export async function structuredCall<T>(
         console.info(`[ai] ok(instr) ${provider.model} ${Date.now() - started}ms in=${res.usage.input_tokens} out=${res.usage.output_tokens}`);
         return extractJson(text.text) as T;
       } catch (err2) {
-        logFailure("gateway/instrução", err2);
+        await logFailure("gateway/instrução", err2);
         return null;
       }
     }
-    logFailure(provider.kind, err);
+    await logFailure(provider.kind, err);
     return null;
   }
 }

@@ -14,6 +14,17 @@ const config: NextConfig = {
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },
+  // Proxy do PostHog (região US) no próprio domínio: bloqueadores de anúncio não derrubam eventos e erros.
+  // /static e /array vão para o host de assets; o resto, para o host de ingestão. A ordem importa.
+  async rewrites() {
+    return [
+      { source: "/ingest/static/:path*", destination: "https://us-assets.i.posthog.com/static/:path*" },
+      { source: "/ingest/array/:path*", destination: "https://us-assets.i.posthog.com/array/:path*" },
+      { source: "/ingest/:path*", destination: "https://us.i.posthog.com/:path*" },
+    ];
+  },
+  // As rotas do PostHog terminam em barra (/e/, /flags/): sem isso cada envio ganharia um redirecionamento.
+  skipTrailingSlashRedirect: true,
 };
 
 export default config;

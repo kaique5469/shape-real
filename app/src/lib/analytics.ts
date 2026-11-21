@@ -1,9 +1,12 @@
 "use client";
 
+import posthog from "posthog-js";
+
 /**
- * Eventos de produto. Sem chave configurada, só registra no console em dev.
- * Com NEXT_PUBLIC_POSTHOG_KEY, envia para o PostHog via /capture (sem SDK, ~0 KB).
- * Nunca envie dados de saúde (peso, medidas, dieta) nas propriedades.
+ * Eventos de produto e erros (PostHog, iniciado em src/instrumentation-client.ts).
+ * Sem NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN nada é enviado: em desenvolvimento os eventos aparecem no console.
+ * Regras: nunca envie dados de saúde (peso, medidas, dieta), nomes, telefones ou texto digitado pelo usuário
+ * nas propriedades — só contagens, opções escolhidas e nomes de recursos.
  */
 export type EventName =
   | "landing_cta_clicked"
@@ -37,49 +40,74 @@ export type EventName =
   | "diet_shared"
   | "custom_exercise_created"
   | "custom_food_created"
-  | "feedback_sent";
+  | "feedback_sent"
+  | "program_edited"
+  | "diet_saved"
+  | "diet_targets_edited"
+  | "session_feature_used"
+  | "section_viewed"
+  | "student_edited"
+  | "student_contacted"
+  | "workspace_reset"
+  | "error_screen_shown";
 
-let distinctId: string | null = null;
+const enabled = Boolean(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN ?? process.env.NEXT_PUBLIC_POSTHOG_KEY);
 
-function id(): string {
-  if (distinctId) return distinctId;
+type Props = Record<string, string | number | boolean | null | undefined>;
+
+/** Analytics nunca quebra nem atrasa o app. */
+function safely(fn: () => void) {
+  if (typeof window === "undefined" || !enabled) return;
   try {
-    distinctId = localStorage.getItem("sr:aid") ?? crypto.randomUUID();
-    localStorage.setItem("sr:aid", distinctId);
+    fn();
   } catch {
-    distinctId = "anon";
+    /* segue o jogo */
   }
-  return distinctId;
 }
 
-export function identify(userId: string) {
-  distinctId = userId;
-  try {
-    localStorage.setItem("sr:aid", userId);
-  } catch {
-    /* modo privado */
-  }
-}
-
-export function track(event: EventName, props: Record<string, string | number | boolean | null | undefined> = {}) {
+export function track(event: EventName, props: Props = {}) {
   if (typeof window === "undefined") return;
-  const key = process.env.NEXT_PUBLIC_POSTHOG_KEY;
-  if (!key) {
+  if (!enabled) {
     if (process.env.NODE_ENV !== "production") console.debug("[track]", event, props);
     return;
   }
-  const host = process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://us.i.posthog.com";
-  const body = JSON.stringify({
-    api_key: key,
-    event,
-    distinct_id: id(),
-    properties: { ...props, $current_url: location.href, $pathname: location.pathname },
-    timestamp: new Date().toISOString(),
-  });
-  try {
-    const ok = navigator.sendBeacon?.(`${host}/capture/`, new Blob([body], { type: "application/json" }));
-    if (!ok) void fetch(`${host}/capture/`, { method: "POST", body, keepalive: true, headers: { "Content-Type": "application/json" } });
-  } catch {
-    /* analytics nunca quebra o app */
+  safely(() => posthog.capture(event, props));
+}
+
+/** Conta real (login): liga os eventos ao id estável do usuário. Sem e-mail nem nome. */
+export function identify(userId: string, props: { role?: string } = {}) {
+  safely(() => posthog.identify(userId, props));
+}
+
+/** Saída de uma conta identificada: os próximos eventos voltam a ser anônimos. */
+export function resetIdentity() {
+  safely(() => posthog.reset());
+}
+
+/** Contexto que acompanha todos os eventos seguintes (modo do app, papel, visão do personal como aluno). */
+export function setContext(props: Props) {
+  safely(() => posthog.register(props));
+}
+
+/**
+ * Erro tratado na tela (falha ao salvar, carregar, gerar): vai para o acompanhamento de erros com o local.
+ * Erros não tratados já são capturados automaticamente.
+ */
+export function reportError(error: unknown, where: string, props: Props = {}) {
+  if (typeof window === "undefined") return;
+  if (!enabled) {
+    if (process.env.NODE_ENV !== "production") console.debug("[erro]", where, error);
+    return;
   }
+  safely(() => posthog.captureException(error instanceof Error ? error : new Error(typeof error === "string" ? error : "Erro desconhecido"), { where, handled: true, ...props }));
+}
+
+/** Erro que derrubou uma tela (capturado por um error boundary, que impede a captura automática). */
+export function reportCrash(error: unknown, where: string) {
+  if (typeof window === "undefined") return;
+  if (!enabled) {
+    if (process.env.NODE_ENV !== "production") console.debug("[falha]", where, error);
+    return;
+  }
+  safely(() => posthog.captureException(error instanceof Error ? error : new Error(String(error)), { where, handled: false }));
 }

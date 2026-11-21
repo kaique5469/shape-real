@@ -9,7 +9,7 @@ import { registerCustomExercises } from "@/lib/domain/exercises";
 import { registerCustomFoods } from "@/lib/domain/foods";
 import type { PlanId, Profile, Role } from "@/lib/domain/types";
 import { uid } from "@/lib/domain/ids";
-import { identify, track } from "@/lib/analytics";
+import { identify, resetIdentity, setContext, track } from "@/lib/analytics";
 
 /**
  * Sessão do app. Dois tipos de sessão convivem:
@@ -126,7 +126,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             if (p) {
               setMode("supabase");
               setUserState(p);
-              identify(p.id);
+              identify(p.id, { role: p.role });
             }
           } else {
             await loadLocal();
@@ -140,7 +140,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 setReturnTo(null);
                 setMode("supabase");
                 setUserState(p);
-                identify(p.id);
+                identify(p.id, { role: p.role });
               }
             }
             if (event === "SIGNED_OUT") {
@@ -205,7 +205,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     ls.del(LOCAL_SESSION_KEY);
     ls.del(RETURN_KEY);
     setReturnTo(null);
-    if (mode === "supabase" && cloudRepo) await getSupabase().auth.signOut();
+    if (mode === "supabase" && cloudRepo) {
+      await getSupabase().auth.signOut();
+      // Saída de uma conta identificada: os próximos eventos voltam a ser anônimos.
+      resetIdentity();
+    }
     setUserState(null);
     setMode("local");
   }, [mode]);
@@ -318,6 +322,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const { data } = await getSupabase().auth.getSession();
     return data.session?.access_token ?? null;
   }, [mode]);
+
+  // Contexto que acompanha todos os eventos: em que modo o app está e quem está usando (sem identificar a pessoa).
+  const role = user?.role;
+  const demo = Boolean(user?.id.startsWith("demo-"));
+  const viewingAsStudent = Boolean(returnTo);
+  useEffect(() => {
+    if (!ready) return;
+    setContext({
+      app_mode: !role ? "visitante" : mode === "supabase" ? "conta" : isTester ? "teste" : demo ? "demo" : "local",
+      app_role: role ?? null,
+      viewing_as_student: viewingAsStudent,
+    });
+  }, [ready, role, mode, isTester, demo, viewingAsStudent]);
 
   const plan: PlanId = !user
     ? "free"

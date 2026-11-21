@@ -49,7 +49,7 @@ cartão em Vercel → AI Gateway (a variável `AI_GATEWAY=1` já usa o token do 
    | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Supabase → Project Settings → API |
    | `ANTHROPIC_API_KEY` | console.anthropic.com (só servidor; nunca `NEXT_PUBLIC_`) |
    | `NEXT_PUBLIC_SITE_URL` | `https://app.shapereal.com.br` |
-   | `NEXT_PUBLIC_POSTHOG_KEY` (opcional) | PostHog → Project settings |
+   | `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN` / `NEXT_PUBLIC_POSTHOG_HOST` (opcional) | PostHog → Project settings (token público do projeto) |
    | `NEXT_PUBLIC_CHECKOUT_PRO_URL` / `..._COACH_URL` (opcional) | Link de pagamento (Stripe/Mercado Pago) |
 3. **Domínio** — aponte `app.shapereal.com.br` para a Vercel. O blog (Netlify) já redireciona `/app` para lá.
 
@@ -86,9 +86,18 @@ Sem link de checkout configurado, o botão "Assinar" registra o interesse em `up
 funciona como teste de demanda antes de integrar cobrança. Próximo passo: webhook do pagamento
 atualizando `profiles.plan` com a chave secreta (rota de servidor).
 
-## Métricas (eventos já instrumentados)
+## Métricas e erros (PostHog)
 
-`signup_started → signup_completed → onboarding_completed → program_generated → workout_started →
-workout_completed` (ativação), `pr_achieved`, `diet_analyzed`, `student_invited → invite_accepted`
-(loop viral do personal), `paywall_viewed → upgrade_clicked` (conversão). Nenhum dado de saúde é
-enviado nos eventos.
+Com `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN` o app envia eventos de uso e erros pelo proxy `/ingest` (rewrites em
+`next.config.ts`). Sem o token nada é enviado. Iniciado em `src/instrumentation-client.ts`; eventos em `src/lib/analytics.ts`.
+
+- **Funil de ativação:** `signup_started → signup_completed → onboarding_completed → program_generated → workout_started → workout_completed`.
+- **Personal (modo teste):** `tester_started → student_created → program_generated / program_assigned → program_edited → program_shared → view_as_student → workout_completed`, mais
+  `assessment_logged`, `diet_generated`, `diet_saved`, `diet_shared`, `diet_analyzed`, `program_copied`, `custom_exercise_created`, `custom_food_created`, `student_contacted`.
+- **Recursos do treino:** `session_feature_used` (cronômetro de série, troca de exercício, som, descanso), `pr_achieved`.
+- **Conversão:** `paywall_viewed → upgrade_clicked`; loop do personal: `student_invited → invite_accepted`.
+- **Erros:** exceções não tratadas (captura automática), telas derrubadas (`error.tsx`, `global-error.tsx`), erros tratados com o local
+  (`reportError`), respostas de erro das rotas e falhas inesperadas da IA no servidor (`src/instrumentation.ts`, `src/lib/posthog-server.ts`).
+
+Todo evento leva `app_mode` (teste, demo, local, conta), `app_role` e `viewing_as_student`. Privacidade: nenhum dado de saúde, nome,
+telefone ou texto digitado vai nas propriedades; o texto dos elementos clicados é mascarado; gravação de sessão desligada.
