@@ -9,6 +9,7 @@ import { StudentForm } from "@/components/student-form";
 import { DietView } from "@/components/views/diet-view";
 import { EvolutionView } from "@/components/views/evolution-view";
 import { ReportView } from "@/components/views/report-view";
+import { SendToStudent } from "@/components/transfer-share";
 import { HistoryView } from "@/components/views/history-view";
 import { ActionSheet, Alert, Badge, Button, Dialog, IconButton, LinkButton, Panel, Segmented, Skeleton, cx } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
@@ -133,9 +134,10 @@ function Aluno({ id }: { id: string }) {
             <p className="mt-1.5 whitespace-pre-wrap text-steel">{student.coachNotes}</p>
           </details>
         ) : null}
-        <div className="mt-3 flex flex-wrap gap-2">
+        {mode === "local" && !student.sample ? <SendToStudent student={student} variant="primary" className="mt-3 w-full sm:w-auto" /> : null}
+        <div className="mt-2 flex flex-wrap gap-2">
           {mode === "local" ? (
-            <Button onClick={viewAs} loading={busy === "view"} icon={<Eye className="size-4" />} className="flex-1 whitespace-nowrap px-3 sm:flex-none sm:px-4">
+            <Button variant={student.sample ? "primary" : "secondary"} onClick={viewAs} loading={busy === "view"} icon={<Eye className="size-4" />} className="flex-1 whitespace-nowrap px-3 sm:flex-none sm:px-4">
               Ver como aluno
             </Button>
           ) : null}

@@ -53,7 +53,12 @@ export type EventName =
   | "report_viewed"
   | "report_shared"
   | "app_install_prompted"
-  | "app_installed";
+  | "app_installed"
+  | "ficha_link_sent"
+  | "ficha_link_opened"
+  | "treinos_link_sent"
+  | "treinos_link_received"
+  | "backup_restored";
 
 const enabled = Boolean(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN ?? process.env.NEXT_PUBLIC_POSTHOG_KEY);
 

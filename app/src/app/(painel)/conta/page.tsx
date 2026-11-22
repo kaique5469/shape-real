@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Download, LogOut, RotateCcw, Trash2 } from "lucide-react";
+import { Check, Download, LogOut, MessageSquareText, RotateCcw, Trash2, Upload } from "lucide-react";
 import { Alert, Badge, Button, Dialog, Field, Input, PageHeader, Panel, Segmented, Select, Textarea } from "@/components/ui";
 import { useApp, localRepo } from "@/lib/app-context";
 import { ACTIVITY_LABEL } from "@/lib/domain/nutrition";
@@ -13,10 +13,13 @@ import { downloadText, programToCsv, sessionsToCsv } from "@/lib/domain/export";
 import { reportError, track } from "@/lib/analytics";
 import { fileSlug } from "@/components/program/program-share";
 import { InstallCard } from "@/components/pwa";
+import { FeedbackDialog } from "@/components/tester";
+import { maskPhone } from "@/lib/domain/format";
+import { parseBackup, restoreBackup } from "@/lib/transfer-client";
 import type { ActivityLevel, Equipment, Goal, Level, PlanId, Profile, Sex, SystemId } from "@/lib/domain/types";
 
 export default function ContaPage() {
-  const { user, repo, mode, isDemo, isTester, plan, returnTo, updateProfile, signOut } = useApp();
+  const { user, repo, mode, isDemo, isTester, plan, returnTo, updateProfile, signOut, enterLocalProfile } = useApp();
   const router = useRouter();
   const [form, setForm] = useState<Profile>(user!);
   const [weight, setWeight] = useState(user!.weightKg ? String(user!.weightKg).replace(".", ",") : "");
@@ -30,6 +33,9 @@ export default function ContaPage() {
   const [planMsg, setPlanMsg] = useState<string | null>(null);
   const [del, setDel] = useState(false);
   const [exportMsg, setExportMsg] = useState<{ tone: "done" | "error"; text: string } | null>(null);
+  const [restore, setRestore] = useState<NonNullable<ReturnType<typeof parseBackup>> | null>(null);
+  const [restoring, setRestoring] = useState(false);
+  const [feedback, setFeedback] = useState(false);
   const [delText, setDelText] = useState("");
 
   useEffect(() => {
@@ -111,6 +117,11 @@ export default function ContaPage() {
             <Field label="Nome" hint={user!.role === "coach" ? "Aparece como assinatura nas fichas e dietas que você envia." : undefined}>
               <Input value={form.name} onChange={(e) => set({ name: e.target.value })} maxLength={60} />
             </Field>
+            {user!.role === "coach" ? (
+              <Field label="Seu WhatsApp" hint="Os alunos usam para mandar os treinos de volta para você.">
+                <Input value={maskPhone(form.phone ?? "")} onChange={(e) => set({ phone: e.target.value.replace(/\D/g, "").slice(-13) || undefined })} inputMode="tel" autoComplete="tel" placeholder="(11) 91234-5678" />
+              </Field>
+            ) : null}
             {user!.role === "athlete" ? (
               <>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
@@ -258,7 +269,21 @@ export default function ContaPage() {
           </Panel>
         ) : null}
 
-        {isTester ? null : (
+        {!isTester && mode === "local" ? (
+          <Panel title="Versão beta">
+            <ul className="space-y-1.5 text-[0.9375rem]">
+              <li>O Shape Real está em beta: tudo liberado e gratuito, sem limite de alunos, fichas ou fotos.</li>
+              <li>Sem cadastro, os dados ficam neste aparelho. Exporte o backup de vez em quando e use “Restaurar backup” para levar tudo a outro celular.</li>
+              <li>Para melhorar o app, registramos de forma anônima quais telas e recursos são usados e os erros que acontecem. Nomes, medidas e o que você digita não são enviados.</li>
+            </ul>
+            <Button variant="secondary" className="mt-4" icon={<MessageSquareText className="size-4" />} onClick={() => setFeedback(true)}>
+              Dar feedback
+            </Button>
+            <FeedbackDialog open={feedback} onClose={() => setFeedback(false)} />
+          </Panel>
+        ) : null}
+
+        {isTester || mode === "local" ? null : (
         <section id="planos">
           <Panel title="Plano">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-[repeat(3,minmax(0,1fr))]">
@@ -310,6 +335,24 @@ export default function ContaPage() {
             <Button variant="secondary" icon={<Download className="size-4" />} onClick={exportAll} disabled={!canExport} title={!canExport ? "Exportação disponível no Pro" : undefined}>
               Exportar tudo (Excel + backup)
             </Button>
+            {mode === "local" && !viewingAsStudent ? (
+              <label className="inline-flex h-11 cursor-pointer items-center gap-2 rounded-[6px] border border-rule-strong bg-paper px-4 text-[0.9375rem] font-semibold hover:border-iron focus-within:outline-2 focus-within:outline-plate-blue">
+                <Upload className="size-4" aria-hidden /> Restaurar backup
+                <input
+                  type="file"
+                  accept="application/json,.json"
+                  className="sr-only"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (!file) return;
+                    const parsed = parseBackup(await file.text());
+                    if (!parsed) return setExportMsg({ tone: "error", text: "Este arquivo não é um backup do Shape Real. Use o “shape-real-backup.json” baixado em Exportar tudo." });
+                    setRestore(parsed);
+                  }}
+                />
+              </label>
+            ) : null}
             {isTester || viewingAsStudent ? null : (
               <Button variant="danger" icon={<Trash2 className="size-4" />} onClick={() => setDel(true)}>
                 {mode === "local" ? "Apagar dados deste aparelho" : "Excluir minha conta"}
@@ -363,6 +406,44 @@ export default function ContaPage() {
             Apagar e recomeçar
           </Button>
         </div>
+      </Dialog>
+
+      <Dialog open={Boolean(restore)} onClose={() => (restoring ? undefined : setRestore(null))} title="Restaurar este backup?">
+        {restore ? (
+          <div className="space-y-4">
+            <p className="text-[0.9375rem] text-steel">
+              Backup de <strong className="text-iron">{restore.profile.name}</strong>
+              {restore.exportedAt ? `, de ${new Date(restore.exportedAt).toLocaleDateString("pt-BR")}` : ""}: {restore.programs?.length ?? 0} fichas, {restore.sessions?.length ?? 0} treinos
+              {restore.students?.length ? ` e ${restore.students.length === 1 ? "1 aluno" : `${restore.students.length} alunos`}` : ""}. Os mesmos registros que já estiverem neste aparelho são substituídos. Fotos não vão no arquivo.
+            </p>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button variant="secondary" onClick={() => setRestore(null)} disabled={restoring}>
+                Cancelar
+              </Button>
+              <Button
+                loading={restoring}
+                onClick={async () => {
+                  setRestoring(true);
+                  try {
+                    const r = await restoreBackup(restore);
+                    track("backup_restored", { role: r.profile.role, students: r.students });
+                    enterLocalProfile(r.profile);
+                    setRestore(null);
+                    router.push(r.profile.role === "coach" ? "/alunos" : "/hoje");
+                  } catch (e) {
+                    reportError(e, "conta:restaurar");
+                    setExportMsg({ tone: "error", text: e instanceof Error ? e.message : "Não foi possível restaurar. Tente de novo." });
+                    setRestore(null);
+                  } finally {
+                    setRestoring(false);
+                  }
+                }}
+              >
+                Restaurar
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </Dialog>
 
       <Dialog open={del} onClose={() => setDel(false)} title={mode === "local" ? "Apagar dados deste aparelho?" : "Excluir conta?"}>

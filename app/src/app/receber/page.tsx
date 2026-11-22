@@ -1,0 +1,182 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Check, Trophy } from "lucide-react";
+import { Logo } from "@/components/brand";
+import { Alert, Button, LinkButton, Select, Skeleton } from "@/components/ui";
+import { reportError, track } from "@/lib/analytics";
+import { useApp } from "@/lib/app-context";
+import { firstName } from "@/lib/domain/format";
+import { completedSets } from "@/lib/domain/progression";
+import { parsePacket, type TreinosPacket } from "@/lib/domain/transfer";
+import type { StudentSummary } from "@/lib/domain/types";
+import { packedFromHash, unpackData } from "@/lib/share-link";
+import { importTreinos } from "@/lib/transfer-client";
+
+/** Link que o aluno manda ao personal: leva os treinos feitos para o painel do personal. */
+export default function ReceberPage() {
+  const { ready, user, repo, mode, returnTo, returnToOwner } = useApp();
+  const router = useRouter();
+  const [packet, setPacket] = useState<TreinosPacket | null>(null);
+  const [state, setState] = useState<"lendo" | "pronto" | "invalido">("lendo");
+  const [students, setStudents] = useState<StudentSummary[] | null>(null);
+  const [target, setTarget] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<{ added: number; updated: number; studentId: string } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const read = useRef(false);
+
+  useEffect(() => {
+    if (read.current) return;
+    read.current = true;
+    const packed = packedFromHash(window.location.hash);
+    if (window.location.hash) window.history.replaceState(null, "", window.location.pathname);
+    if (!packed) return setState("invalido");
+    unpackData(packed)
+      .then((raw) => {
+        const p = parsePacket(raw);
+        if (p?.kind !== "treinos") return setState("invalido");
+        setPacket(p);
+        setState("pronto");
+      })
+      .catch(() => setState("invalido"));
+  }, []);
+
+  // Acha o aluno no painel: pelo cadastro de onde a ficha saiu ou, se não achar, pela escolha do personal.
+  useEffect(() => {
+    if (!packet || !user || user.role !== "coach" || returnTo) return;
+    (async () => {
+      const list = await repo.listStudents(user.id).catch(() => [] as StudentSummary[]);
+      setStudents(list);
+      const own = list.find((s) => s.profile.id === packet.studentRef);
+      setTarget(own ? own.profile.id : (list.find((s) => s.profile.name.trim().toLowerCase() === packet.studentName.trim().toLowerCase())?.profile.id ?? ""));
+    })();
+  }, [packet, user, repo, returnTo]);
+
+  async function register() {
+    if (!packet || !target) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await importTreinos(packet, target);
+      track("treinos_link_received", { sessions: packet.sessions.length, added: r.added, matched: target === packet.studentRef });
+      setDone({ ...r, studentId: target });
+    } catch (e) {
+      reportError(e, "link:receber-treinos");
+      setErr(e instanceof Error ? e.message : "Não foi possível registrar. Tente de novo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const sessions = packet ? [...packet.sessions].sort((a, b) => a.startedAt.localeCompare(b.startedAt)) : [];
+  const first = packet ? firstName(packet.studentName) : "";
+  const known = students?.some((s) => s.profile.id === packet?.studentRef);
+
+  return (
+    <div className="mx-auto flex min-h-dvh max-w-md flex-col px-5 py-8">
+      <Link href="/" aria-label="Shape Real">
+        <Logo />
+      </Link>
+      <main className="flex flex-1 flex-col justify-center py-8">
+        {state === "lendo" || !ready ? (
+          <div className="space-y-3" aria-busy="true">
+            <Skeleton className="h-10 w-3/4" />
+            <Skeleton className="h-40" />
+          </div>
+        ) : state === "invalido" || !packet ? (
+          <div className="space-y-4">
+            <h1 className="plate-type text-[1.9rem] leading-tight">Este link não abriu</h1>
+            <p className="text-steel">Ele pode ter sido cortado ao copiar. Peça ao aluno para tocar de novo em “Enviar ao personal”.</p>
+            <LinkButton href="/alunos" variant="secondary">
+              Ir para o painel
+            </LinkButton>
+          </div>
+        ) : done ? (
+          <div className="space-y-5">
+            <div className="grid size-12 place-items-center rounded-full bg-plate-green text-white">
+              <Check className="size-6" aria-hidden />
+            </div>
+            <h1 className="plate-type text-[2rem] leading-[1.05]">Treinos de {first} registrados.</h1>
+            <p className="text-steel">
+              {done.added === 1 ? "1 treino novo" : `${done.added} treinos novos`}
+              {done.updated ? ` e ${done.updated === 1 ? "1 atualizado" : `${done.updated} atualizados`}` : ""}. Frequência, cargas e o relatório de evolução já contam com eles.
+            </p>
+            <div className="flex flex-col gap-2">
+              <LinkButton href={`/alunos/${done.studentId}?aba=historico`} size="lg" className="w-full">
+                Ver o histórico de {first}
+              </LinkButton>
+              <LinkButton href="/alunos" variant="ghost" className="w-full">
+                Voltar aos alunos
+              </LinkButton>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-5">
+            <div>
+              <p className="text-sm font-semibold text-steel">Enviado por {packet.studentName}</p>
+              <h1 className="plate-type mt-1 text-[2rem] leading-[1.05]">
+                {sessions.length === 1 ? "1 treino" : `${sessions.length} treinos`} para registrar
+              </h1>
+            </div>
+            <ul className="ruled rounded-[var(--radius-ficha)] border border-rule bg-paper text-[0.9375rem]">
+              {sessions.slice(-8).map((s) => (
+                <li key={s.id} className="flex items-center gap-3 px-4 py-2.5">
+                  <span className="plate-type grid h-9 min-w-9 place-items-center rounded bg-iron px-1.5 text-chalk">{s.dayKey ?? "L"}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-semibold">{s.dayTitle || (s.dayKey ? `Treino ${s.dayKey}` : "Treino livre")}</span>
+                    <span className="num block text-sm text-steel">
+                      {new Date(s.startedAt).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" })} · {s.exercises.reduce((a, e) => a + completedSets(e).length, 0)} séries
+                    </span>
+                  </span>
+                  {s.prs.length ? <Trophy className="size-4 shrink-0 text-plate-red" aria-label="recorde" /> : null}
+                </li>
+              ))}
+            </ul>
+            {sessions.length > 8 ? <p className="text-sm text-steel">E mais {sessions.length - 8} anteriores.</p> : null}
+
+            {mode === "supabase" ? (
+              <Alert tone="info">Com conta no Shape Real, os treinos do aluno já aparecem no seu painel.</Alert>
+            ) : returnTo ? (
+              <div className="space-y-3">
+                <Alert tone="info">Você está vendo o app como aluno. Volte ao painel para registrar estes treinos.</Alert>
+                <Button className="w-full" onClick={() => void returnToOwner()}>
+                  Voltar ao painel
+                </Button>
+              </div>
+            ) : user?.role !== "coach" ? (
+              <Alert tone="warn">Este link é para o personal: abra no celular de quem acompanha {first}.</Alert>
+            ) : students === null ? (
+              <Skeleton className="h-11" />
+            ) : !students.length ? (
+              <Alert tone="warn">Você ainda não tem alunos cadastrados neste aparelho. Cadastre {first} em Alunos e abra o link de novo.</Alert>
+            ) : (
+              <div className="space-y-3">
+                {!known ? (
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-semibold">De qual aluno são estes treinos?</span>
+                    <Select value={target} onChange={(e) => setTarget(e.target.value)}>
+                      <option value="">Escolha o aluno</option>
+                      {students.map((s) => (
+                        <option key={s.profile.id} value={s.profile.id}>
+                          {s.profile.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </label>
+                ) : null}
+                {err ? <Alert tone="error">{err}</Alert> : null}
+                <Button size="lg" className="w-full" loading={busy} disabled={!target} onClick={register}>
+                  Registrar no painel{known ? ` de ${first}` : ""}
+                </Button>
+                <p className="text-sm text-steel">Treinos que já estavam registrados são atualizados, não duplicados.</p>
+              </div>
+            )}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}

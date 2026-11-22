@@ -50,6 +50,8 @@ interface AppContextValue {
   startTester: () => Promise<Profile>;
   /** No teste: cria um perfil de aluno que treina sozinho e entra nele (com volta para o personal). */
   startSolo: () => Promise<Profile>;
+  /** Abre no aparelho um perfil local já gravado (ex.: aluno que recebeu a ficha por link). */
+  enterLocalProfile: (p: Profile) => void;
   /** Personal passa a ver o app como um aluno seu (e registra o treino por ele, na aula presencial). */
   actAs: (profileId: string) => Promise<void>;
   returnToOwner: () => Promise<Profile | null>;
@@ -190,6 +192,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const userId = user?.id;
   const managedBy = user?.managedBy;
   const role = user?.role;
+  const remoteCoachId = user?.remoteCoach?.id;
   const refreshCustom = useCallback(async () => {
     if (!userId) {
       registerCustomExercises([]);
@@ -198,7 +201,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return;
     }
     // O aluno também enxerga o que o personal dele criou (aparece na ficha e na dieta).
-    const coachId = managedBy ?? (repo.mode === "supabase" && role !== "coach" ? ((await repo.getCoach(userId).catch(() => null))?.id ?? null) : null);
+    const coachId = managedBy ?? remoteCoachId ?? (repo.mode === "supabase" && role !== "coach" ? ((await repo.getCoach(userId).catch(() => null))?.id ?? null) : null);
     const owners = coachId && coachId !== userId ? [userId, coachId] : [userId];
     const [exercises, foods] = await Promise.all([
       Promise.all(owners.map((o) => repo.listCustomExercises(o).catch(() => []))),
@@ -207,7 +210,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     registerCustomExercises(exercises.flat());
     registerCustomFoods(foods.flat());
     setCustomVersion((v) => v + 1);
-  }, [repo, userId, managedBy, role]);
+  }, [repo, userId, managedBy, role, remoteCoachId]);
 
   useEffect(() => {
     void refreshCustom();
@@ -390,9 +393,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
   }, [ready, role, mode, isTester, demo, viewingAsStudent]);
 
+  // Beta: sem conta na nuvem, tudo fica liberado para personal e aluno.
   const plan: PlanId = !user
     ? "free"
-    : isTester && mode === "local"
+    : mode === "local"
       ? user.role === "coach"
         ? "coach"
         : "pro"
@@ -422,6 +426,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       startDemo,
       startTester,
       startSolo,
+      enterLocalProfile: enterLocal,
       actAs,
       returnToOwner,
       refreshCustom,
@@ -430,7 +435,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       sendMagicLink,
       accessToken,
     }),
-    [ready, repo, mode, user, isTester, plan, returnTo, customVersion, setUser, updateProfile, signOut, startLocal, startDemo, startTester, startSolo, actAs, returnToOwner, refreshCustom, signInPassword, signUpPassword, sendMagicLink, accessToken],
+    [ready, repo, mode, user, isTester, plan, returnTo, customVersion, setUser, updateProfile, signOut, startLocal, startDemo, startTester, startSolo, enterLocal, actAs, returnToOwner, refreshCustom, signInPassword, signUpPassword, sendMagicLink, accessToken],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

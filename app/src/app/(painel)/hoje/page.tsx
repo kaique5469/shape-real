@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { ArrowRight, Check, Play, Plus, Trophy } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, Play, Plus, Trophy } from "lucide-react";
 import { FichaDay } from "@/components/ficha";
 import { InstallCard } from "@/components/pwa";
+import { SendToCoach, usePendingWorkouts } from "@/components/transfer-share";
+import { estimateDayMinutes } from "@/lib/domain/generator";
 import { Alert, Empty, LinkButton, Panel, Segmented, Skeleton, cx } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
 import { fmtDate, fmtNum, nextDayKey, relativeDay, useLoad } from "@/lib/hooks";
@@ -35,6 +37,9 @@ function Hoje() {
     return { program: programs.find((p) => p.active) ?? null, sessions, coach, diet };
   }, [user?.id, repo]);
   const [chosen, setChosen] = useState<string | null>(null);
+  const [sentTick, setSentTick] = useState(0);
+  // sentTick faz reler o que já foi enviado depois de um envio.
+  const pending = usePendingWorkouts(data?.sessions, sentTick);
   // Treino começado e ainda não finalizado (fica guardado no aparelho).
   const [ongoing, setOngoing] = useState<DraftInfo | null>(null);
   useEffect(() => {
@@ -88,13 +93,16 @@ function Hoje() {
           <strong>Sua ficha está pronta.</strong> No primeiro treino, escolha cargas em que sobrem 2 repetições — a partir daí o app sugere quando subir.
         </Alert>
       ) : null}
+      {params.get("ficha") ? (
+        <Alert tone="done">
+          <strong>Ficha salva neste celular.</strong> Toque em “Começar treino” quando chegar na academia. No fim, o app monta a mensagem para você mandar o treino a {user!.remoteCoach?.name.split(" ")[0] ?? "seu personal"}.
+        </Alert>
+      ) : null}
       {params.get("personal") ? (
         <Alert tone="done">
           Você agora é aluno de <strong>{params.get("personal")}</strong>. Quando a ficha e a dieta forem enviadas, elas aparecem aqui.
         </Alert>
       ) : null}
-
-      <InstallCard variant="banner" where="hoje" />
 
       {ongoing ? (
         <section aria-label="Treino em andamento" className="flex flex-col gap-3 rounded-[8px] border-2 border-iron bg-paper p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -108,6 +116,107 @@ function Hoje() {
           <LinkButton href={ongoing.href} icon={<Play className="size-4" />} className="shrink-0">
             Continuar treino
           </LinkButton>
+        </section>
+      ) : null}
+
+      {/* Próximo treino: a ação principal do app fica no topo, sem rolar */}
+      {program && day ? (
+        <section aria-labelledby="proximo" className="space-y-3 rounded-[8px] border border-rule bg-paper p-4">
+          <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+            <div className="min-w-0">
+              <h2 id="proximo" className="text-lg font-bold">
+                Próximo treino
+              </h2>
+              <p className="text-sm text-steel">
+                {program.name}
+                {fromCoach ? ` · ${fromCoach}` : ""}
+                {validity && validity.state !== "ok" ? <span className={cx("font-semibold", validity.state === "expired" ? "text-plate-red-ink" : "text-iron")}> · {validity.label}</span> : null}
+              </p>
+            </div>
+            {program.days.length > 1 ? (
+              <div className="-mx-1 max-w-full overflow-x-auto px-1">
+                <Segmented label="Escolher dia" size="sm" className="min-w-max flex-nowrap" value={day.key} onChange={setChosen} options={program.days.map((d) => ({ value: d.key, label: <span className="block min-w-5 text-center">{d.key}</span> }))} />
+              </div>
+            ) : null}
+          </div>
+          {day.exercises.length ? (
+            <>
+              <div className="flex items-center gap-3">
+                <span className="plate-type grid size-14 shrink-0 place-items-center rounded-full bg-plate-red text-2xl text-white">{day.key.slice(0, 3)}</span>
+                <div className="min-w-0">
+                  <p className="truncate text-[1.05rem] font-bold">{day.title || `Treino ${day.key}`}</p>
+                  <p className="num text-sm text-steel">
+                    {day.exercises.length} {day.exercises.length === 1 ? "exercício" : "exercícios"} · cerca de {estimateDayMinutes(day)} min
+                  </p>
+                </div>
+              </div>
+              <LinkButton href={`/sessao?p=${program.id}&d=${encodeURIComponent(day.key)}`} size="lg" className="w-full" icon={<Play className="size-4 fill-current" />}>
+                Começar treino {day.key}
+              </LinkButton>
+              <details className="group rounded-[6px] border border-rule">
+                <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-2 px-3 text-[0.9375rem] font-semibold">
+                  Ver os exercícios
+                  <ChevronDown className="size-4 text-steel transition-transform group-open:rotate-180" aria-hidden />
+                </summary>
+                <div className="border-t border-rule p-2">
+                  <FichaDay day={day} />
+                </div>
+              </details>
+              {program.notes?.trim() ? (
+                <details className="rounded-[6px] border border-rule px-3 text-[0.9375rem]">
+                  <summary className="flex min-h-11 cursor-pointer items-center font-semibold">Orientações da ficha</summary>
+                  <p className="whitespace-pre-wrap pb-3 text-steel">{program.notes}</p>
+                </details>
+              ) : null}
+              <div className="flex justify-center">
+                <LinkButton href="/sessao" variant="ghost" size="sm">
+                  Prefiro um treino livre
+                </LinkButton>
+              </div>
+            </>
+          ) : (
+            <Alert tone="info">
+              O treino {day.key} ainda não tem exercícios.{" "}
+              {fromCoach ? "Seu personal ainda está montando esta parte da ficha." : (
+                <Link href={`/treinos/${program.id}`} className="font-semibold underline">
+                  Adicionar exercícios
+                </Link>
+              )}
+            </Alert>
+          )}
+        </section>
+      ) : (
+        <Empty
+          title={data.coach ? "Seu personal ainda não enviou a ficha" : "Você ainda não tem ficha ativa"}
+          body={
+            data.coach
+              ? `Quando ${coachName ?? "seu personal"} enviar a ficha, ela aparece aqui. Enquanto isso, você pode registrar um treino livre.`
+              : ai.enabled
+                ? "Monte uma ficha com IA em segundos, no sistema que você preferir, ou registre um treino livre."
+                : "Monte sua ficha em um minuto, no sistema que você preferir, ou registre um treino livre."
+          }
+          action={
+            <div className="flex flex-wrap gap-2">
+              {!data.coach ? (
+                <LinkButton href="/treinos/novo" icon={<Plus className="size-4" />}>
+                  {ai.enabled ? "Montar ficha com IA" : "Montar ficha"}
+                </LinkButton>
+              ) : null}
+              <LinkButton href="/sessao" variant="secondary">
+                Treino livre
+              </LinkButton>
+            </div>
+          }
+        />
+      )}
+
+      {pending.length ? (
+        <section aria-label="Treinos para enviar" className="flex flex-col gap-3 rounded-[8px] border border-rule bg-paper p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h2 className="text-[0.9375rem] font-bold">{pending.length === 1 ? "1 treino ainda não enviado" : `${pending.length} treinos ainda não enviados`}</h2>
+            <p className="text-sm text-steel">Mande para {user!.remoteCoach ? user!.remoteCoach.name.split(" ")[0] : "seu personal"} acompanhar suas cargas e ajustar a ficha.</p>
+          </div>
+          <SendToCoach sessions={pending} className="shrink-0" onSent={() => setSentTick((t) => t + 1)} />
         </section>
       ) : null}
 
@@ -150,80 +259,6 @@ function Hoje() {
           </div>
         </dl>
       </section>
-
-      {/* Próximo treino */}
-      {program && day ? (
-        <section aria-labelledby="proximo" className="space-y-3">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div className="min-w-0">
-              <h2 id="proximo" className="text-lg font-bold">
-                Próximo treino
-              </h2>
-              <p className="text-sm text-steel">
-                {program.name}
-                {fromCoach ? ` · ${fromCoach}` : ""}
-                {validity && validity.state !== "ok" ? <span className={cx("font-semibold", validity.state === "expired" ? "text-plate-red-ink" : "text-iron")}> · {validity.label}</span> : null}
-              </p>
-            </div>
-            {program.days.length > 1 ? (
-              <div className="-mx-4 max-w-[calc(100%+2rem)] overflow-x-auto px-4">
-                <Segmented label="Escolher dia" size="sm" className="min-w-max flex-nowrap" value={day.key} onChange={setChosen} options={program.days.map((d) => ({ value: d.key, label: <span className="block min-w-5 text-center">{d.key}</span> }))} />
-              </div>
-            ) : null}
-          </div>
-          {program.notes?.trim() ? (
-            <details className="rounded-[8px] border border-rule bg-paper px-4 py-2.5 text-[0.9375rem]">
-              <summary className="flex min-h-9 cursor-pointer items-center font-semibold">Orientações da ficha</summary>
-              <p className="mt-1 whitespace-pre-wrap pb-1 text-steel">{program.notes}</p>
-            </details>
-          ) : null}
-          {day.exercises.length ? (
-            <>
-              <FichaDay day={day} />
-              <div className="flex flex-wrap gap-2">
-                <LinkButton href={`/sessao?p=${program.id}&d=${encodeURIComponent(day.key)}`} size="lg" className="w-full sm:w-auto" icon={<Play className="size-4 fill-current" />}>
-                  Começar treino {day.key}
-                </LinkButton>
-                <LinkButton href="/sessao" size="lg" variant="ghost" className="w-full sm:w-auto">
-                  Treino livre
-                </LinkButton>
-              </div>
-            </>
-          ) : (
-            <Alert tone="info">
-              O treino {day.key} ainda não tem exercícios.{" "}
-              {fromCoach ? "Seu personal ainda está montando esta parte da ficha." : (
-                <Link href={`/treinos/${program.id}`} className="font-semibold underline">
-                  Adicionar exercícios
-                </Link>
-              )}
-            </Alert>
-          )}
-        </section>
-      ) : (
-        <Empty
-          title={data.coach ? "Seu personal ainda não enviou a ficha" : "Você ainda não tem ficha ativa"}
-          body={
-            data.coach
-              ? `Quando ${coachName ?? "seu personal"} enviar a ficha, ela aparece aqui. Enquanto isso, você pode registrar um treino livre.`
-              : ai.enabled
-                ? "Monte uma ficha com IA em segundos, no sistema que você preferir, ou registre um treino livre."
-                : "Monte sua ficha em um minuto, no sistema que você preferir, ou registre um treino livre."
-          }
-          action={
-            <div className="flex flex-wrap gap-2">
-              {!data.coach ? (
-                <LinkButton href="/treinos/novo" icon={<Plus className="size-4" />}>
-                  {ai.enabled ? "Montar ficha com IA" : "Montar ficha"}
-                </LinkButton>
-              ) : null}
-              <LinkButton href="/sessao" variant="secondary">
-                Treino livre
-              </LinkButton>
-            </div>
-          }
-        />
-      )}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <Panel
@@ -296,6 +331,8 @@ function Hoje() {
           </span>
         </Link>
       ) : null}
+
+      <InstallCard variant="banner" where="hoje" />
     </div>
   );
 }

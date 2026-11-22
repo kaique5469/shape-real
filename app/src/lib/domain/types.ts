@@ -133,6 +133,11 @@ export interface Profile {
   coachNotes?: string;
   /** Perfil de exemplo criado pelo modo teste (pode ser removido pelo personal). */
   sample?: boolean;
+  /**
+   * Aluno que recebeu a ficha por link, no próprio celular: quem é o personal e qual é o id deste
+   * aluno no aparelho dele (os treinos voltam para esse cadastro).
+   */
+  remoteCoach?: { id: string; name: string; phone?: string; studentRef: string };
   /** Plano que vale agora (inclui o período de teste e o personal pagante). */
   plan: PlanId;
   /** Plano contratado de fato; só existe em contas na nuvem. */

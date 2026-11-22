@@ -12,7 +12,7 @@ import { PLANS } from "@/lib/domain/plans";
 const FAQ = [
   {
     q: "É grátis mesmo?",
-    a: "Sim. O plano Grátis registra treinos e cargas sem limite, guarda 2 fichas e inclui 3 gerações com IA por mês. O Pro libera IA para fichas e dieta, fotos ilimitadas e exportação para Excel.",
+    a: "Sim. Durante o beta, tudo está liberado de graça para personais e alunos, sem limite de alunos, fichas, fotos ou exportação. Os planos pagos só passam a valer depois do beta, com aviso antes.",
   },
   {
     q: "A IA substitui um personal?",
@@ -24,11 +24,11 @@ const FAQ = [
   },
   {
     q: "Como funciona para o personal?",
-    a: "Você cria a conta de personal, gera um código de convite e manda pelo WhatsApp. O aluno entra com o código, e você passa a enviar ficha e dieta pelo app e acompanhar treinos, cargas, medidas e fotos. Enquanto estiverem vinculados ao seu plano, os alunos usam os recursos Pro sem pagar.",
+    a: "Você cadastra o aluno, monta a ficha e a dieta e toca em “Enviar para o celular do aluno”. Ele recebe um link no WhatsApp, abre no celular dele e passa a treinar pelo app, sem cadastro. No fim de cada treino, ele manda o resultado de volta e você registra no seu painel com um toque: frequência, cargas e relatório de evolução se atualizam sozinhos.",
   },
   {
     q: "Meus dados de saúde ficam seguros?",
-    a: "Medidas, fotos e dieta são dados sensíveis pela LGPD. Só você e o personal que você aceitou têm acesso. Fotos ficam em armazenamento privado. Você pode exportar ou apagar tudo quando quiser.",
+    a: "Medidas, fotos e dieta são dados sensíveis pela LGPD. No beta, tudo fica guardado no seu próprio celular, sem cadastro e sem servidor: só circula o que você mesmo envia pelo WhatsApp. Você pode exportar um backup, restaurar em outro aparelho ou apagar tudo quando quiser.",
   },
   {
     q: "Funciona no celular na academia?",
@@ -205,6 +205,9 @@ export default function Landing() {
         <section id="planos" className="mx-auto max-w-6xl px-4 py-16 lg:py-24">
           <h2 className="plate-type text-[2rem] leading-tight sm:text-[2.6rem]">Comece grátis. Pague quando fizer sentido.</h2>
           <p className="mt-3 max-w-2xl text-[1.0625rem] text-steel">Registro de treino ilimitado em todos os planos. Os pagos liberam IA, fotos e a área do personal.</p>
+          <p className="mt-4 max-w-2xl rounded-[var(--radius-ficha)] border border-plate-yellow/60 bg-plate-yellow/15 px-4 py-3 text-[0.9375rem]">
+            <strong>Beta aberto:</strong> enquanto o app está em teste, todos os recursos estão liberados de graça. Os preços abaixo valem só depois do beta, com aviso antes.
+          </p>
           <div className="mt-8">
             <Pricing />
           </div>

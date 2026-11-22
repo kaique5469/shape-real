@@ -16,6 +16,7 @@ import type { Exercise, ExerciseLog, Program, Session, SetLog, Technique, Unit }
 import { reportError, track } from "@/lib/analytics";
 import { fmtNum } from "@/lib/hooks";
 import { draftHref, draftKey } from "@/lib/workout-draft";
+import { SendToCoach } from "@/components/transfer-share";
 
 export default function SessaoPage() {
   return (
@@ -909,7 +910,7 @@ function NumberCell({ value, onChange, step, label, placeholder, fallback }: { v
 }
 
 function Summary({ session, onDone }: { session: Session; onDone: () => void }) {
-  const { repo } = useApp();
+  const { repo, user, returnTo } = useApp();
   const [feeling, setFeeling] = useState<Session["feeling"]>();
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
@@ -979,9 +980,18 @@ function Summary({ session, onDone }: { session: Session; onDone: () => void }) 
           <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Anotação do treino (opcional)" className="mt-3 border-white/25 bg-white/5 text-chalk placeholder:text-chalk/40" rows={2} />
         </div>
 
+        {user?.remoteCoach && !returnTo ? (
+          <SendToCoach
+            sessions={[{ ...session, feeling, note: note || undefined }]}
+            size="lg"
+            variant="record"
+            className="mt-8 w-full"
+            onSent={() => void repo.saveSession({ ...session, feeling, note: note || undefined }).catch(() => undefined)}
+          />
+        ) : null}
         <Button
           size="lg"
-          className="mt-8 w-full !bg-chalk !text-iron hover:!bg-white"
+          className={cx("w-full !bg-chalk !text-iron hover:!bg-white", user?.remoteCoach && !returnTo ? "mt-3" : "mt-8")}
           loading={saving}
           onClick={async () => {
             setSaving(true);

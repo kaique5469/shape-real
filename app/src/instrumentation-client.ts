@@ -9,14 +9,19 @@ import posthog from "posthog-js";
 const token = process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN ?? process.env.NEXT_PUBLIC_POSTHOG_KEY;
 
 /** Tira da URL o código do link de teste (`?k=`), que não deve sair do aparelho. */
+/**
+ * Tira da URL o que não pode ir para a medição: a chave do link de teste (?k=) e tudo depois do "#",
+ * onde viajam a ficha, a dieta e os treinos enviados por link entre personal e aluno.
+ */
 function cleanUrl(value: unknown): unknown {
-  if (typeof value !== "string" || !/[?&]k=/.test(value)) return value;
+  if (typeof value !== "string" || !/[?&]k=|#/.test(value)) return value;
   try {
     const url = new URL(value, window.location.origin);
     url.searchParams.delete("k");
-    return /^https?:/i.test(value) ? url.toString() : `${url.pathname}${url.search}${url.hash}`;
+    url.hash = "";
+    return /^https?:/i.test(value) ? url.toString() : `${url.pathname}${url.search}`;
   } catch {
-    return value.replace(/([?&])k=[^&#]*/g, "$1");
+    return value.replace(/#.*$/, "").replace(/([?&])k=[^&#]*/g, "$1");
   }
 }
 

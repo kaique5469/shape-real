@@ -13,6 +13,9 @@ export function PlateMark({ className, color = "var(--plate-red)" }: { className
   );
 }
 
+/** Enquanto o app está em beta, o selo aparece junto do nome em todas as telas. */
+export const BETA = true;
+
 export function Logo({ className, compact }: { className?: string; compact?: boolean }) {
   return (
     <span className={cx("inline-flex items-center gap-2", className)}>
@@ -22,6 +25,7 @@ export function Logo({ className, compact }: { className?: string; compact?: boo
           SHAPE<span className="text-plate-red">·</span>REAL
         </span>
       )}
+      {BETA && !compact ? <span className="col-head rounded-[4px] bg-plate-yellow px-1.5 py-[3px] leading-none text-iron">beta</span> : null}
     </span>
   );
 }
