@@ -58,7 +58,10 @@ export type EventName =
   | "ficha_link_opened"
   | "treinos_link_sent"
   | "treinos_link_received"
-  | "backup_restored";
+  | "backup_restored"
+  | "backup_shared"
+  | "link_dead_end_shown"
+  | "coach_list_viewed";
 
 const enabled = Boolean(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN ?? process.env.NEXT_PUBLIC_POSTHOG_KEY);
 
