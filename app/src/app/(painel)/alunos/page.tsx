@@ -1,23 +1,45 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronRight, Copy, MessageCircle, Search, Trash2, UserPlus, X } from "lucide-react";
 import { StudentForm } from "@/components/student-form";
 import { InviteDialog } from "@/components/invite-dialog";
 import { InstallCard } from "@/components/pwa";
+import { ColarLink } from "@/components/colar-link";
+import { BackupReminder } from "@/components/backup-reminder";
 import { Alert, Badge, Button, Dialog, Empty, Input, PageHeader, Skeleton, cx } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
 import { fmtNum, relativeDay, useLoad } from "@/lib/hooks";
 import { normalize } from "@/lib/domain/exercises";
-import { firstName, programValidity, waLink, waPhone } from "@/lib/domain/format";
+import { programValidity, waLink, type Validity } from "@/lib/domain/format";
+import {
+  calendarDaysSince,
+  contactMessage,
+  contactReason,
+  displayNames,
+  isQuiet,
+  namesList,
+  newsLabel,
+  reasonLabel,
+  splitQueue,
+  studentBand,
+  type ContactReason,
+} from "@/lib/domain/attention";
+import { todayISO } from "@/lib/domain/ids";
 import { GOAL_LABEL } from "@/lib/domain/generator";
-import { PLANS } from "@/lib/domain/plans";
+import { PLANS, studentQuota } from "@/lib/domain/plans";
+import { welcomeRequested } from "@/lib/entry-points";
 import { track } from "@/lib/analytics";
+import type { Repository } from "@/lib/data/repository";
 import type { Invite, StudentSummary } from "@/lib/domain/types";
 
-const INACTIVE_DAYS = 5;
+/** Data (AAAA-MM-DD) da última vez que coach_list_viewed foi enviado: no máximo 1 vez por dia. */
+const LIST_VIEWED_KEY = "sr:coach-list-viewed";
+/** Âncora do "Ver todos" do alerta. */
+const LIST_ID = "lista-alunos";
+const QUEUE_TITLE_ID = "fila-alunos-titulo";
 
 export default function AlunosPage() {
   return (
@@ -27,27 +49,49 @@ export default function AlunosPage() {
   );
 }
 
-function daysSince(iso: string | null) {
-  if (!iso) return Infinity;
-  return Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+/** Aluno com a semana (segunda a domingo) e a meta já resolvidas, e o motivo de chamar, se houver. */
+interface Row {
+  s: StudentSummary;
+  /** Treinos recebidos de segunda a domingo; null se não deu para ler. */
+  week: number | null;
+  /** Meta da semana (ficha ativa ou perfil); null sem meta. */
+  goal: number | null;
+  /** Parado: dias sem notícias ≥ inactiveThreshold(meta). */
+  quiet: boolean;
+  validity: Validity | null;
+  reason: ContactReason | null;
+  /** Urgência para ordenar a lista (maior primeiro). */
+  score: number;
 }
 
-/** Parado: treinou e sumiu, ou foi cadastrado há dias e ainda não registrou nada. */
-function isInactive(s: StudentSummary) {
-  return s.lastSessionAt ? daysSince(s.lastSessionAt) >= INACTIVE_DAYS : daysSince(s.linkedAt) >= INACTIVE_DAYS;
+/**
+ * Lista de alunos com a contagem da semana de segunda a domingo e a meta da ficha ativa (ou do perfil):
+ * o mesmo "N de M" que o aluno vê no Hoje. A semana tem no máximo 14 treinos lidos por aluno.
+ */
+/** Semana e meta já vêm no resumo de cada aluno (summarizeStudent): uma consulta para a lista toda, sem N+1. */
+async function loadStudents(repo: Repository, coachId: string) {
+  const list = await repo.listStudents(coachId);
+  return list.map((s) => ({ s, week: s.sessionsWeek, goal: s.weeklyGoal }));
 }
 
-function attention(s: StudentSummary) {
-  const v = s.activeProgram ? programValidity(s.activeProgram.createdAt, s.activeProgram.durationWeeks) : null;
-  return (s.activeProgram ? 0 : 4) + (v?.state === "expired" ? 3 : v?.state === "soon" ? 1 : 0) + (isInactive(s) ? 2 : 0);
+function toRow({ s, week, goal }: { s: StudentSummary; week: number | null; goal: number | null }, now: Date): Row {
+  const validity = s.activeProgram ? programValidity(s.activeProgram.createdAt, s.activeProgram.durationWeeks, now) : null;
+  const quiet = isQuiet(s, goal, now);
+  const score = (s.activeProgram ? 0 : 4) + (validity?.state === "expired" ? 3 : validity?.state === "soon" ? 1 : 0) + (quiet ? 2 : 0);
+  return { s, week, goal, quiet, validity, reason: contactReason(quiet, validity), score };
+}
+
+/** Dias desde o último treino recebido; quem nunca mandou vem antes. */
+function gap(s: StudentSummary, now: Date) {
+  return s.lastSessionAt ? calendarDaysSince(s.lastSessionAt, now) : Infinity;
 }
 
 function Alunos() {
-  const { user, repo, plan, isTester, startSolo } = useApp();
+  const { user, repo, plan, isTester, isDemo, startSolo } = useApp();
   const router = useRouter();
   const params = useSearchParams();
-  const { data, loading, error, reload } = useLoad(() => repo.listStudents(user!.id), [user?.id, repo]);
-  const [welcome, setWelcome] = useState(() => Boolean(params.get("bemvindo")));
+  const { data, loading, error, reload } = useLoad(() => loadStudents(repo, user!.id), [user?.id, repo]);
+  const [welcome, setWelcome] = useState(() => welcomeRequested(params));
   const [formOpen, setFormOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [invite, setInvite] = useState<Invite | null>(null);
@@ -60,16 +104,46 @@ function Alunos() {
   const [err, setErr] = useState<string | null>(null);
 
   const canManage = repo.capabilities.managedStudents;
-  const maxStudents = PLANS[plan].maxStudents || 3;
-  const students = useMemo(
-    () => [...(data ?? [])].sort((a, b) => attention(b) - attention(a) || daysSince(b.lastSessionAt) - daysSince(a.lastSessionAt) || a.profile.name.localeCompare(b.profile.name)),
-    [data],
-  );
-  const shown = query.trim() ? students.filter((s) => normalize(s.profile.name).includes(normalize(query))) : students;
-  const inactive = students.filter(isInactive);
-  const activeWeek = students.filter((s) => s.sessions7d > 0).length;
+  const local = repo.mode === "local";
+  const rows = useMemo(() => {
+    const now = new Date();
+    return (data ?? [])
+      .map((d) => toRow(d, now))
+      .sort((a, b) => {
+        const ga = gap(a.s, now);
+        const gb = gap(b.s, now);
+        // Quem está na fila "precisa de mensagem" (motivo de contato) vem antes: o "Ver todos" do alerta acha os "mais N"
+        // no topo. Dentro de cada grupo, a urgência (score) de sempre.
+        return Number(Boolean(b.reason)) - Number(Boolean(a.reason)) || b.score - a.score || (ga === gb ? 0 : gb > ga ? 1 : -1) || a.s.profile.name.localeCompare(b.s.profile.name);
+      });
+  }, [data]);
+  const students = useMemo(() => rows.map((r) => r.s), [rows]);
+  const shown = query.trim() ? rows.filter((r) => normalize(r.s.profile.name).includes(normalize(query))) : rows;
+  const quietCount = rows.filter((r) => r.quiet).length;
+  // Mesma semana do Hoje do aluno: segunda a domingo.
+  const activeWeek = rows.filter((r) => (r.week ?? 0) > 0).length;
+  // Fila de quem precisa de uma mensagem, na mesma ordem de urgência da lista.
+  const queue = splitQueue(rows.filter((r) => r.reason));
+  const queueNames = displayNames(queue.shown.map((r) => r.s.profile.name));
   const samples = students.filter((s) => s.profile.sample);
-  const full = !isTester && students.length >= maxStudents;
+  // Modo local (beta): sem limite de alunos; exemplos não contam.
+  const quota = studentQuota(students, { local, plan });
+  const full = quota.full;
+
+  // Quantos alunos os personais acompanham (faixa, sem nomes): no máximo 1 vez por dia, fora da demonstração.
+  const band = loading || error ? null : studentBand(quota.count);
+  useEffect(() => {
+    if (!band || isDemo) return;
+    try {
+      const today = todayISO();
+      if (localStorage.getItem(LIST_VIEWED_KEY) === today) return;
+      localStorage.setItem(LIST_VIEWED_KEY, today);
+    } catch {
+      // Sem armazenamento não há como garantir 1 vez por dia: não envia.
+      return;
+    }
+    track("coach_list_viewed", { faixa_alunos: band });
+  }, [band, isDemo]);
 
   function dismissWelcome() {
     setWelcome(false);
@@ -139,18 +213,26 @@ function Alunos() {
     <>
       <PageHeader title="Alunos" sub="Quem treinou, quem está com a ficha vencendo e quem precisa de um empurrão." actions={addAction} />
 
+      <div className="mb-4 space-y-2 empty:hidden">
+        <ColarLink />
+        <BackupReminder where="alunos" />
+      </div>
+
       {!welcome ? (
         <div className="mb-4">
           <InstallCard variant="banner" where="alunos" />
         </div>
       ) : null}
 
-      {welcome && isTester ? (
+      {welcome ? (
         <section aria-label="Por onde começar" className="mb-6 rounded-[8px] border border-rule-strong bg-paper">
           <div className="flex items-start justify-between gap-3 border-b border-rule px-4 py-3">
             <div>
-              <h2 className="text-lg font-bold">Você está no painel do personal</h2>
-              <p className="mt-0.5 text-sm text-steel">Sem cadastro: tudo fica salvo neste aparelho.{samples.length ? (samples.length === 1 ? " O aluno marcado como exemplo abaixo é fictício, para você explorar." : ` Os ${samples.length} alunos marcados como exemplo abaixo são fictícios, para você explorar.`) : ""}</p>
+              <h2 className="text-lg font-bold">{isTester ? "Você está no painel do personal" : "Seu painel está pronto"}</h2>
+              <p className="mt-0.5 text-sm text-steel">
+                {local ? "Sem cadastro: tudo fica salvo neste aparelho." : "Seus alunos e fichas ficam salvos na sua conta."}
+                {samples.length ? (samples.length === 1 ? " O aluno marcado como exemplo abaixo é fictício, para você explorar." : ` Os ${samples.length} alunos marcados como exemplo abaixo são fictícios, para você explorar.`) : ""}
+              </p>
             </div>
             <button type="button" onClick={dismissWelcome} aria-label="Fechar instruções" className="-mr-1.5 -mt-1 grid size-11 shrink-0 place-items-center rounded-[6px] hover:bg-chalk-2">
               <X className="size-5" />
@@ -158,9 +240,15 @@ function Alunos() {
           </div>
           <ol className="ruled">
             {[
-              { n: 1, title: "Cadastre um aluno", body: "Nome, objetivo, rotina e limitações. Leva um minuto.", action: () => setFormOpen(true), cta: "Adicionar" },
-              { n: 2, title: "Monte a ficha e a dieta", body: "Gere uma base e ajuste, ou monte do zero. Depois envie pelo WhatsApp ou imprima.", action: null, cta: "" },
-              { n: 3, title: "Veja o app como o aluno", body: "Na página do aluno, toque em “Ver como aluno” e registre um treino. Na versão final, o aluno entra com a própria conta no celular dele.", action: null, cta: "" },
+              canManage
+                ? { n: 1, title: "Cadastre um aluno", body: "Nome, objetivo, rotina e limitações. Leva um minuto.", action: () => setFormOpen(true), cta: "Adicionar" }
+                : { n: 1, title: "Convide um aluno", body: "Ele cria a conta pelo link e cai direto no seu painel.", action: newInvite, cta: "Convidar" },
+              { n: 2, title: "Monte a ficha e a dieta", body: "Gere uma base pelas regras do app e ajuste, ou monte do zero. Depois envie pelo WhatsApp ou imprima.", action: null, cta: "" },
+              isTester
+                ? { n: 3, title: "Veja o app como o aluno", body: "Na página do aluno, toque em “Ver como aluno” e registre um treino. O aluno de verdade recebe a ficha por link no WhatsApp, sem cadastro.", action: null, cta: "" }
+                : local
+                  ? { n: 3, title: "Envie para o celular do aluno", body: "Na página do aluno, toque em “Enviar para o celular”. Ele abre o link no WhatsApp e treina pelo app, sem cadastro.", action: null, cta: "" }
+                  : { n: 3, title: "Veja o app como o aluno", body: "Na página do aluno, toque em “Ver como aluno”. O aluno entra com a própria conta, no celular dele.", action: null, cta: "" },
             ].map((s) => (
               <li key={s.n} className="flex items-center gap-3 px-4 py-3">
                 <span className="plate-type num grid size-8 shrink-0 place-items-center rounded-full border border-rule-strong text-sm">{s.n}</span>
@@ -169,19 +257,21 @@ function Alunos() {
                   <span className="block text-sm text-steel">{s.body}</span>
                 </span>
                 {s.action ? (
-                  <Button size="sm" variant="secondary" onClick={s.action} className="shrink-0">
+                  <Button variant="secondary" onClick={s.action} className="shrink-0">
                     {s.cta}
                   </Button>
                 ) : null}
               </li>
             ))}
           </ol>
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-rule px-4 py-3">
-            <p className="text-sm text-steel">Quer ver o lado de quem treina sem personal?</p>
-            <Button size="sm" variant="ghost" onClick={trySolo} loading={goingSolo}>
-              Testar como aluno que treina sozinho
-            </Button>
-          </div>
+          {local ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-rule px-4 py-3">
+              <p className="text-sm text-steel">Quer ver o lado de quem treina sem personal?</p>
+              <Button variant="ghost" onClick={trySolo} loading={goingSolo}>
+                Testar como aluno que treina sozinho
+              </Button>
+            </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -211,8 +301,9 @@ function Alunos() {
             <div className="px-1">
               <dt className="text-xs text-steel">Alunos</dt>
               <dd className="num plate-type text-2xl">
-                {students.length}
-                {isTester ? null : <span className="text-sm text-steel">/{maxStudents}</span>}
+                {quota.count}
+                {quota.max === null ? null : <span className="text-sm text-steel">/{quota.max}</span>}
+                {samples.length ? <span className="block text-xs font-normal tracking-normal text-steel [font-stretch:normal]">+{samples.length} de exemplo</span> : null}
               </dd>
             </div>
             <div className="px-1">
@@ -220,54 +311,70 @@ function Alunos() {
               <dd className="num plate-type text-2xl">{activeWeek}</dd>
             </div>
             <div className="px-1">
-              <dt className="text-xs text-steel">Parados há {INACTIVE_DAYS}+ dias</dt>
-              <dd className={cx("num plate-type text-2xl", inactive.length > 0 && "text-plate-red")}>{inactive.length}</dd>
+              {/* Modo local: o personal só vê o treino que o aluno mandou. "Sem treinar" só vale na nuvem. */}
+              <dt className="text-xs text-steel">{local ? "Sem notícias" : "Sem treinar"}</dt>
+              <dd className={cx("num plate-type text-2xl", quietCount > 0 && "text-plate-red")}>{quietCount}</dd>
             </div>
           </dl>
 
-          {inactive.length ? (
-            <Alert tone="warn">
-              <p>
-                <strong>{inactive.map((s) => firstName(s.profile.name)).join(", ")}</strong> {inactive.length > 1 ? "estão" : "está"} sem treinar há {INACTIVE_DAYS} dias ou mais. Uma mensagem agora costuma
-                trazer o aluno de volta.
-              </p>
-              {inactive.some((s) => waPhone(s.profile.phone)) ? (
-                <div className="mt-2.5 flex flex-wrap gap-2">
-                  {inactive
-                    .filter((s) => waPhone(s.profile.phone))
-                    .map((s) => (
+          {/* Fila enxuta: até 3 nomes e "e mais N", um "Chamar" por nome (em linha própria no celular) e "Ver todos" para a lista. */}
+          {queue.shown.length ? (
+            <section aria-labelledby={QUEUE_TITLE_ID} className="rounded-[var(--radius-ficha)] border border-plate-yellow/60 bg-plate-yellow/12 px-3.5 py-3 text-[0.9375rem] text-iron">
+              <h2 id={QUEUE_TITLE_ID}>
+                <strong>{namesList(queueNames, queue.rest)}</strong> {queue.shown.length + queue.rest > 1 ? "precisam" : "precisa"} de uma mensagem.
+              </h2>
+              <ul className="mt-1 divide-y divide-plate-yellow/50">
+                {queue.shown.map((r, i) => {
+                  const reason = r.reason!;
+                  const name = queueNames[i] ?? r.s.profile.name;
+                  const daysLeft = r.validity?.days ?? 0;
+                  return (
+                    <li key={r.s.profile.id} className="flex flex-col gap-2 py-2.5 last:pb-0.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                      <p className="min-w-0 text-sm leading-snug">
+                        <span className="font-semibold">{name}</span>
+                        <span className="text-steel"> · {reasonLabel(reason, { lastSessionAt: r.s.lastSessionAt, daysLeft }, repo.mode)}</span>
+                      </p>
                       <a
-                        key={s.profile.id}
-                        href={waLink(`Oi, ${firstName(s.profile.name)}. Senti sua falta nos treinos esta semana. Bora retomar? Se precisar ajustar a ficha ou os horários, me avisa.`, s.profile.phone)}
+                        href={waLink(contactMessage(reason, r.s.profile.name, daysLeft), r.s.profile.phone)}
                         target="_blank"
                         rel="noopener noreferrer"
-                        onClick={() => track("student_contacted", { where: "alerta_parados" })}
-                        className="inline-flex h-9 items-center gap-1.5 rounded-[6px] border border-rule-strong bg-paper px-3 text-sm font-semibold hover:border-iron"
+                        onClick={() => track("student_contacted", { where: "alerta_parados", reason })}
+                        className="inline-flex h-11 w-full shrink-0 items-center justify-center gap-2 rounded-[var(--radius-ficha)] border border-rule-strong bg-paper px-4 text-[0.9375rem] font-semibold hover:border-iron sm:w-auto"
                       >
-                        <MessageCircle className="size-4" aria-hidden /> Chamar {firstName(s.profile.name)}
+                        <MessageCircle className="size-4 shrink-0" aria-hidden />
+                        <span className="truncate">Chamar {name}</span>
                       </a>
-                    ))}
-                </div>
+                    </li>
+                  );
+                })}
+              </ul>
+              {queue.rest > 0 ? (
+                <a href={`#${LIST_ID}`} onClick={() => setQuery("")} className="mt-1 inline-flex min-h-11 items-center text-sm font-semibold text-plate-blue-ink underline underline-offset-2 hover:text-iron">
+                  Ver todos
+                </a>
               ) : null}
-            </Alert>
+            </section>
           ) : null}
 
-          {students.length > 6 ? (
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-steel" aria-hidden />
-              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar aluno" aria-label="Buscar aluno" className="pl-9" />
-            </div>
-          ) : null}
+          {/* Destino do "Ver todos": a lista já vem ordenada por urgência. scroll-mt: o cabeçalho fixo do celular não cobre o topo. */}
+          <div id={LIST_ID} className="scroll-mt-20 space-y-5">
+            {students.length > 6 ? (
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-steel" aria-hidden />
+                <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar aluno" aria-label="Buscar aluno" className="pl-9" />
+              </div>
+            ) : null}
 
-          {shown.length ? (
-            <ul className="space-y-2">
-              {shown.map((s) => (
-                <StudentRow key={s.profile.id} s={s} />
-              ))}
-            </ul>
-          ) : (
-            <p className="rounded-[8px] border border-dashed border-rule-strong px-4 py-8 text-center text-steel">Nenhum aluno com “{query}”.</p>
-          )}
+            {shown.length ? (
+              <ul className="space-y-2">
+                {shown.map((r) => (
+                  <StudentRow key={r.s.profile.id} row={r} mode={repo.mode} />
+                ))}
+              </ul>
+            ) : (
+              <p className="rounded-[8px] border border-dashed border-rule-strong px-4 py-8 text-center text-steel">Nenhum aluno com “{query}”.</p>
+            )}
+          </div>
 
           {samples.length ? (
             <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-steel">
@@ -280,7 +387,7 @@ function Alunos() {
             </div>
           ) : null}
 
-          {!isTester && plan !== "coach" ? (
+          {quota.max !== null && plan !== "coach" ? (
             <Alert tone="info">
               Plano Grátis de personal: até 3 alunos.{" "}
               <Link href="/conta#planos" className="font-semibold underline" onClick={() => track("paywall_viewed", { where: "coach_students" })}>
@@ -318,10 +425,14 @@ function Alunos() {
   );
 }
 
-function StudentRow({ s }: { s: StudentSummary }) {
-  const late = isInactive(s);
-  const validity = s.activeProgram ? programValidity(s.activeProgram.createdAt, s.activeProgram.durationWeeks) : null;
-  const target = s.profile.daysPerWeek;
+/**
+ * Linha do aluno (um único Link, sem botões dentro). Semana de segunda a domingo e a meta da ficha ativa ou do
+ * perfil: o mesmo "2 de 3" do Hoje do aluno. Parado: "Sem notícias há 9 dias · último treino recebido em 13/11".
+ */
+function StudentRow({ row, mode }: { row: Row; mode: "local" | "supabase" }) {
+  const { s, week, goal, quiet, validity } = row;
+  const last = s.lastSessionAt ? relativeDay(s.lastSessionAt) : mode === "local" ? "nada recebido ainda" : "nenhum treino ainda";
+  const summary = [week === null ? null : `${week}${goal ? ` de ${goal}` : ""} na semana`, quiet ? null : last].filter(Boolean).join(" · ");
   return (
     <li>
       <Link href={`/alunos/${s.profile.id}`} className="flex items-center gap-3 rounded-[8px] border border-rule bg-paper px-3 py-3 hover:border-iron sm:px-4">
@@ -344,10 +455,8 @@ function StudentRow({ s }: { s: StudentSummary }) {
               </>
             )}
           </span>
-          <span className="num block truncate text-sm text-steel">
-            {s.sessions7d}
-            {target ? ` de ${target}` : ""} na semana · <span className={cx(late && "font-semibold text-plate-red-ink")}>{s.lastSessionAt ? relativeDay(s.lastSessionAt) : "sem treinos"}</span>
-          </span>
+          {summary ? <span className="num block text-sm text-steel">{summary}</span> : null}
+          {quiet ? <span className="num block text-sm font-semibold leading-snug text-iron">{newsLabel(s.lastSessionAt, mode)}</span> : null}
         </span>
         {s.latestWeightKg ? (
           <span className="hidden text-right text-sm sm:block">

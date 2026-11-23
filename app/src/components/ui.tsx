@@ -248,11 +248,12 @@ export function Dialog({ open, onClose, title, children, wide }: { open: boolean
         wide ? "max-w-2xl" : "max-w-lg",
       )}
     >
-      <div className="flex items-center justify-between border-b border-rule px-5 py-4">
-        <h2 id={titleId} className="text-lg font-bold">
+      {/* Fechar com 44×44 px que nunca encolhe com título longo; py-3 e -mr-2 mantêm a altura e o alinhamento do cabeçalho. */}
+      <div className="flex items-center justify-between gap-3 border-b border-rule px-5 py-3">
+        <h2 id={titleId} className="min-w-0 text-lg font-bold">
           {title}
         </h2>
-        <button type="button" onClick={onClose} className="grid size-9 place-items-center rounded hover:bg-chalk-2" aria-label="Fechar">
+        <button type="button" onClick={onClose} className="-mr-2 grid size-11 shrink-0 place-items-center rounded hover:bg-chalk-2" aria-label="Fechar">
           <X className="size-5" />
         </button>
       </div>

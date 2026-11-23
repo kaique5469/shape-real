@@ -3,20 +3,22 @@
 import Link from "next/link";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { ArrowRight, Check, ChevronDown, Play, Plus, Trophy } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, MessageCircle, Play, Plus, Trophy } from "lucide-react";
+import { BackupReminder } from "@/components/backup-reminder";
+import { ColarLink } from "@/components/colar-link";
 import { FichaDay } from "@/components/ficha";
 import { InstallCard } from "@/components/pwa";
 import { SendToCoach, usePendingWorkouts } from "@/components/transfer-share";
 import { estimateDayMinutes } from "@/lib/domain/generator";
 import { Alert, Empty, LinkButton, Panel, Segmented, Skeleton, cx } from "@/components/ui";
+import { track } from "@/lib/analytics";
 import { useApp } from "@/lib/app-context";
-import { fmtDate, fmtNum, nextDayKey, relativeDay, useLoad } from "@/lib/hooks";
-import { bestSet, weekStart, weekStreak } from "@/lib/domain/progression";
+import { coachContact, fmtDate, fmtNum, nextDayKey, recentRecords, relativeDay, returnNotice, useLoad, weekGoal } from "@/lib/hooks";
+import { weekStart, weekStreak } from "@/lib/domain/progression";
 import { targetsForProfile } from "@/lib/domain/nutrition";
-import { getExercise } from "@/lib/domain/exercises";
 import { programValidity } from "@/lib/domain/format";
 import { useAI } from "@/lib/ai/client";
-import { readDraftInfo, type DraftInfo } from "@/lib/workout-draft";
+import { draftProgressText, readDraftInfo, type DraftInfo } from "@/lib/workout-draft";
 
 const WEEK = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 
@@ -29,12 +31,14 @@ export default function HojePage() {
 }
 
 function Hoje() {
-  const { user, repo, mode } = useApp();
+  const { user, repo, mode, returnTo } = useApp();
   const ai = useAI(mode === "supabase");
   const params = useSearchParams();
   const { data, loading, error } = useLoad(async () => {
     const [programs, sessions, coach, diet] = await Promise.all([repo.listPrograms(user!.id), repo.listSessions(user!.id), repo.getCoach(user!.id), repo.getDiet(user!.id)]);
-    return { program: programs.find((p) => p.active) ?? null, sessions, coach, diet };
+    // O vínculo só traz id e nome; telefone e CREF vêm do cadastro do personal guardado neste aparelho.
+    const coachProfile = coach && repo.mode === "local" ? await repo.getProfile(coach.id).catch(() => null) : null;
+    return { program: programs.find((p) => p.active) ?? null, sessions, coach, coachProfile, diet };
   }, [user?.id, repo]);
   const [chosen, setChosen] = useState<string | null>(null);
   const [sentTick, setSentTick] = useState(0);
@@ -53,14 +57,9 @@ function Hoje() {
     const weekSessions = data.sessions.filter((s) => weekStart(s.startedAt) === thisWeek);
     const doneDays = new Set(weekSessions.map((s) => (new Date(s.startedAt).getDay() + 6) % 7));
     const month = data.sessions.filter((s) => now.getTime() - new Date(s.startedAt).getTime() < 30 * 86_400_000).length;
-    const prs = data.sessions
-      .flatMap((s) => s.prs.map((id) => ({ s, id })))
-      .slice(0, 5)
-      .map(({ s, id }) => {
-        const log = s.exercises.find((e) => e.exerciseId === id);
-        return { date: s.startedAt, name: log?.name ?? getExercise(id)?.name ?? id, best: log ? bestSet(log) : null };
-      });
-    return { doneDays, streak: weekStreak(data.sessions), month, weekVolume: weekSessions.reduce((a, s) => a + s.volumeKg, 0), prs };
+    // Cada recorde com a série que bateu a marca (a mesma do resumo do treino).
+    const prs = recentRecords(data.sessions, 5);
+    return { doneDays, streak: weekStreak(data.sessions), month, weekVolume: weekSessions.reduce((a, s) => a + s.volumeKg, 0), prs, back: returnNotice(data.sessions, now) };
   }, [data]);
 
   if (loading) return <LoadingHoje />;
@@ -78,6 +77,12 @@ function Hoje() {
   const coachName = data.coach?.name && data.coach.name !== "Personal" ? data.coach.name : null;
   const fromCoach = program && program.createdBy !== user!.id ? (coachName ? `ficha de ${coachName}` : "ficha do seu personal") : null;
   const validity = program ? programValidity(program.createdAt, program.durationWeeks) : null;
+  // Meta da semana: a mesma conta de /alunos (segunda a domingo ÷ dias da ficha ativa ou do perfil).
+  const week = weekGoal(data.sessions, program?.daysPerWeek, user!.daysPerWeek);
+  // Personal que acompanha: o do link (nome, telefone e CREF do pacote) ou o vinculado neste aparelho.
+  const contact = coachContact(user!.remoteCoach, data.coachProfile ?? (data.coach ? { id: data.coach.id, name: data.coach.name } : null));
+  // Aviso de volta depois de pausa: junto do "Começar treino" quando há treino montado; senão, no card da semana.
+  const backInCard = Boolean(program && day && day.exercises.length);
 
   return (
     <div className="space-y-6">
@@ -110,7 +115,7 @@ function Hoje() {
             <p className="col-head text-plate-red-ink">Treino em andamento</p>
             <p className="mt-1 truncate font-bold">{ongoing.dayKey ? `Treino ${ongoing.dayKey}${ongoing.dayTitle ? ` — ${ongoing.dayTitle}` : ""}` : "Treino livre"}</p>
             <p className="num text-sm text-steel">
-              {ongoing.done} de {ongoing.total} séries feitas · iniciado {relativeDay(ongoing.startedAt)}. Ainda não está no histórico.
+              {draftProgressText(ongoing)} · iniciado {relativeDay(ongoing.startedAt)}. Ainda não está no histórico.
             </p>
           </div>
           <LinkButton href={ongoing.href} icon={<Play className="size-4" />} className="shrink-0">
@@ -153,6 +158,7 @@ function Hoje() {
               <LinkButton href={`/sessao?p=${program.id}&d=${encodeURIComponent(day.key)}`} size="lg" className="w-full" icon={<Play className="size-4 fill-current" />}>
                 Começar treino {day.key}
               </LinkButton>
+              {stats.back ? <p className="text-sm leading-snug text-iron">{stats.back}</p> : null}
               <details className="group rounded-[6px] border border-rule">
                 <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-2 px-3 text-[0.9375rem] font-semibold">
                   Ver os exercícios
@@ -196,15 +202,19 @@ function Hoje() {
                 : "Monte sua ficha em um minuto, no sistema que você preferir, ou registre um treino livre."
           }
           action={
-            <div className="flex flex-wrap gap-2">
-              {!data.coach ? (
-                <LinkButton href="/treinos/novo" icon={<Plus className="size-4" />}>
-                  {ai.enabled ? "Montar ficha com IA" : "Montar ficha"}
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-2">
+                {!data.coach ? (
+                  <LinkButton href="/treinos/novo" icon={<Plus className="size-4" />}>
+                    {ai.enabled ? "Montar ficha com IA" : "Montar ficha"}
+                  </LinkButton>
+                ) : null}
+                <LinkButton href="/sessao" variant="secondary">
+                  Treino livre
                 </LinkButton>
-              ) : null}
-              <LinkButton href="/sessao" variant="secondary">
-                Treino livre
-              </LinkButton>
+              </div>
+              {/* Ficha que chegou pelo WhatsApp e abriu fora do app (no iPhone, o Safari não divide os dados com o app). */}
+              <ColarLink />
             </div>
           }
         />
@@ -220,8 +230,64 @@ function Hoje() {
         </section>
       ) : null}
 
-      {/* Semana */}
-      <section aria-label="Sua semana" className="rounded-[8px] border border-rule bg-paper p-4">
+      {/* Quem acompanha: nome, CREF e o WhatsApp do personal. Fica abaixo do próximo treino, que segue sem rolar. */}
+      {contact ? (
+        <section aria-label="Seu personal" className="flex flex-col gap-3 rounded-[8px] border border-rule bg-paper p-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="min-w-0 text-[0.9375rem] leading-snug">
+            {contact.name ? (
+              <>
+                Acompanhamento de <strong className="font-semibold">{contact.name}</strong>
+              </>
+            ) : (
+              "Com acompanhamento do seu personal"
+            )}
+            {/* No celular o CREF desce inteiro para a linha de baixo, em vez de quebrar depois do "·". */}
+            {contact.credential ? (
+              <span className="num block text-sm text-steel sm:inline sm:text-[0.9375rem]">
+                <span className="hidden sm:inline"> · </span>
+                <span className="sr-only sm:hidden"> · </span>
+                {contact.credential}
+              </span>
+            ) : null}
+          </p>
+          {contact.href ? (
+            <a
+              href={contact.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => {
+                if (!returnTo) track("student_coach_whatsapp_clicked", { where: "hoje", has_cref: Boolean(contact.credential) });
+              }}
+              className="inline-flex h-11 w-full shrink-0 items-center justify-center gap-2 rounded-[var(--radius-ficha)] border border-rule-strong bg-paper px-4 text-[0.9375rem] font-semibold hover:border-iron sm:w-auto"
+            >
+              <MessageCircle className="size-4 shrink-0" aria-hidden />
+              <span className="truncate">{contact.cta}</span>
+            </a>
+          ) : null}
+        </section>
+      ) : (
+        // Sem personal, o histórico só existe neste celular: a linha decide sozinha se aparece (14+ dias sem cópia).
+        <BackupReminder where="hoje" />
+      )}
+      {/* Ficha nova reenviada pelo personal: no iPhone o link abre no Safari, então quem usa o app da tela de início
+          cola aqui (com ficha ainda não recebida, o "Colar aqui" já está no estado vazio, lá em cima). */}
+      {program && user!.remoteCoach && !returnTo ? <ColarLink className="-mt-3" /> : null}
+
+      {/* Semana: com meta, "N de M" no lugar do volume; sem meta, o card de sempre. Nunca vermelho, nunca cobrança. */}
+      <section aria-label={week.goal ? undefined : "Sua semana"} aria-labelledby={week.goal ? "sua-semana" : undefined} className="rounded-[8px] border border-rule bg-paper p-4">
+        {week.goal ? (
+          <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <h2 id="sua-semana" className="text-[0.9375rem] font-bold">
+              Sua semana
+            </h2>
+            {week.met ? (
+              <p className="flex items-center gap-1.5 text-sm font-semibold text-iron">
+                <Check className="size-4 shrink-0 text-steel" aria-hidden />
+                Meta da semana batida
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         <ol className="grid grid-cols-7 gap-1.5">
           {WEEK.map((w, i) => {
             const done = stats.doneDays.has(i);
@@ -241,6 +307,7 @@ function Hoje() {
             );
           })}
         </ol>
+        {stats.back && !backInCard ? <p className="mt-3 text-sm leading-snug text-iron">{stats.back}</p> : null}
         <dl className="mt-4 grid grid-cols-3 divide-x divide-rule border-t border-rule pt-3 text-center">
           <div>
             <dt className="text-xs text-steel">Semanas seguidas</dt>
@@ -250,13 +317,24 @@ function Hoje() {
             <dt className="text-xs text-steel">Treinos em 30 dias</dt>
             <dd className="num plate-type text-xl">{stats.month}</dd>
           </div>
-          <div>
-            <dt className="text-xs text-steel">Volume na semana</dt>
-            <dd className="num plate-type text-xl">
-              {fmtNum(stats.weekVolume / 1000, 1)}
-              <span className="text-sm"> t</span>
-            </dd>
-          </div>
+          {week.goal ? (
+            <div>
+              <dt className="text-xs text-steel">Treinos na semana</dt>
+              <dd className="num plate-type text-xl">
+                {week.done}
+                <span className="text-sm"> de </span>
+                {week.goal}
+              </dd>
+            </div>
+          ) : (
+            <div>
+              <dt className="text-xs text-steel">Volume na semana</dt>
+              <dd className="num plate-type text-xl">
+                {fmtNum(stats.weekVolume / 1000, 1)}
+                <span className="text-sm"> t</span>
+              </dd>
+            </div>
+          )}
         </dl>
       </section>
 
@@ -276,7 +354,7 @@ function Hoje() {
                 <li key={i} className="flex items-center gap-3 px-4 py-2.5">
                   <Trophy className="size-4 shrink-0 text-plate-red" aria-hidden />
                   <span className="min-w-0 flex-1 truncate text-[0.9375rem] font-semibold">{p.name}</span>
-                  <span className="num text-sm font-bold">{p.best ? `${fmtNum(p.best.loadKg)} kg × ${p.best.reps}` : ""}</span>
+                  <span className="num shrink-0 text-sm font-bold">{p.mark ?? ""}</span>
                   <span className="w-14 text-right text-xs text-steel">{fmtDate(p.date)}</span>
                 </li>
               ))}
@@ -310,14 +388,14 @@ function Hoje() {
             </dl>
           ) : (
             <p className="text-sm text-steel">
-              Informe sexo, idade, peso e altura em{" "}
-              <Link href="/conta" className="font-semibold text-iron underline">
-                Conta
+              {/* Mesmo caminho (e mesma autorização) do formulário de /dieta: um só lugar para os dados de saúde. */}
+              Informe sexo, idade, peso e altura na{" "}
+              <Link href="/dieta" className="font-semibold text-iron underline">
+                Dieta
               </Link>{" "}
               para calcular suas metas.
             </p>
           )}
-          {data.coach ? <p className="mt-3 border-t border-rule pt-3 text-sm text-steel">{coachName ? `Acompanhamento de ${coachName}.` : "Com acompanhamento do seu personal."}</p> : null}
         </Panel>
       </div>
 

@@ -67,6 +67,12 @@ export function programValidity(createdAt: string, durationWeeks: number | null 
   return { state: "ok", days, label: days < 14 ? `vence em ${days} dias` : `vence em ${Math.round(days / 7)} semanas` };
 }
 
+/** "13/11": dia e mês no fuso do aparelho (um treino às 22h continua no dia em que foi feito). */
+export function fmtDayMonth(iso: string): string {
+  const d = new Date(iso.length === 10 ? iso + "T12:00:00" : iso);
+  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 /** Primeiro nome, para mensagens e botões. */
 export function firstName(name: string): string {
   return name.trim().split(/\s+/)[0] ?? name;
