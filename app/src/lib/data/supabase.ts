@@ -4,6 +4,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { uid } from "@/lib/domain/ids";
 import type { Food } from "@/lib/domain/foods";
 import type { BodyMetric, DietPlan, Exercise, Invite, PhotoPose, PlanId, Profile, Program, ProgressPhoto, Session, StudentDraft } from "@/lib/domain/types";
+import { clearDeliveryKeys } from "./local";
 import { DataError, summarizeStudent, type Repository } from "./repository";
 
 type Row = Record<string, unknown>;
@@ -144,7 +145,7 @@ const toProgram = (r: Row): Program => ({
   updatedAt: r.updated_at as string,
 });
 
-const fromProgram = (p: Program): Row => ({
+const fromProgram = (p: Program, opts?: { keepUpdatedAt?: boolean }): Row => ({
   id: p.id,
   owner_id: p.ownerId,
   created_by: p.createdBy,
@@ -158,7 +159,7 @@ const fromProgram = (p: Program): Row => ({
   days: p.days,
   active: p.active,
   source: p.source,
-  updated_at: new Date().toISOString(),
+  updated_at: opts?.keepUpdatedAt && p.updatedAt ? p.updatedAt : new Date().toISOString(),
 });
 
 const toSession = (r: Row): Session => ({
@@ -339,8 +340,9 @@ export class SupabaseRepository implements Repository {
       (row) => (row ? toProgram(row as Row) : null),
     );
   }
-  async saveProgram(program: Program) {
-    const { data, error } = await this.db.from("programs").upsert(fromProgram(program)).select("*").single();
+  /** `keepUpdatedAt`: mantém o `updated_at` (só edição de conteúdo muda a data), como no modo local. */
+  async saveProgram(program: Program, opts?: { keepUpdatedAt?: boolean }) {
+    const { data, error } = await this.db.from("programs").upsert(fromProgram(program, opts)).select("*").single();
     if (error) fail(error);
     if (program.active) await this.setActiveProgram(program.ownerId, program.id);
     return toProgram(data);
@@ -470,7 +472,7 @@ export class SupabaseRepository implements Repository {
       (row) => (row ? toDiet(row as Row) : null),
     );
   }
-  async saveDiet(diet: DietPlan) {
+  async saveDiet(diet: DietPlan, opts?: { keepUpdatedAt?: boolean }) {
     const { data, error } = await this.db
       .from("diet_plans")
       .upsert(
@@ -482,7 +484,7 @@ export class SupabaseRepository implements Repository {
           targets: diet.targets,
           meals: diet.meals,
           notes: diet.notes ?? null,
-          updated_at: new Date().toISOString(),
+          updated_at: opts?.keepUpdatedAt && diet.updatedAt ? diet.updatedAt : new Date().toISOString(),
         },
         { onConflict: "owner_id" },
       )
@@ -607,6 +609,7 @@ export class SupabaseRepository implements Repository {
       await this.removePhotoFiles(userId);
       const { error } = await this.db.rpc("delete_managed_student", { student: userId });
       if (error) fail(error, "Não foi possível remover o aluno. Tente de novo.");
+      clearDeliveryKeys(userId);
       return;
     }
     const { data: students } = await this.db.from("profiles").select("id").eq("managed_by", userId);
@@ -614,6 +617,8 @@ export class SupabaseRepository implements Repository {
     await this.removePhotoFiles(userId);
     const { error } = await this.db.rpc("delete_my_account");
     if (error) fail(error, "Não foi possível excluir a conta. Tente de novo.");
+    for (const s of students ?? []) clearDeliveryKeys(s.id as string);
+    clearDeliveryKeys(userId);
     clearCloudCache();
     await this.db.auth.signOut();
   }

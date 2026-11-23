@@ -95,12 +95,26 @@ export interface Backup extends BackupBundle {
   students?: BackupBundle[];
   /** v2, aluno que recebe a ficha por link: o personal guardado no aparelho e os exercícios/alimentos dele. */
   remoteCoach?: BackupBundle;
-  /** v2: chaves "sr:sent:*" (quais treinos já foram enviados ao personal e quando). */
+  /**
+   * v2: chaves "sr:sent:*" de cada perfil: treinos já enviados ao personal e quando (lista, `:at`, `:log`) e,
+   * no aparelho do personal, o registro de envio da ficha (`:ficha`) e a versão que o aluno disse ter (`:ack`).
+   */
   sent?: Record<string, string>;
 }
 
-/** Só estas chaves voltam para o aparelho ao restaurar (o arquivo nunca grava outra coisa no navegador). */
-export const SENT_KEY_RE = /^sr:sent:[\w-]{1,80}(?::at)?$/;
+/**
+ * Só estas chaves voltam para o aparelho ao restaurar (o arquivo nunca grava outra coisa no navegador).
+ * `sr:sent:@desde` (início do registro de envio) não casa de propósito: restaurado num aparelho novo, ele
+ * recomeça, e fichas antigas viram "sem informação" em vez de "não enviada" (o app deixa de afirmar).
+ */
+export const SENT_KEY_RE = /^sr:sent:[\w-]{1,80}(?::at|:log|:ficha|:ack)?$/;
+/** Sufixos das chaves de envio de um perfil (`sr:sent:{id}{sufixo}`), na ordem em que entram na cópia. */
+export const SENT_SUFFIXES = ["", ":at", ":log", ":ficha", ":ack"] as const;
+export type SentSuffix = (typeof SENT_SUFFIXES)[number];
+/** Chave de envio de um perfil. */
+export const sentKeyOf = (profileId: string, suffix: SentSuffix = "") => `sr:sent:${profileId}${suffix}`;
+/** Marcador de início do registro de envio neste aparelho (fora da cópia de segurança). */
+export const SENT_SINCE_KEY = "sr:sent:@desde";
 
 // Validação à mão (sem zod): este arquivo entra no pacote de todas as telas, junto com o convite de instalar.
 type Obj = Record<string, unknown>;

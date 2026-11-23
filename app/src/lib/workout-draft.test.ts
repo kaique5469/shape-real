@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { Session } from "@/lib/domain/types";
-import { decimalsOf, draftHasWork, draftKey, draftProgressText, parseDraft, parsePtNumber, readDraftInfo, restDelayBand, saveDraft, splitCompareLine, suggestionEdit, tween, type WorkoutDraft } from "./workout-draft";
+import { assignLinks, linkGroups } from "@/lib/domain/session-flow";
+import type { PlannedExercise, Program, Session, Technique } from "@/lib/domain/types";
+import { buildDraft, decimalsOf, defaultPlan, draftHasWork, draftKey, draftProgressText, parseDraft, parsePtNumber, readDraftInfo, restDelayBand, saveDraft, splitCompareLine, suggestionEdit, tween, type WorkoutDraft } from "./workout-draft";
 
 const session: Session = {
   id: "s1",
@@ -174,5 +175,131 @@ describe("draftProgressText", () => {
     expect(draftProgressText({ done: 3, total: 21, filled: 2 })).toBe("3 de 21 séries feitas e 2 preenchidas sem marcar");
     expect(draftProgressText({ done: 0, total: 21, filled: 1 })).toBe("1 série preenchida sem marcar");
     expect(draftProgressText({ done: 0, total: 21, filled: 4 })).toBe("4 séries preenchidas sem marcar");
+  });
+});
+
+// ───────────────────────── U1d: grupos de bi-set no rascunho ─────────────────────────
+
+const planned = (uid: string, exerciseId: string, name: string, technique: Technique = "normal", extra: Partial<PlannedExercise> = {}): PlannedExercise => ({
+  uid,
+  exerciseId,
+  name,
+  sets: 4,
+  repsMin: 8,
+  repsMax: 12,
+  restSec: 90,
+  technique,
+  ...extra,
+});
+
+/** Treino A do cenário u1c-01: só o supino marcado "Bi-set com o próximo". */
+const program: Program = {
+  id: "p1",
+  ownerId: "u",
+  createdBy: "coach",
+  name: "Ficha",
+  system: "abc" as Program["system"],
+  goal: "hipertrofia" as Program["goal"],
+  level: "intermediario" as Program["level"],
+  daysPerWeek: 3,
+  active: true,
+  source: "personal",
+  createdAt: "2026-11-01T10:00:00Z",
+  updatedAt: "2026-11-01T10:00:00Z",
+  days: [
+    {
+      key: "A",
+      title: "Agachamento, supino e remada",
+      focus: [],
+      exercises: [
+        planned("p-ag", "agachamento_livre", "Agachamento livre"),
+        planned("p-sup", "supino_reto_barra", "Supino reto com barra", "bi_set"),
+        planned("p-rem", "remada_curvada_barra", "Remada curvada com barra"),
+        planned("p-abd", "abdominal_supra", "Abdominal supra", "normal", { sets: 3, restSec: 45 }),
+      ],
+    },
+    { key: "B", title: "", focus: [], exercises: [planned("p-a", "supino_reto_barra", "Supino", "tri_set"), planned("p-b", "remada_curvada_barra", "Remada", "tri_set")] },
+  ],
+};
+
+describe("buildDraft (U1d)", () => {
+  it("grava links coerentes com assignLinks, pelo uid de cada registro", () => {
+    const d = buildDraft("u", program, "A", []);
+    const [ag, sup, rem, abd] = d.session.exercises;
+    expect(d.links).toEqual({ [sup!.uid]: "A:1", [rem!.uid]: "A:1" });
+    expect(d.links).toEqual(assignLinks("A", d.session.exercises));
+    expect(d.links).not.toHaveProperty(ag!.uid);
+    expect(d.links).not.toHaveProperty(abd!.uid);
+    // A tela agrupa igual à heurística no início do treino.
+    expect(linkGroups(d.session.exercises, d.links)).toEqual(linkGroups(d.session.exercises));
+  });
+
+  it("monta o rascunho como antes: séries vazias, descanso por registro, técnica e observação da ficha em planned", () => {
+    const d = buildDraft("u", program, "A", []);
+    expect(d.session).toMatchObject({ userId: "u", programId: "p1", programName: "Ficha", dayKey: "A", dayTitle: "Agachamento, supino e remada", volumeKg: 0, prs: [] });
+    expect(d.session.exercises.map((e) => e.sets.length)).toEqual([4, 4, 4, 3]);
+    expect(d.session.exercises.every((e) => e.sets.every((s) => !s.done && s.reps === null))).toBe(true);
+    expect(d.session.exercises[1]!.planned?.technique).toBe("bi_set");
+    expect(Object.values(d.restSec)).toEqual([90, 90, 90, 45]);
+    // Nada novo em planned para o grupo (fica só no rascunho).
+    expect(Object.keys(d.session.exercises[1]!.planned!)).not.toContain("link");
+  });
+
+  it("dia sem grupo e treino livre gravam links vazio (não cai na heurística depois)", () => {
+    expect(buildDraft("u", { ...program, days: [{ key: "C", title: "", focus: [], exercises: [planned("x", "prancha", "Prancha")] }] }, "C", []).links).toEqual({});
+    const free = buildDraft("u", null, null, []);
+    expect(free.session.exercises).toEqual([]);
+    expect(free.links).toEqual({});
+  });
+
+  it("tri-set com só 2 exercícios no dia fica com os 2", () => {
+    const d = buildDraft("u", program, "B", []);
+    expect(Object.values(d.links!)).toEqual(["B:0", "B:0"]);
+  });
+
+  it("defaultPlan conforme a unidade", () => {
+    expect(defaultPlan({ id: "supino_reto_barra", compound: true })).toEqual({ sets: 3, repsMin: 8, repsMax: 12, restSec: 120 });
+    expect(defaultPlan({ id: "abdominal_supra", compound: false })).toEqual({ sets: 3, repsMin: 8, repsMax: 12, restSec: 75 });
+    expect(defaultPlan({ id: "prancha", compound: false })).toEqual({ sets: 3, repsMin: 30, repsMax: 45, restSec: 45 });
+  });
+});
+
+describe("parseDraft: links (U1d)", () => {
+  it("preserva links válidos (inclusive de quem saiu do treino)", () => {
+    const d = parseDraft(JSON.stringify({ session, suggestions: {}, restSec: {}, links: { a: "B:0", saiu: "B:0" } }));
+    expect(d?.links).toEqual({ a: "B:0", saiu: "B:0" });
+  });
+
+  it("descarta valores que não são string e mantém o resto", () => {
+    const d = parseDraft(JSON.stringify({ session, links: { a: "B:0", b: 3, c: null, d: { id: "x" }, e: "" } }));
+    expect(d?.links).toEqual({ a: "B:0" });
+  });
+
+  it("links vazio continua vazio (treino sem grupos), não vira rascunho antigo", () => {
+    expect(parseDraft(JSON.stringify({ session, links: {} }))?.links).toEqual({});
+  });
+
+  it("rascunho antigo (sem links) ou links sem formato de mapa → undefined (a tela usa a heurística)", () => {
+    const old = parseDraft(JSON.stringify({ session, suggestions: {}, restSec: {} }));
+    expect(old?.links).toBeUndefined();
+    expect(old && "links" in old).toBe(false);
+    expect(parseDraft(JSON.stringify({ session, links: ["B:0"] }))?.links).toBeUndefined();
+    expect(parseDraft(JSON.stringify({ session, links: "B:0" }))?.links).toBeUndefined();
+  });
+
+  it("saveDraft + parseDraft: o grupo sobrevive a recarregar a página", () => {
+    const store = new Map<string, string>();
+    (globalThis as { localStorage?: Pick<Storage, "getItem" | "setItem" | "removeItem"> }).localStorage = {
+      getItem: (k) => store.get(k) ?? null,
+      setItem: (k, v) => void store.set(k, v),
+      removeItem: (k) => void store.delete(k),
+    };
+    try {
+      const d = buildDraft("u", program, "A", []);
+      saveDraft("u", d, null);
+      expect(parseDraft(store.get(draftKey("u")))?.links).toEqual(d.links);
+    } finally {
+      delete (globalThis as { localStorage?: unknown }).localStorage;
+    }
   });
 });

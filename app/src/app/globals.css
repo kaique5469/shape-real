@@ -6,8 +6,9 @@
  * Mundo: a ficha de treino de papel das academias brasileiras (grade, colunas
  * séries × reps × carga, carga antiga riscada a lápis) + o código de cores das
  * anilhas de competição (25 vermelho, 20 azul, 15 amarelo, 10 verde, 5 branco).
- * Cor tem significado: vermelho = recorde/carga máxima, azul = informação/ação
- * secundária, verde = concluído, amarelo = atenção/seleção.
+ * Cor tem significado (tokens semânticos abaixo, regras em DECISIONS.md): vermelho vivo = marca, anilha
+ * ou recorde (sempre com troféu + palavra); vinho = destrutivo, erro e bloqueio (nunca fundo sólido);
+ * âmbar = atenção; verde = concluído; azul = informação e foco. Componentes não usam plate-* direto.
  * Cena de uso: piso de academia sob luz fluorescente, celular na mão entre séries →
  * fundo claro de alto contraste, alvos de toque grandes, números grandes.
  */
@@ -35,6 +36,27 @@
   --color-plate-green: #12843f;
   --color-plate-green-ink: #0d6b32;
   --color-plate-chrome: #a9afb6;
+
+  /*
+   * Semânticos: componentes usam ESTES. Os primitivos plate-* ficam para desenho (anilhas) e para esta tabela.
+   * Igualdades com os primitivos e contrastes garantidos por src/lib/ui/tokens.test.ts.
+   */
+  --color-brand: #d3241c;          /* identidade: logo, letra do treino. Nunca indica estado nem ação. */
+  --color-record: #d3241c;         /* conquista: selo/faixa de recorde, SEMPRE com troféu + palavra. Hoje = brand, por decisão. */
+  --color-on-record: #ffffff;      /* 5,20:1 sobre record */
+  --color-danger: #a8160f;         /* destrutivo, erro e bloqueio de segurança: texto, ícone, borda. Nunca fundo sólido. 7,54:1 papel; 6,70:1 chalk */
+  --color-danger-surface: #fcf2f1; /* danger sobre ela: 6,86:1 */
+  --color-danger-line: #cb736f;    /* 3,38:1 papel; 3,07:1 sobre danger-surface */
+  --color-warn-ink: #8a5a00;       /* atenção: ícone. 5,93:1 papel; 5,44:1 warn-surface; 5,27:1 chalk */
+  --color-warn-surface: #fdf5dc;   /* iron sobre ela: 16,79:1 */
+  --color-warn-line: #f7ce50;      /* decorativa: o estado está no texto e no ícone */
+  --color-warn-fill: #f3b905;      /* faixa sólida (BETA, fim do descanso, "Alterações não salvas"); texto e ícone iron: 10,24:1 */
+  --color-done: #12843f;           /* concluído: ✓ branco 4,77:1; ícone no papel 4,77:1 */
+  --color-done-ink: #0d6b32;       /* texto de confirmação: 6,63:1 */
+  --color-done-surface: #e3f0e8;   /* done-ink sobre ela: 5,65:1 */
+  --color-info-ink: #173ea6;       /* 9,23:1 papel; 8,54:1 sobre info-surface */
+  --color-info-surface: #f4f6fd;
+  --color-field: #858c96;          /* = pencil. Borda de Input/Select/Textarea/Stepper: 3,39:1 papel; 3,02:1 chalk */
 
   --radius-ficha: 6px;
   --shadow-lift: 0 1px 0 rgb(18 21 26 / 0.04), 0 8px 24px -12px rgb(18 21 26 / 0.18);
@@ -89,6 +111,18 @@ body {
   outline-offset: 2px;
   border-radius: 4px;
 }
+/*
+ * Foco em superfície escura. FORA de qualquer @layer: regra em camada perderia para o :focus-visible acima,
+ * que não tem camada (e os utilitários do Tailwind ficam em @layer utilities).
+ */
+/* Anel de foco em superfície escura: chalk sobre iron = 16,27:1 (o azul dá 2,69:1). */
+[data-surface="dark"] :focus-visible {
+  outline-color: var(--color-chalk);
+}
+/* Diálogo (papel) aberto a partir de uma superfície escura: <dialog> fica no DOM dentro dela. Volta o azul (6,81:1). */
+[data-surface="dark"] [data-surface="light"] :focus-visible {
+  outline-color: var(--color-plate-blue);
+}
 input,
 textarea,
 select {
@@ -101,6 +135,31 @@ a {
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--color-rule-strong) transparent;
+}
+
+/*
+ * Toque sem o atraso do duplo toque (e sem o zoom de dois toques rápidos no + da carga). Fica na camada base:
+ * um utilitário touch-* no elemento continua valendo. A pinça para ampliar continua liberada.
+ */
+@layer base {
+  a,
+  button,
+  input,
+  select,
+  textarea,
+  summary,
+  label,
+  [role="button"],
+  [role="radio"],
+  [role="checkbox"],
+  [role="tab"] {
+    touch-action: manipulation;
+  }
+}
+
+/* Barra fixa acima do menu de baixo do painel (5rem) e da área segura do iPhone (barra de gestos). */
+@utility bottom-nav-safe {
+  bottom: calc(5rem + env(safe-area-inset-bottom));
 }
 
 /* Números de treino: tabulares e um pouco condensados para caberem nas colunas. */

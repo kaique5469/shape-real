@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Check, Copy, IdCard, MessageCircle, Printer, Trophy } from "lucide-react";
+import { Check, Copy, IdCard, MessageCircle, Printer } from "lucide-react";
 import { shareNames } from "@/components/program/program-share";
+import { RecordMark } from "@/components/record-mark";
 import { Alert, Button, Empty, Field, Segmented, Skeleton, Textarea, cx } from "@/components/ui";
 import { reportError, track } from "@/lib/analytics";
 import { useApp } from "@/lib/app-context";
@@ -11,7 +12,8 @@ import { COACH_IDENTITY_HINT, needsCoachIdentity } from "@/lib/data/demo";
 import { coachSignature, signerFor } from "@/lib/domain/program-share";
 import { firstName, waLink, waPhone } from "@/lib/domain/format";
 import { todayISO } from "@/lib/domain/ids";
-import { buildReport, fmtDuration, nameList, reportToText, type EvolutionReport, type ReportDays } from "@/lib/domain/report";
+import { comparisonDates } from "@/lib/domain/evolution";
+import { buildReport, fmtDuration, markText, nameList, reportToText, strengthChange, strengthNotes, type EvolutionReport, type ReportDays } from "@/lib/domain/report";
 import { fmtDate, fmtNum, useLoad } from "@/lib/hooks";
 import type { PhotoPose, Profile, ProgressPhoto } from "@/lib/domain/types";
 
@@ -20,7 +22,6 @@ const WEEKDAY_NAMES = ["segunda", "terça", "quarta", "quinta", "sexta", "sábad
 const POSE_LABEL: Record<PhotoPose, string> = { frente: "frente", lado: "lado", costas: "costas" };
 const msgKey = (id: string) => `sr:report-msg:${id}`;
 
-const kg = (v: number) => `${v.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} kg`;
 const signed = (v: number, digits = 1) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v).toLocaleString("pt-BR", { maximumFractionDigits: digits })}`;
 
 /** Par antes/depois da mesma pose: a foto mais recente do período e a anterior com pelo menos duas semanas de distância. */
@@ -283,8 +284,9 @@ function Sheet({
 
       {r.strength.length || r.prs.length ? (
         <section className="border-t border-rule px-4 py-5 sm:px-6" aria-label="Cargas">
-          <h3 className="col-head text-steel">Cargas que subiram</h3>
+          <h3 className="col-head text-steel">Exercícios que melhoraram</h3>
           {r.strength.length ? (
+            // 3 colunas para caber a 360 px: a data e a diferença vão embaixo da marca (U6 §3.3 D).
             <table className="num mt-2 w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-steel">
@@ -294,42 +296,43 @@ function Sheet({
                   <th scope="col" className="py-1.5 pr-2 font-semibold">
                     Antes
                   </th>
-                  <th scope="col" className="py-1.5 pr-2 font-semibold">
-                    Agora
-                  </th>
-                  <th scope="col" className="py-1.5 text-right font-semibold">
-                    Força
+                  <th scope="col" className="py-1.5 font-semibold">
+                    Melhor
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {r.strength.map((s) => (
-                  <tr key={s.exerciseId} className="border-t border-rule align-top">
-                    <th scope="row" className="py-2 pr-2 text-left font-semibold">
-                      {s.name}
-                    </th>
-                    <td className="whitespace-nowrap py-2 pr-2 text-steel">
-                      {kg(s.from.loadKg)} × {s.from.reps}
-                    </td>
-                    <td className="whitespace-nowrap py-2 pr-2 font-semibold">
-                      {kg(s.to.loadKg)} × {s.to.reps}
-                    </td>
-                    <td className="whitespace-nowrap py-2 text-right font-bold text-plate-green-ink">{signed(s.deltaPct, 0)}%</td>
-                  </tr>
-                ))}
+                {r.strength.map((s) => {
+                  const dates = comparisonDates(s.fromDate, s.toDate);
+                  return (
+                    <tr key={s.exerciseId} className="border-t border-rule align-top">
+                      <th scope="row" className="py-2 pr-2 text-left font-semibold [overflow-wrap:anywhere]">
+                        {s.name}
+                      </th>
+                      <td className="py-2 pr-2 text-steel">
+                        <span className="block whitespace-nowrap">{markText(s, "from")}</span>
+                        <span className="block text-xs">{dates.first}</span>
+                      </td>
+                      <td className="py-2 font-semibold">
+                        <span className="block whitespace-nowrap">{markText(s, "to")}</span>
+                        <span className="block whitespace-nowrap text-xs font-normal text-steel">
+                          {dates.last} · <strong className="font-bold text-done-ink">{strengthChange(s)}</strong>
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
-          ) : (
-            <p className="mt-2 text-[0.9375rem] text-steel">As cargas se mantiveram no período.</p>
-          )}
-          {r.strength.length && r.steady ? (
-            <p className="mt-2 text-sm text-steel">
-              {r.steady === 1 ? "Outro exercício manteve a carga." : `Outros ${r.steady} exercícios mantiveram a carga.`} A coluna Força compara a melhor série, somando carga e repetições.
-            </p>
           ) : null}
+          {strengthNotes(r).map((note, i) => (
+            <p key={note} className={cx("text-steel", i === 0 ? "mt-2" : "mt-1", r.strength.length ? "text-sm" : "text-[0.9375rem]")}>
+              {note}
+            </p>
+          ))}
           {r.prs.length ? (
             <p className="mt-3 flex items-start gap-2 text-[0.9375rem]">
-              <Trophy className="mt-0.5 size-4 shrink-0 text-plate-red" aria-hidden />
+              <RecordMark variant="icon" label={false} className="mt-0.5" />
               <span>
                 <strong>{r.prs.length === 1 ? "1 recorde pessoal" : `${r.prs.length} recordes pessoais`}:</strong> {nameList(r.prs.map((p) => p.name))}.
               </span>

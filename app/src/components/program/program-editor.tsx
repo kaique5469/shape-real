@@ -12,11 +12,13 @@ import { reportError, track } from "@/lib/analytics";
 import { useApp } from "@/lib/app-context";
 import { COACH_IDENTITY_HINT, needsCoachIdentity } from "@/lib/data/demo";
 import { GROUP_LABEL, getExercise, unitOf } from "@/lib/domain/exercises";
-import { firstName, fmtLoad, fmtRest, fmtScheme, programValidity } from "@/lib/domain/format";
+import { fichaCoach, fichaKind, programAdjustedNote, shouldMarkAdjusted, type FichaKind } from "@/lib/domain/ficha-context";
+import { firstName, fmtLoad, fmtRest, fmtScheme, programValidity, validityEnd } from "@/lib/domain/format";
 import { GOAL_LABEL, LEVEL_LABEL, TECHNIQUE_LABEL, buildPlanned, estimateDayMinutes, repScheme } from "@/lib/domain/generator";
 import { uid } from "@/lib/domain/ids";
 import { PLANS } from "@/lib/domain/plans";
-import { coachSignature, focusOfDay, nextDayKey, programSetsPerGroup, signerFor, techniqueText } from "@/lib/domain/program-share";
+import { coachSignature, nextDayKey, programSetsPerGroup, signerFor, techniqueText } from "@/lib/domain/program-share";
+import { draftToRestore, parseFichaDraft, programForSave, programSignature, type FichaDraft } from "@/lib/domain/program-signature";
 import { getSystem } from "@/lib/domain/systems";
 import { fmtDate } from "@/lib/hooks";
 import type { Exercise, Goal, Level, PlannedExercise, Profile, Program, Technique, Unit, WorkoutDay } from "@/lib/domain/types";
@@ -38,9 +40,13 @@ interface Props {
 }
 
 export function ProgramEditor({ programId, onSaved, student, back }: Props) {
-  const { repo, user, plan } = useApp();
+  const { repo, user, plan, mode, returnTo } = useApp();
   const router = useRouter();
   const [program, setProgram] = useState<Program | null>(null);
+  // Última versão lida ou gravada no repositório: base do rascunho (baseSig) e da diferença ao salvar.
+  const [base, setBase] = useState<Program | null>(null);
+  // Perfil local de quem montou uma ficha recebida, quando não é o personal atual (nome na impressão).
+  const [creator, setCreator] = useState<Profile | null>(null);
   const [day, setDay] = useState(0);
   const [dirty, setDirty] = useState(false);
   const [openEx, setOpenEx] = useState<string | null>(null);
@@ -64,10 +70,12 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
         if (!alive) return;
         if (!p) return setNotFound(true);
         const q = new URLSearchParams(window.location.search);
-        // Edição que ficou sem salvar (voltar do aparelho, recarregar, menu): volta como estava,
-        // desde que a ficha salva ainda seja a mesma versão em que a edição começou.
-        const draft = readDraft(user?.id ?? "", programId);
-        if (draft && draft.updatedAt === p.updatedAt) {
+        setBase(p);
+        // Edição que ficou sem salvar (voltar do aparelho, recarregar, menu): volta como estava, desde que a ficha
+        // salva ainda seja a mesma versão em que a edição começou (assinatura de conteúdo: uma carga copiada de um
+        // treino depois do rascunho o invalida). Rascunho sem diferença da versão salva é descartado em silêncio.
+        const draft = draftToRestore(readDraft(user?.id ?? "", programId), p);
+        if (draft) {
           setProgram(draft);
           setDirty(true);
           setRestored(true);
@@ -120,16 +128,37 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
     };
   }, [dirty]);
 
+  // Assinatura da versão de onde a edição partiu: vai junto no rascunho.
+  const baseSig = useMemo(() => (base ? programSignature(base) : undefined), [base]);
+
   // Guarda o que está em edição enquanto não for salvo (cobre o "voltar" do aparelho e a recarga).
   useEffect(() => {
     if (!ready.current) return;
     try {
-      if (dirty && program) sessionStorage.setItem(fichaDraftKey(user?.id ?? "", programId), JSON.stringify(program));
+      const draft: FichaDraft | null = dirty && program ? { program, ...(baseSig ? { baseSig } : {}) } : null;
+      if (draft) sessionStorage.setItem(fichaDraftKey(user?.id ?? "", programId), JSON.stringify(draft));
       else sessionStorage.removeItem(fichaDraftKey(user?.id ?? "", programId));
     } catch {
       /* sem espaço ou modo privado: segue só em memória */
     }
-  }, [program, dirty, programId, user?.id]);
+  }, [program, dirty, baseSig, programId, user?.id]);
+
+  // Ficha recebida de um personal que não é o atual: o nome vem do perfil local dele (gravado quando o link chegou).
+  const createdBy = program?.createdBy;
+  const needCreator = Boolean(createdBy && user && user.role !== "coach" && createdBy !== user.id && user.remoteCoach?.id !== createdBy);
+  useEffect(() => {
+    if (!needCreator || !createdBy) return;
+    let alive = true;
+    repo
+      .getProfile(createdBy)
+      .then((p) => {
+        if (alive) setCreator(p);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [needCreator, createdBy, repo]);
 
   function dropDraft() {
     try {
@@ -143,7 +172,10 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
     setDirty(false);
     setMsg(null);
     const fresh = await repo.getProgram(programId).catch(() => null);
-    if (fresh) setProgram(fresh);
+    if (fresh) {
+      setProgram(fresh);
+      setBase(fresh);
+    }
   }
 
   const volume = useMemo(() => (program ? programSetsPerGroup(program) : []), [program]);
@@ -173,8 +205,20 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
   const template = user?.role === "coach" && program.ownerId === user.id;
   const validity = programValidity(program.createdAt, program.durationWeeks);
   const names = shareNames(user, student);
-  // Assinatura "Nome · CREF …" da ficha impressa: o personal logado ou, no celular do aluno, o personal que enviou a ficha.
-  const signature = coachSignature(signerFor(user, program.createdBy));
+  const kind: FichaKind = user ? fichaKind({ viewer: user, program, returnTo }) : "propria";
+  const fmtFull = (iso: string) => fmtDate(iso, { day: "2-digit", month: "2-digit", year: "numeric" });
+  // Ficha do personal ajustada no aparelho do aluno: sai sem a assinatura dele, com "Ajustada em … a partir da ficha de …".
+  const adjustedNote = kind === "recebida" ? programAdjustedNote(program, fichaCoach({ createdBy: program.createdBy, remoteCoach: user?.remoteCoach, creator }).full, fmtFull) : null;
+  // Assinatura "Nome · CREF …" da ficha impressa: o personal logado ou, no celular do aluno, o personal que enviou a
+  // ficha. Conteúdo alterado no aparelho do aluno (adjustedAt) nunca leva nome nem CREF do personal.
+  const signature = program.adjustedAt ? undefined : coachSignature(signerFor(user, program.createdBy));
+  // Impressão: a mesma data da tela (validade conta da criação da ficha). O modelo não tem data: as cópias contam da
+  // própria criação, então o papel do modelo continua com a duração planejada.
+  const printValidity = program.durationWeeks
+    ? template
+      ? `Validade: ${program.durationWeeks} semanas`
+      : `Válida até ${fmtFull(validityEnd(program.createdAt, program.durationWeeks).toISOString())}`
+    : null;
 
   const change = (fn: (p: Program) => Program) => {
     setProgram((p) => (p ? fn(p) : p));
@@ -240,20 +284,11 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
     if (new Set(keys).size !== keys.length) return fail("Dois treinos estão com a mesma letra. Use letras diferentes para cada um.");
     setSaving(true);
     try {
-      const clean: Program = {
-        ...program,
-        name,
-        days: program.days.map((x) => ({
-          ...x,
-          key: x.key.trim(),
-          title: x.title.trim(),
-          focus: x.exercises.length ? focusOfDay(x) : x.focus,
-          exercises: x.exercises.map((e) => ({ ...e, repsMin: Math.min(e.repsMin, e.repsMax), repsMax: Math.max(e.repsMin, e.repsMax), notes: e.notes?.trim() || undefined })),
-        })),
-        updatedAt: new Date().toISOString(),
-      };
+      // Ficha recebida do personal, no modo local, com diferença: grava adjustedAt e mantém createdBy.
+      const { program: clean } = programForSave(program, base, { now: new Date().toISOString(), markAdjusted: shouldMarkAdjusted(kind, mode) });
       const saved = await repo.saveProgram(clean);
       setProgram(saved);
+      setBase(saved);
       setDirty(false);
       setRestored(false);
       const planned = saved.days.flatMap((x) => x.exercises);
@@ -266,7 +301,7 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
         with_notes: planned.filter((e) => e.notes).length,
         has_validity: Boolean(saved.durationWeeks),
         system: saved.system,
-        kind: template ? "modelo" : isCoachEditing ? "aluno" : "propria",
+        kind,
       });
       const whoSees = student ? firstName(student.name) : "O aluno";
       setMsg({
@@ -295,6 +330,7 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
     try {
       await repo.setActiveProgram(program!.ownerId, program!.id);
       setProgram((p) => (p ? { ...p, active: true } : p));
+      setBase((b) => (b ? { ...b, active: true } : b));
       setMsg({ tone: "done", text: "Esta é a ficha ativa agora." });
     } catch (e) {
       reportError(e, "ficha:ativar");
@@ -562,11 +598,9 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
       <div className="hidden print:block">
         <header className="mb-4 border-b-2 border-iron pb-2">
           <h1 className="plate-type text-2xl">{program.name}</h1>
-          {signature ? <p className="text-sm font-semibold">{signature}</p> : null}
+          {adjustedNote ? <p className="text-sm font-semibold">{adjustedNote}</p> : signature ? <p className="text-sm font-semibold">{signature}</p> : null}
           <p className="text-sm">
-            {[names.studentName && `${names.studentLabel}: ${names.studentName}`, `Emitida em ${fmtDate(new Date().toISOString(), { day: "2-digit", month: "2-digit", year: "numeric" })}`, program.durationWeeks && `Validade: ${program.durationWeeks} semanas`]
-              .filter(Boolean)
-              .join(" · ")}
+            {[names.studentName && `${names.studentLabel}: ${names.studentName}`, `Emitida em ${fmtFull(new Date().toISOString())}`, printValidity].filter(Boolean).join(" · ")}
           </p>
         </header>
         <div className="space-y-4">
@@ -585,7 +619,7 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
       </div>
 
       {dirty ? (
-        <div className="no-print sticky bottom-20 z-10 space-y-2 lg:bottom-4">
+        <div className="no-print sticky bottom-nav-safe z-10 space-y-2 lg:bottom-4">
           {msg?.tone === "error" ? (
             // Fundo opaco: a barra flutua sobre a lista de exercícios.
             <div className="rounded-[var(--radius-ficha)] bg-paper shadow-lift">
@@ -686,14 +720,25 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
 
 const fichaDraftKey = (editorId: string, programId: string) => `sr:fichadraft:${editorId}:${programId}`;
 
-function readDraft(editorId: string, programId: string): Program | null {
+/** Rascunho `{ program, baseSig }` (ou a ficha solta, de antes da U5a); null sem rascunho ou com armazenamento bloqueado. */
+function readDraft(editorId: string, programId: string): FichaDraft | null {
   try {
-    const raw = sessionStorage.getItem(fichaDraftKey(editorId, programId));
-    const p = raw ? (JSON.parse(raw) as Program) : null;
-    return p && p.id === programId && Array.isArray(p.days) && p.days.length ? p : null;
+    return parseFichaDraft(sessionStorage.getItem(fichaDraftKey(editorId, programId)), programId);
   } catch {
     return null;
   }
+}
+
+/**
+ * Seleciona todo o texto agora e de novo no próximo tique: o Safari do iPhone pode pôr o cursor no fim depois do
+ * foco, e "30" + "35" viraria "3035" (U8 R17). Só reaplica se o campo ainda tem o foco e o mesmo valor.
+ */
+function selectAllSoon(el: HTMLInputElement) {
+  const value = el.value;
+  el.select();
+  setTimeout(() => {
+    if (document.activeElement === el && el.value === value) el.setSelectionRange(0, el.value.length);
+  }, 0);
 }
 
 function swap<T>(list: T[], a: number, b: number): T[] {
@@ -748,7 +793,7 @@ function NumField({
         value={text}
         onFocus={(e) => {
           setFocused(true);
-          e.target.select();
+          selectAllSoon(e.target);
         }}
         onChange={(e) => {
           const raw = e.target.value.replace(decimal ? /[^\d.,]/g : /\D/g, "").slice(0, 6);

@@ -6,6 +6,7 @@ import { cachedSelf, clearCloudCache, getSupabase, SupabaseRepository, supabaseC
 import { seedDemo, seedTester } from "@/lib/data/demo";
 import type { Repository } from "@/lib/data/repository";
 import { registerCustomExercises } from "@/lib/domain/exercises";
+import { SOLO_TESTER_ID } from "@/lib/domain/ficha-context";
 import { registerCustomFoods } from "@/lib/domain/foods";
 import type { PlanId, Profile, Role } from "@/lib/domain/types";
 import { uid } from "@/lib/domain/ids";
@@ -291,7 +292,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const startSolo = useCallback(async () => {
     const owner = user;
-    const soloId = "teste-solo";
+    const soloId = SOLO_TESTER_ID;
     let p = await localRepo.getProfile(soloId);
     if (!p) {
       p = { id: soloId, name: owner && owner.name !== "Personal" ? owner.name : "Atleta", role: "athlete", plan: "free", onboarded: false, createdAt: new Date().toISOString() };

@@ -4,8 +4,9 @@ import { localRepo } from "@/lib/app-context";
 import { track } from "@/lib/analytics";
 import { lastBackupAt, markBackupDone } from "@/lib/data/local";
 import type { Repository } from "@/lib/data/repository";
+import { addPrepEntries, isIsoDate, nextAck, parseFichaAck, parseFichaSendRecord, parsePrepLog, type FichaAck, type FichaSendRecord, type PrepEntry, type PrepVia } from "@/lib/domain/delivery";
 import { uid } from "@/lib/domain/ids";
-import { backupAgeBucket, backupFileName, buildBackup, downloadText, parseBackup as parseBackupFile, SENT_KEY_RE, type Backup, type BackupBundle } from "@/lib/domain/export";
+import { backupAgeBucket, backupFileName, buildBackup, downloadText, parseBackup as parseBackupFile, SENT_KEY_RE, SENT_SINCE_KEY, SENT_SUFFIXES, sentKeyOf, type Backup, type BackupBundle } from "@/lib/domain/export";
 import { mergeMetric, mirrorLoads, studentFieldsOf, type FichaPacket, type TreinosPacket } from "@/lib/domain/transfer";
 import type { Profile, Session } from "@/lib/domain/types";
 
@@ -107,7 +108,7 @@ export async function importTreinos(packet: TreinosPacket, studentId: string): P
 }
 
 // ---- treinos já enviados ao personal (aparelho do aluno) ----------------------------
-const sentKey = (userId: string) => `sr:sent:${userId}`;
+const sentKey = (userId: string) => sentKeyOf(userId);
 
 export function sentSessionIds(userId: string): Set<string> {
   try {
@@ -117,29 +118,106 @@ export function sentSessionIds(userId: string): Set<string> {
   }
 }
 
-export function markSessionsSent(userId: string, ids: string[]) {
+/** Só a lista antiga (compatibilidade). Toque novo de envio usa `markSessionsPrepared`, que grava canal e hora. */
+export function markSessionsSent(userId: string, ids: string[], at: string = new Date().toISOString()) {
   try {
     const all = sentSessionIds(userId);
     for (const id of ids) all.add(id);
     localStorage.setItem(sentKey(userId), JSON.stringify([...all].slice(-500)));
-    localStorage.setItem(`${sentKey(userId)}:at`, new Date().toISOString());
+    localStorage.setItem(sentKeyOf(userId, ":at"), at);
   } catch {}
 }
 
 export function lastSentAt(userId: string): string | null {
   try {
-    return localStorage.getItem(`${sentKey(userId)}:at`);
+    return localStorage.getItem(sentKeyOf(userId, ":at"));
   } catch {
     return null;
   }
 }
 
-/** Chaves "sr:sent:*" destes perfis, para a cópia de segurança. */
+// ---- registro de envio com evidência (U2; tipos e regras em @/lib/domain/delivery) ------
+function readJson(key: string): unknown {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw === null ? null : (JSON.parse(raw) as unknown);
+  } catch {
+    return null;
+  }
+}
+
+/** Último toque de envio por treino neste aparelho (`sr:sent:{id}:log`); entradas ilegíveis ficam de fora. */
+export function prepLog(userId: string): Record<string, PrepEntry> {
+  return parsePrepLog(readJson(sentKeyOf(userId, ":log")));
+}
+
+/**
+ * Toque em "Enviar no WhatsApp" ou "Copiar mensagem" do envio de treinos: grava canal e hora por treino no log
+ * (no máximo PREP_LOG_MAX, saem os mais antigos), a lista antiga e `:at` (Hoje e cópias antigas continuam iguais).
+ * Registra o TOQUE: nunca afirma que a mensagem saiu ou chegou.
+ */
+export function markSessionsPrepared(userId: string, ids: readonly string[], via: PrepVia, at: string = new Date().toISOString()) {
+  try {
+    const log = addPrepEntries(prepLog(userId), ids, { via, at });
+    localStorage.setItem(sentKeyOf(userId, ":log"), JSON.stringify(log));
+  } catch {}
+  markSessionsSent(userId, [...ids], at);
+}
+
+/** Aparelho do personal: o registro de envio da ficha e da dieta deste aluno (`sr:sent:{alunoId}:ficha`). */
+export function fichaSendRecord(studentId: string): FichaSendRecord | null {
+  return parseFichaSendRecord(readJson(sentKeyOf(studentId, ":ficha")));
+}
+
+/**
+ * Toque de envio da ficha (link no WhatsApp ou mensagem copiada): o ÚNICO registro de envio da ficha, com as
+ * versões (`updatedAt`) da ficha e da dieta que foram no pacote. Não grava nada na ficha. Garante o marcador
+ * de início do registro (`sr:sent:@desde`).
+ */
+export function markFichaPrepared(studentId: string, rec: FichaSendRecord) {
+  deliveryTrackingSince();
+  try {
+    const clean: FichaSendRecord = { at: rec.at, via: rec.via, programAt: rec.programAt ?? null, dietAt: rec.dietAt ?? null };
+    localStorage.setItem(sentKeyOf(studentId, ":ficha"), JSON.stringify(clean));
+  } catch {}
+}
+
+/** Aparelho do personal: a versão da ficha e da dieta que o aluno disse ter, vinda com os treinos (`:ack`). */
+export function fichaAckOf(studentId: string): FichaAck | null {
+  return parseFichaAck(readJson(sentKeyOf(studentId, ":ack")));
+}
+
+/** Grava o eco do aluno só se o pacote de treinos for mais novo que o do eco atual (`nextAck`: nunca volta atrás). */
+export function recordFichaAck(studentId: string, ack: FichaAck) {
+  try {
+    const next = nextAck(fichaAckOf(studentId), ack);
+    localStorage.setItem(sentKeyOf(studentId, ":ack"), JSON.stringify(next));
+  } catch {}
+}
+
+/**
+ * Desde quando este aparelho registra envios de ficha (`sr:sent:@desde`). Grava "agora" na primeira leitura.
+ * Fora da cópia de segurança: num aparelho novo recomeça, e o que é mais antigo vira "sem informação".
+ */
+export function deliveryTrackingSince(now: string = new Date().toISOString()): string {
+  try {
+    const cur = localStorage.getItem(SENT_SINCE_KEY);
+    if (isIsoDate(cur)) return cur;
+    localStorage.setItem(SENT_SINCE_KEY, now);
+  } catch {}
+  return now;
+}
+
+/** Apaga as chaves de envio de um perfil. Implementada em data/local (o repositório chama ao remover um perfil). */
+export { clearDeliveryKeys } from "@/lib/data/local";
+
+/** Chaves "sr:sent:*" destes perfis, para a cópia de segurança (`@desde` fica de fora). */
 function readSentKeys(ids: string[]): Record<string, string> {
   const out: Record<string, string> = {};
   try {
     for (const id of ids) {
-      for (const k of [sentKey(id), `${sentKey(id)}:at`]) {
+      for (const suffix of SENT_SUFFIXES) {
+        const k = sentKeyOf(id, suffix);
         const v = localStorage.getItem(k);
         if (v !== null && SENT_KEY_RE.test(k)) out[k] = v;
       }
@@ -231,7 +309,8 @@ async function restoreBundle(b: BackupBundle, ownerOverride?: Partial<Profile>) 
   for (const p of b.programs ?? []) await localRepo.saveProgram({ ...p, ownerId: b.profile.id }, { keepUpdatedAt: true });
   if (b.sessions?.length) localRepo.saveSessionsBulk(b.sessions.map((s) => ({ ...s, userId: b.profile.id })));
   if (b.metrics?.length) localRepo.saveMetricsBulk(b.metrics.map((m) => ({ ...m, userId: b.profile.id })));
-  if (b.diet) await localRepo.saveDiet({ ...b.diet, ownerId: b.profile.id });
+  // A data da dieta é a da edição, não a da restauração (senão o registro de envio diria que ela "mudou").
+  if (b.diet) await localRepo.saveDiet({ ...b.diet, ownerId: b.profile.id }, { keepUpdatedAt: true });
 }
 
 /** Restaura a cópia neste aparelho (fotos não vão no arquivo). Devolve o perfil a abrir. */

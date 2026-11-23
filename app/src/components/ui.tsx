@@ -2,20 +2,27 @@
 
 import Link from "next/link";
 import { forwardRef, useEffect, useId, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
-import { Loader2, X } from "lucide-react";
+import { CircleAlert, CircleCheck, Info, Loader2, TriangleAlert, X } from "lucide-react";
 
 import { cx } from "@/lib/cx";
 export { cx };
 
-type Variant = "primary" | "secondary" | "ghost" | "record" | "danger";
+/**
+ * Uma ação principal (fundo sólido) por região visível: `primary` no claro, `inverse` dentro de
+ * `data-surface="dark"`. `danger` = destrutivo (Excluir, Remover, Apagar, Descartar, Desvincular), sempre com
+ * ícone e nunca cheio. Vermelho vivo não é cor de botão (é marca, anilha e recorde).
+ */
+export type Variant = "primary" | "secondary" | "ghost" | "inverse" | "danger";
 const VARIANT: Record<Variant, string> = {
   primary: "bg-iron text-chalk hover:bg-iron-2 active:translate-y-px shadow-press",
   secondary: "bg-paper text-iron border border-rule-strong hover:border-iron active:translate-y-px",
   ghost: "text-iron hover:bg-chalk-2",
-  record: "bg-plate-red text-white hover:bg-plate-red-ink active:translate-y-px shadow-press",
-  danger: "bg-paper text-plate-red-ink border border-plate-red/40 hover:border-plate-red hover:bg-plate-red/5",
+  /** Só dentro de `data-surface="dark"` (o anel de foco já fica chalk ali). */
+  inverse: "bg-chalk text-iron hover:bg-white active:translate-y-px",
+  danger: "bg-paper text-danger border border-danger-line hover:border-danger hover:bg-danger-surface",
 };
-const SIZE = { sm: "h-9 px-3 text-sm gap-1.5", md: "h-11 px-4 text-[0.9375rem] gap-2", lg: "h-14 px-6 text-base gap-2.5" };
+/** `sm` sobe para 44 px em tela de toque (pointer: coarse) e fica com 36 px no computador. */
+const SIZE = { sm: "h-9 pointer-coarse:h-11 px-3 text-sm gap-1.5", md: "h-11 px-4 text-[0.9375rem] gap-2", lg: "h-14 px-6 text-base gap-2.5" };
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;
@@ -78,9 +85,20 @@ export function LinkButton({
 /**
  * Rótulo + controle. Para um conjunto de botões (Segmented, chips) use `group`: dentro de um <label>
  * o toque no texto ou no espaço entre as opções ativaria a primeira delas.
+ * Erro: ícone + texto em `danger` (`data-field-error`). Quem marca `aria-invalid` e `aria-describedby` no
+ * controle é o formulário; `noteId` põe o id na mensagem (erro ou dica) para ligar as duas coisas.
  */
-export function Field({ label, hint, error, children, className, group }: { label: string; hint?: string; error?: string; children: ReactNode; className?: string; group?: boolean }) {
-  const note = error ? <span className="mt-1 block text-sm text-plate-red-ink">{error}</span> : hint ? <span className="mt-1 block text-[0.8125rem] text-steel">{hint}</span> : null;
+export function Field({ label, hint, error, children, className, group, noteId }: { label: string; hint?: string; error?: string; children: ReactNode; className?: string; group?: boolean; noteId?: string }) {
+  const note = error ? (
+    <span id={noteId} data-field-error className="mt-1 flex items-start gap-1.5 text-sm text-danger">
+      <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+      <span className="min-w-0">{error}</span>
+    </span>
+  ) : hint ? (
+    <span id={noteId} className="mt-1 block text-[0.8125rem] text-steel">
+      {hint}
+    </span>
+  ) : null;
   if (group) {
     return (
       <div role="group" aria-label={label} className={cx("block", className)}>
@@ -99,8 +117,13 @@ export function Field({ label, hint, error, children, className, group }: { labe
   );
 }
 
+/**
+ * Campos: borda `field` (3,39:1 no papel, 3,02:1 no chalk), placeholder `suggest` (5,15:1), borda `danger`
+ * com `aria-invalid="true"` e 16 px de letra (abaixo disso o Safari do iPhone amplia a tela ao tocar).
+ * Placeholder que parece dado (número, data) começa com "Ex.: ".
+ */
 const inputBase =
-  "w-full rounded-[var(--radius-ficha)] border border-rule-strong bg-paper px-3 text-[0.9375rem] text-iron placeholder:text-pencil transition-colors focus:border-iron focus:outline-none focus-visible:outline-2 focus-visible:outline-plate-blue disabled:bg-chalk-2";
+  "w-full rounded-[var(--radius-ficha)] border border-field bg-paper px-3 text-base text-iron placeholder:text-suggest transition-colors aria-[invalid=true]:border-danger focus:border-iron focus:outline-none focus-visible:outline-2 focus-visible:outline-plate-blue disabled:bg-chalk-2";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input({ className, ...rest }, ref) {
   return <input ref={ref} className={cx(inputBase, "h-11", className)} {...rest} />;
@@ -118,7 +141,11 @@ export function Select({ className, children, ...rest }: SelectHTMLAttributes<HT
   );
 }
 
-/** Controle segmentado — escolhas mutuamente exclusivas com rótulo visível. */
+/**
+ * Controle segmentado — escolhas mutuamente exclusivas com rótulo visível.
+ * `columns`: abaixo de sm, grade com N colunas iguais (todas as opções à vista, sem arrastar); a partir de sm,
+ * linha que quebra, como sem a prop. Com 6 colunas ou mais o vão fica em 2 px.
+ */
 export function Segmented<T extends string | number>({
   value,
   onChange,
@@ -126,6 +153,7 @@ export function Segmented<T extends string | number>({
   label,
   className,
   size = "md",
+  columns,
 }: {
   value: T;
   onChange: (v: T) => void;
@@ -133,9 +161,17 @@ export function Segmented<T extends string | number>({
   label: string;
   className?: string;
   size?: "sm" | "md";
+  /** Abaixo de sm, grade com N colunas; a partir de sm, linha que quebra. */
+  columns?: number;
 }) {
+  const grid = Boolean(columns && columns > 0);
   return (
-    <div role="radiogroup" aria-label={label} className={cx("flex flex-wrap gap-1.5", className)}>
+    <div
+      role="radiogroup"
+      aria-label={label}
+      className={cx(grid ? cx("grid sm:flex sm:flex-wrap sm:gap-1.5", columns! >= 6 ? "gap-0.5" : "gap-1.5") : "flex flex-wrap gap-1.5", className)}
+      style={grid ? { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` } : undefined}
+    >
       {options.map((o) => {
         const active = o.value === value;
         return (
@@ -146,8 +182,10 @@ export function Segmented<T extends string | number>({
             aria-checked={active}
             onClick={() => onChange(o.value)}
             className={cx(
-              "rounded-[var(--radius-ficha)] border text-left font-semibold transition-colors",
-              size === "sm" ? "min-h-10 px-3 py-1.5 text-sm" : "min-h-11 px-3.5 py-2.5 text-[0.9375rem]",
+              "rounded-[var(--radius-ficha)] border font-semibold transition-colors",
+              grid ? "min-w-0 text-center sm:text-left" : "text-left",
+              size === "sm" ? "min-h-10 pointer-coarse:min-h-11 py-1.5 text-sm" : "min-h-11 py-2.5 text-[0.9375rem]",
+              grid ? (size === "sm" ? "px-1 sm:px-3" : "px-1 sm:px-3.5") : size === "sm" ? "px-3" : "px-3.5",
               active ? "border-iron bg-iron text-chalk" : "border-rule-strong bg-paper text-iron hover:border-iron",
             )}
           >
@@ -160,10 +198,11 @@ export function Segmented<T extends string | number>({
   );
 }
 
+/** `record` continua para compatibilidade; recorde novo usa `<RecordMark>` (troféu + palavra). */
 export function Badge({ tone = "neutral", children, className }: { tone?: "neutral" | "record" | "info" | "done" | "warn"; children: ReactNode; className?: string }) {
   const t = {
     neutral: "bg-chalk-2 text-iron",
-    record: "bg-plate-red text-white",
+    record: "bg-record text-on-record",
     info: "bg-plate-blue/10 text-plate-blue-ink",
     done: "bg-plate-green/12 text-plate-green-ink",
     warn: "bg-plate-yellow/25 text-iron",
@@ -213,16 +252,29 @@ export function Empty({ title, body, action, illustration }: { title: string; bo
   );
 }
 
-export function Alert({ tone = "info", children, className }: { tone?: "info" | "warn" | "error" | "done"; children: ReactNode; className?: string }) {
-  const t = {
-    info: "border-plate-blue/30 bg-plate-blue/5 text-iron",
-    warn: "border-plate-yellow/60 bg-plate-yellow/12 text-iron",
-    error: "border-plate-red/40 bg-plate-red/5 text-plate-red-ink",
-    done: "border-plate-green/30 bg-plate-green/8 text-iron",
-  }[tone];
+export type AlertTone = "info" | "warn" | "error" | "done";
+const ALERT: Record<AlertTone, { box: string; icon: string; Icon: typeof Info }> = {
+  info: { box: "border-plate-blue/30 bg-info-surface", icon: "text-info-ink", Icon: Info },
+  warn: { box: "border-warn-line bg-warn-surface", icon: "text-warn-ink", Icon: TriangleAlert },
+  error: { box: "border-danger-line bg-danger-surface", icon: "text-danger", Icon: CircleAlert },
+  done: { box: "border-plate-green/30 bg-done-surface", icon: "text-done", Icon: CircleCheck },
+};
+
+/**
+ * Aviso com ícone por tom (nunca só cor) como 1º filho; o texto é sempre `iron` e o tom fica no ícone, na
+ * borda e no fundo. `role="alert"` só no erro. `icon`: troca o ícone (o elemento passado vira o 1º filho e
+ * deve ter `aria-hidden`) ou, com `false`, tira.
+ */
+export function Alert({ tone = "info", children, className, icon }: { tone?: AlertTone; children: ReactNode; className?: string; icon?: ReactNode | false }) {
+  const t = ALERT[tone];
   return (
-    <div role={tone === "error" ? "alert" : "status"} className={cx("rounded-[var(--radius-ficha)] border px-3.5 py-3 text-[0.9375rem]", t, className)}>
-      {children}
+    <div
+      role={tone === "error" ? "alert" : "status"}
+      data-alert={tone}
+      className={cx("flex items-start gap-2.5 rounded-[var(--radius-ficha)] border px-3.5 py-3 text-[0.9375rem] text-iron", t.box, className)}
+    >
+      {icon === false ? null : icon !== undefined ? icon : <t.Icon className={cx("mt-0.5 size-[18px] shrink-0", t.icon)} aria-hidden />}
+      <div className="min-w-0 flex-1">{children}</div>
     </div>
   );
 }
@@ -240,6 +292,8 @@ export function Dialog({ open, onClose, title, children, wide }: { open: boolean
   return (
     <dialog
       ref={ref}
+      // Papel claro: o anel de foco volta ao azul mesmo quando o diálogo mora dentro de uma superfície escura.
+      data-surface="light"
       aria-labelledby={titleId}
       onClose={onClose}
       onClick={(e) => e.target === ref.current && onClose()}
@@ -265,7 +319,7 @@ export function Dialog({ open, onClose, title, children, wide }: { open: boolean
 export function Stepper({ value, onChange, step = 1, min = 0, max = 999, label, suffix }: { value: number | null; onChange: (v: number | null) => void; step?: number; min?: number; max?: number; label: string; suffix?: string }) {
   const v = value ?? 0;
   return (
-    <div className="flex items-stretch overflow-hidden rounded-[var(--radius-ficha)] border border-rule-strong bg-paper">
+    <div className="flex items-stretch overflow-hidden rounded-[var(--radius-ficha)] border border-field bg-paper">
       <button type="button" aria-label={`Diminuir ${label}`} onClick={() => onChange(Math.max(min, Math.round((v - step) * 100) / 100))} className="w-10 shrink-0 text-xl font-bold hover:bg-chalk-2">
         −
       </button>
@@ -298,7 +352,7 @@ export function IconButton({ label, children, className, tone = "neutral", ...re
       title={label}
       className={cx(
         "grid size-11 shrink-0 place-items-center rounded-[var(--radius-ficha)] transition-colors hover:bg-chalk-2 disabled:cursor-not-allowed disabled:opacity-30",
-        tone === "danger" ? "text-plate-red-ink" : "text-iron",
+        tone === "danger" ? "text-danger" : "text-iron",
         className,
       )}
       {...rest}
@@ -336,7 +390,7 @@ export function ActionSheet({ open, onClose, title, actions }: { open: boolean; 
               }}
               className={cx(
                 "flex min-h-12 w-full items-center gap-3 rounded-[var(--radius-ficha)] px-3 py-2.5 text-left font-semibold transition-colors hover:bg-chalk disabled:cursor-not-allowed disabled:opacity-40",
-                a.tone === "danger" ? "text-plate-red-ink" : "text-iron",
+                a.tone === "danger" ? "text-danger" : "text-iron",
               )}
             >
               {a.icon ? <span className="grid size-5 shrink-0 place-items-center">{a.icon}</span> : null}

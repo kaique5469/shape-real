@@ -8,6 +8,11 @@ import type { ExerciseLog, MuscleGroup, Session, SetLog, Technique, Unit } from 
  */
 const ASSISTED = new Set(["barra_fixa_assistida"]);
 
+/** Graviton e afins: a carga registrada é ajuda (menos é melhor). Usado pela Evolução e pelo relatório. */
+export function isAssisted(exerciseId: string): boolean {
+  return ASSISTED.has(exerciseId);
+}
+
 /** 1RM estimado (Epley), confiável até ~10 repetições; acima de 12 a conta para de subir. */
 export function e1rm(loadKg: number, reps: number): number {
   if (!loadKg || !reps || reps <= 0) return 0;
@@ -280,8 +285,9 @@ function median(xs: number[]): number {
  * Medir cada série contra a mediana das outras falhava com uma série mais leve: em 4/40/40 (ou aquecimento 15/50/50),
  * a mediana das outras duas de cada série de 40 é 22, e as séries reais é que eram descartadas. Uma série baixa nunca
  * é tratada como erro aqui (aquecimento é normal). Se metade ou mais pareceria erro, nada é ignorado.
+ * Exportada para a marca do treino na Evolução e no relatório (evolution.ts), que usam a mesma guarda.
  */
-function splitTypos(sets: SetLog[]): { kept: SetLog[]; ignored: SetLog[] } {
+export function splitTypos(sets: SetLog[]): { kept: SetLog[]; ignored: SetLog[] } {
   if (sets.length < 3) return { kept: sets, ignored: [] };
   const m = median(sets.map(loadOf));
   if (m <= 0) return { kept: sets, ignored: [] };

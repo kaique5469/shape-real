@@ -1,18 +1,47 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ChevronDown, Download, Trash2, Trophy } from "lucide-react";
+import { ChevronDown, Download, Trash2 } from "lucide-react";
+import { DeliveryLine, StatusRegion } from "@/components/delivery-status";
+import { RecordMark } from "@/components/record-mark";
+import { SendToCoach } from "@/components/transfer-share";
 import { Alert, Button, Dialog, Empty, LinkButton, Skeleton, cx } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
 import { fmtNum, useLoad } from "@/lib/hooks";
 import { completedSets, weekStart } from "@/lib/domain/progression";
+import { sessionDeliveryText, type SessionDelivery } from "@/lib/domain/delivery";
 import { downloadText, sessionsToCsv } from "@/lib/domain/export";
 import { track } from "@/lib/analytics";
 import type { Session } from "@/lib/domain/types";
 
 const FEELING = ["", "Péssimo", "Ruim", "Ok", "Bom", "Ótimo"];
 
-export function HistoryView({ userId, editable, canExport }: { userId: string; editable: boolean; canExport: boolean }) {
+/**
+ * Estado de envio por treino (U2 §3.2), só no aparelho do aluno com personal remoto no modo local (quem chama
+ * decide; sem a prop, nada de envio aparece: personal, "Ver como aluno", aluno sozinho, nuvem).
+ */
+export interface HistoryDelivery {
+  stateOf(id: string): SessionDelivery | null;
+  /** Primeiro nome do personal ("Enviar de novo para Rafael"). */
+  coachFirst: string;
+  /** Depois de um toque de envio numa linha: quem chama relê o aparelho (estados e pendentes). */
+  onResent(): void;
+}
+
+export function HistoryView({
+  userId,
+  editable,
+  canExport,
+  delivery,
+  onDeleted,
+}: {
+  userId: string;
+  editable: boolean;
+  canExport: boolean;
+  delivery?: HistoryDelivery;
+  /** Depois de excluir um treino (quem chama atualiza o que depende da lista, ex.: os pendentes de envio). */
+  onDeleted?: () => void;
+}) {
   const { repo } = useApp();
   const { data, loading, error, reload } = useLoad(() => repo.listSessions(userId), [userId, repo]);
   const [open, setOpen] = useState<string | null>(null);
@@ -64,6 +93,8 @@ export function HistoryView({ userId, editable, canExport }: { userId: string; e
             {sessions.map((s) => {
               const isOpen = open === s.id;
               const minutes = s.finishedAt ? Math.round((new Date(s.finishedAt).getTime() - new Date(s.startedAt).getTime()) / 60000) : null;
+              const state = delivery?.stateOf(s.id) ?? null;
+              const text = state && delivery ? sessionDeliveryText(state, delivery.coachFirst) : null;
               return (
                 <li key={s.id} className="overflow-hidden rounded-[8px] border border-rule bg-paper">
                   <button onClick={() => setOpen(isOpen ? null : s.id)} aria-expanded={isOpen} className="flex w-full items-center gap-3 px-4 py-3 text-left">
@@ -75,12 +106,15 @@ export function HistoryView({ userId, editable, canExport }: { userId: string; e
                         {minutes ? ` · ${minutes} min` : ""} · {fmtNum(s.volumeKg, 0)} kg
                         {s.feeling ? ` · ${FEELING[s.feeling]}` : ""}
                       </span>
+                      {/* Linha curta do envio: dentro do botão, entra no nome acessível ("…, Envio iniciado · 23/11"). */}
+                      {text?.short ? (
+                        <DeliveryLine icon={text.icon} className="mt-0.5 text-xs">
+                          <span className="sr-only">, </span>
+                          {text.short}
+                        </DeliveryLine>
+                      ) : null}
                     </span>
-                    {s.prs.length ? (
-                      <span className="flex items-center gap-1 rounded bg-plate-red px-1.5 py-0.5 text-xs font-bold text-white">
-                        <Trophy className="size-3" /> {s.prs.length}
-                      </span>
-                    ) : null}
+                    {s.prs.length ? <RecordMark count={s.prs.length} compact className="shrink-0" /> : null}
                     <ChevronDown className={cx("size-5 text-steel transition-transform", isOpen && "rotate-180")} aria-hidden />
                   </button>
                   {isOpen ? (
@@ -91,7 +125,7 @@ export function HistoryView({ userId, editable, canExport }: { userId: string; e
                             <tr key={e.uid} className="border-t border-rule first:border-0">
                               <td className="px-4 py-2 font-semibold">
                                 {e.name}
-                                {s.prs.includes(e.exerciseId) ? <Trophy className="ml-1.5 inline size-3.5 text-plate-red" aria-label="recorde" /> : null}
+                                {s.prs.includes(e.exerciseId) ? <RecordMark variant="icon" className="ml-1.5 align-[-0.125em]" /> : null}
                                 {e.notes ? <span className="block text-xs font-normal text-steel">{e.notes}</span> : null}
                               </td>
                               <td className="px-4 py-2 text-right text-steel">
@@ -105,11 +139,28 @@ export function HistoryView({ userId, editable, canExport }: { userId: string; e
                         </tbody>
                       </table>
                       {s.note ? <p className="border-t border-rule px-4 py-2 text-sm text-steel">“{s.note}”</p> : null}
-                      {editable ? (
-                        <div className="flex justify-end border-t border-rule px-4 py-2">
-                          <Button size="sm" variant="ghost" className="text-plate-red-ink" icon={<Trash2 className="size-4" />} onClick={() => setConfirm(s)}>
-                            Excluir treino
-                          </Button>
+                      {text || editable ? (
+                        <div className="border-t border-rule px-4 py-3">
+                          {/* Texto longo do envio: região viva, para o novo estado ser anunciado depois do toque. */}
+                          {text ? <StatusRegion text={text.long} icon={text.icon} /> : null}
+                          {/* Reenvio à esquerda; "Excluir treino" (destrutivo) do lado oposto, mesmo quando a linha quebra. */}
+                          <div className={cx("flex flex-wrap items-center gap-2", text && "mt-3")}>
+                            {text && delivery ? (
+                              <SendToCoach sessions={[s]} where="historico_item" variant="secondary" size="md" label={text.actionLabel} onSent={() => delivery.onResent()} />
+                            ) : null}
+                            {editable ? (
+                              <Button
+                                size="md"
+                                variant="ghost"
+                                // `!`: no CSS do Tailwind o text-iron do ghost viria depois do text-danger (ordem alfabética).
+                                className="ml-auto text-danger! hover:bg-danger-surface"
+                                icon={<Trash2 className="size-4" aria-hidden />}
+                                onClick={() => setConfirm(s)}
+                              >
+                                Excluir treino
+                              </Button>
+                            ) : null}
+                          </div>
                         </div>
                       ) : null}
                     </div>
@@ -132,6 +183,7 @@ export function HistoryView({ userId, editable, canExport }: { userId: string; e
               if (confirm) await repo.deleteSession(confirm.id);
               setConfirm(null);
               void reload();
+              onDeleted?.();
             }}
           >
             Excluir

@@ -68,3 +68,23 @@ export function finishGate(session: SessionLike): FinishGate {
 export function filledUnmarkedTitle(count: number): string {
   return count === 1 ? "Você preencheu 1 série sem marcar" : `Você preencheu ${count} séries sem marcar`;
 }
+
+/**
+ * Estado de uma série na tela do treino (U1 §3.1), derivado e nunca gravado:
+ * - "pendente": sem ✓ e sem reps (a carga pré-preenchida não conta, mesma regra de `isFilledUnmarked`);
+ * - "preenchida": sem ✓ e com reps (ou segundos/minutos) digitadas;
+ * - "concluida": com ✓ (mesmo sem reps).
+ */
+export type SetRowState = "pendente" | "preenchida" | "concluida";
+
+export function setRowState(set: SetLike): SetRowState {
+  if (set.done) return "concluida";
+  return isFilledUnmarked(set) ? "preenchida" : "pendente";
+}
+
+/** Descrição acessível da caixa "Feito": "Preenchida, falta marcar" | "Recorde neste treino" | null (sem descrição). */
+export function setRowDescription(state: SetRowState, record: boolean): string | null {
+  if (state === "preenchida") return "Preenchida, falta marcar";
+  if (state === "concluida" && record) return "Recorde neste treino";
+  return null;
+}

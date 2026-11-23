@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DIET_CONSENT_ERROR, dietToText, householdMeasure, parseDietBody } from "./diet-share";
+import { DIET_CONSENT_ERROR, dietItemText, dietToText, householdMeasure, macroLine, parseDietBody } from "./diet-share";
 import { getFood } from "./foods";
 import { itemFromFood } from "./nutrition";
 import type { DietPlan } from "./types";
@@ -54,7 +54,8 @@ describe("dieta em texto para WhatsApp", () => {
   });
   it("pula refeições vazias, soma o dia e fecha com orientações e assinatura", () => {
     expect(text).not.toContain("*Ceia*");
-    expect(text).toContain("*Total do dia*:");
+    expect(text).toContain("*Total do cardápio*:");
+    expect(text).not.toMatch(/Total do\s+dia/);
     expect(text).toContain("Beba 2,5 L de água por dia.");
     expect(text.trim().endsWith("Beba 2,5 L de água por dia.\n\nCarlos")).toBe(true);
     expect(/\p{Extended_Pictographic}/u.test(text)).toBe(false);
@@ -62,6 +63,19 @@ describe("dieta em texto para WhatsApp", () => {
   it("com CREF, assina 'Nome · CREF …'; sem personal, não assina", () => {
     expect(dietToText(diet, { coachName: "Camila Duarte", coachCref: "012345-G/SP" }).split("\n").at(-1)).toBe("Camila Duarte · CREF 012345-G/SP");
     expect(dietToText(diet).trim().endsWith("Beba 2,5 L de água por dia.")).toBe(true);
+  });
+});
+
+describe("peças do texto reaproveitadas na tela (U3a)", () => {
+  it("dietItemText é a linha do WhatsApp sem o marcador", () => {
+    const item = itemFromFood(arroz, arroz.unit!.g * 3);
+    expect(dietItemText(item)).toBe(`${arroz.name} — ${arroz.unit!.g * 3} g (3 colheres de servir)`);
+    expect(dietToText(diet)).toContain(`• ${dietItemText(item)}`);
+    expect(dietItemText({ name: "Marmita", grams: 1250 })).toBe("Marmita — 1.250 g");
+  });
+  it("macroLine com separador de milhar e na ordem calorias, proteína, carboidrato, gordura", () => {
+    expect(macroLine({ kcal: 1650, proteinG: 126, carbsG: 172.4, fatG: 51 })).toBe("1.650 kcal · proteína 126 g · carboidrato 172 g · gordura 51 g");
+    expect(dietToText(diet).split("\n")[1]).toBe(`Metas do dia: ${macroLine(diet.targets)}`);
   });
 });
 

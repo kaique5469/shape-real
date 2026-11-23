@@ -1,7 +1,10 @@
-import type { ExerciseLog, Session } from "@/lib/domain/types";
-import type { LoadSuggestion, SuggestionKind } from "@/lib/domain/progression";
+import type { Exercise, ExerciseLog, Program, Session } from "@/lib/domain/types";
+import { getExercise, unitOf } from "@/lib/domain/exercises";
+import { uid } from "@/lib/domain/ids";
+import { suggestFromHistory, type LoadSuggestion, type SuggestionKind } from "@/lib/domain/progression";
 import { restFromDraft, type RestTimer } from "@/lib/domain/rest";
 import { setCounts } from "@/lib/domain/session-checks";
+import { assignLinks } from "@/lib/domain/session-flow";
 
 /**
  * Rascunho do treino em andamento (um por usuário, guardado no aparelho).
@@ -21,6 +24,12 @@ export interface WorkoutDraft {
   restSec: Record<string, number>;
   /** Descanso em andamento: sobrevive a recarregar a página ou o iOS fechar o app. Ausente em rascunhos antigos. */
   rest?: RestTimer;
+  /**
+   * Grupos de bi-set/tri-set/supersérie fixados no início do treino: uid do registro → id do grupo
+   * ("<dia>:<índice do 1º membro>"). Só no aparelho: não vai para o histórico nem para o personal. Ausente em
+   * rascunhos de antes da U1d (a tela usa a heurística de sempre). Nunca é podado: guarda também quem saiu.
+   */
+  links?: Record<string, string>;
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
@@ -52,7 +61,75 @@ export function parseDraft(raw: string | null | undefined): WorkoutDraft | null 
   const restSec: Record<string, number> = {};
   if (isRecord(data.restSec)) for (const [k, v] of Object.entries(data.restSec)) if (typeof v === "number" && Number.isFinite(v) && v >= 0) restSec[k] = v;
   const rest = restFromDraft(data.rest);
-  return rest ? { session, suggestions, restSec, rest } : { session, suggestions, restSec };
+  const links = parseLinks(data.links);
+  const out: WorkoutDraft = { session, suggestions, restSec };
+  if (rest) out.rest = rest;
+  if (links) out.links = links;
+  return out;
+}
+
+/** `links` do rascunho: só pares string → string; ausente ou sem formato de mapa → undefined (rascunho antigo). */
+function parseLinks(value: unknown): Record<string, string> | undefined {
+  if (!isRecord(value)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value)) if (typeof v === "string" && v) out[k] = v;
+  return out;
+}
+
+/** Prescrição padrão de um exercício adicionado (ou trocado para outra unidade) na hora, conforme a unidade. */
+export function defaultPlan(e: Pick<Exercise, "id" | "compound">): { sets: number; repsMin: number; repsMax: number; restSec: number } {
+  const unit = unitOf(e.id);
+  if (unit === "min") return { sets: 1, repsMin: 15, repsMax: 15, restSec: 0 };
+  if (unit === "seg") return { sets: 3, repsMin: 30, repsMax: 45, restSec: 45 };
+  return { sets: 3, repsMin: 8, repsMax: 12, restSec: e.compound ? 120 : 75 };
+}
+
+/**
+ * Rascunho novo para o dia `dayKey` da ficha (ou treino livre, sem ficha): séries vazias com a carga sugerida, o
+ * descanso de cada exercício e os grupos de bi-set fixados agora (`links`), para uma remoção no meio do treino
+ * desfazer o grupo em vez de juntar o exercício que sobrou com outro.
+ */
+export function buildDraft(userId: string, program: Program | null, dayKey: string | null, history: Session[]): WorkoutDraft {
+  const day = program?.days.find((d) => d.key === dayKey) ?? null;
+  const suggestions: Record<string, LoadSuggestion> = {};
+  const restSec: Record<string, number> = {};
+  const exercises: ExerciseLog[] = (day?.exercises ?? []).map((p) => {
+    const unit = unitOf(p.exerciseId, p.unit);
+    // Com a data do último registro (retorno após pausa) e os anteriores (trava contra erro de digitação).
+    const sug = suggestFromHistory(history, p, p.exerciseId);
+    const logUid = uid();
+    if (unit === "reps") suggestions[logUid] = sug;
+    restSec[logUid] = p.restSec;
+    const impl = getExercise(p.exerciseId)?.implement;
+    // Peso corporal/elástico e séries por tempo: carga é opcional ("peso extra"); nunca começa com 0 kg.
+    const optionalLoad = unit !== "reps" || impl === "peso_corporal" || impl === "elastico";
+    const load = unit === "min" ? null : optionalLoad ? (unit === "reps" ? sug.loadKg : null) || p.loadKg || null : (sug.loadKg ?? p.loadKg ?? null);
+    return {
+      uid: logUid,
+      exerciseId: p.exerciseId,
+      name: p.name,
+      unit,
+      planned: { sets: p.sets, repsMin: p.repsMin, repsMax: p.repsMax, loadKg: p.loadKg, restSec: p.restSec, technique: p.technique, notes: p.notes },
+      sets: Array.from({ length: p.sets }, () => ({ loadKg: load, reps: null, done: false })),
+    };
+  });
+  return {
+    session: {
+      id: uid(),
+      userId,
+      programId: program?.id ?? null,
+      programName: program?.name,
+      dayKey: day?.key,
+      dayTitle: day?.title?.trim() || undefined,
+      startedAt: new Date().toISOString(),
+      exercises,
+      volumeKg: 0,
+      prs: [],
+    },
+    suggestions,
+    restSec,
+    links: assignLinks(day?.key ?? "livre", exercises),
+  };
 }
 
 /** Grava o rascunho com o descanso atual (null = sem descanso). Nunca lança (modo privado, cota cheia). */

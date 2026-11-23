@@ -1,6 +1,7 @@
 "use client";
 
 import { uid } from "@/lib/domain/ids";
+import { SENT_SUFFIXES, sentKeyOf } from "@/lib/domain/export";
 import type { Food } from "@/lib/domain/foods";
 import type { BodyMetric, DietPlan, Exercise, Invite, PhotoPose, Profile, Program, ProgressPhoto, Session, StudentDraft } from "@/lib/domain/types";
 import { DataError, summarizeStudent, type Repository } from "./repository";
@@ -81,6 +82,32 @@ export function markBackupDone(at: string = new Date().toISOString()) {
   }
   try {
     window.dispatchEvent(new Event(BACKUP_EVENT));
+  } catch {}
+}
+
+// ---- registro de envio (sr:sent:*) ---------------------------------------------
+/** Prefixo das chaves de envio (fora de `sr:v1:`): lista de treinos enviados, log, registro da ficha e eco. */
+const SENT_PREFIX = "sr:sent:";
+
+/** Chaves do localStorage (por índice: funciona também com armazenamento simulado nos testes). */
+function storageKeys(): string[] {
+  const out: string[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k !== null) out.push(k);
+    }
+  } catch {}
+  return out;
+}
+
+/**
+ * Apaga as chaves de envio de um perfil (`sr:sent:{id}`, `:at`, `:log`, `:ficha`, `:ack`). Chamada ao remover
+ * o perfil (aluno removido pelo personal, exclusão da conta). Também exportada por `@/lib/transfer-client`.
+ */
+export function clearDeliveryKeys(profileId: string) {
+  try {
+    for (const suffix of SENT_SUFFIXES) localStorage.removeItem(sentKeyOf(profileId, suffix));
   } catch {}
 }
 
@@ -241,9 +268,10 @@ export class LocalRepository implements Repository {
   async getDiet(ownerId: string) {
     return read<DietPlan>("diets").find((d) => d.ownerId === ownerId) ?? null;
   }
-  async saveDiet(diet: DietPlan) {
+  /** `keepUpdatedAt`: grava sem marcar como alteração da dieta (restaurar a cópia). Igual a `saveProgram`. */
+  async saveDiet(diet: DietPlan, opts?: { keepUpdatedAt?: boolean }) {
     const others = read<DietPlan>("diets").filter((d) => d.ownerId !== diet.ownerId);
-    const saved = { ...diet, updatedAt: new Date().toISOString() };
+    const saved = { ...diet, updatedAt: opts?.keepUpdatedAt && diet.updatedAt ? diet.updatedAt : new Date().toISOString() };
     write("diets", [...others, saved]);
     return saved;
   }
@@ -370,12 +398,13 @@ export class LocalRepository implements Repository {
     write("links", read<Link>("links").filter((l) => l.studentId !== userId && l.coachId !== userId));
     write("custom_exercises", read<Owned<Exercise>>("custom_exercises").filter((r) => r.ownerId !== userId));
     write("custom_foods", read<Owned<Food>>("custom_foods").filter((r) => r.ownerId !== userId));
+    clearDeliveryKeys(userId);
   }
 
-  /** Apaga todos os dados locais (botão "Apagar dados deste aparelho"). */
+  /** Apaga todos os dados locais (botão "Apagar dados deste aparelho"), inclusive o registro de envio (sr:sent:*). */
   async wipe() {
-    Object.keys(localStorage)
-      .filter((k) => k.startsWith(PREFIX))
+    storageKeys()
+      .filter((k) => k.startsWith(PREFIX) || k.startsWith(SENT_PREFIX))
       .forEach((k) => localStorage.removeItem(k));
     await new Promise<void>((res) => {
       const req = indexedDB.deleteDatabase(DB_NAME);

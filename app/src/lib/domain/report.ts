@@ -1,6 +1,6 @@
-import { unitOf } from "./exercises";
+import { bestMarkOf, compareMarks, exerciseMarks, markDeltaPct, type Mark } from "./evolution";
 import { todayISO } from "./ids";
-import { bestSet, completedSets, sessionVolume, weekStart } from "./progression";
+import { completedSets, e1rm, fmtKg, fmtMark, sessionVolume, weekStart } from "./progression";
 import type { BodyMetric, Profile, Session } from "./types";
 
 /**
@@ -22,15 +22,27 @@ const BODY: { key: BodyKey; label: string; unit: string }[] = [
   { key: "thighCm", label: "Coxa", unit: "cm" },
 ];
 
+/** Linha de "Exercícios que melhoraram": a base contra a melhor marca do período (U6 R-16). */
 export interface StrengthRow {
   exerciseId: string;
   name: string;
-  from: { loadKg: number; reps: number };
-  to: { loadKg: number; reps: number };
-  /** Variação da força estimada (1RM de Epley), em %. */
-  deltaPct: number;
+  /** Base: a última marca válida antes do período; sem ela, a primeira do período. */
+  from: Mark;
+  /** Melhor: a melhor marca válida do período depois da base (não é a mais recente). */
+  to: Mark;
+  /** Dias locais AAAA-MM-DD das duas marcas. */
+  fromDate: string;
+  toDate: string;
+  /** Variação da força estimada (1RM de Epley), em %. null quando uma das marcas passa de 12 reps. */
+  deltaPct: number | null;
+  /** "+2,5 kg" ou "+5 reps" quando o % não diz nada (null ou arredondado para 0); senão null. */
+  compact: string | null;
+  /** Treinos do período que contam para o exercício. */
   sessions: number;
 }
+
+/** Máximo de linhas em "Exercícios que melhoraram"; as que passam disso viram `moreImproved`. */
+export const STRENGTH_ROWS = 8;
 
 export interface BodyRow {
   key: BodyKey;
@@ -61,9 +73,12 @@ export interface EvolutionReport {
   sets: number;
   previousSessions: number;
   prs: { exerciseId: string; name: string }[];
+  /** Até 8 linhas (`STRENGTH_ROWS`), da maior variação do 1RM para a menor. */
   strength: StrengthRow[];
-  /** Exercícios com carga comparável que não subiram no período. */
+  /** Exercícios de força comparáveis que não melhoraram no período (iguais ou piores). */
   steady: number;
+  /** Exercícios que melhoraram e ficaram fora das 8 linhas. */
+  moreImproved: number;
   body: BodyRow[];
   highlights: string[];
   hasData: boolean;
@@ -85,6 +100,28 @@ const br = (date: string) => `${date.slice(8, 10)}/${date.slice(5, 7)}`;
 export function nameList(names: string[], max = 5): string {
   if (names.length <= max) return names.join(", ");
   return `${names.slice(0, max).join(", ")} e mais ${names.length - max}`;
+}
+
+/** Marca de uma linha de força: "55 kg × 10". */
+export function markText(row: Pick<StrengthRow, "exerciseId" | "from" | "to">, which: "from" | "to"): string {
+  return fmtMark(row[which], row.exerciseId, "reps");
+}
+
+/** A diferença de uma linha de força: "+17%" ou, quando o % não diz nada, "+5 reps" / "+2,5 kg". */
+export function strengthChange(row: Pick<StrengthRow, "deltaPct" | "compact">): string {
+  return row.compact ?? `${signed(row.deltaPct ?? 0, 0)}%`;
+}
+
+/**
+ * Notas abaixo da tabela "Exercícios que melhoraram" (U6 §3.3 D), na ordem em que aparecem. Sem nenhuma linha, só
+ * "Nenhum exercício com carga melhorou no período." ("Outros" sem linhas não teria a que se referir).
+ */
+export function strengthNotes(r: Pick<EvolutionReport, "strength" | "steady" | "moreImproved">): string[] {
+  if (!r.strength.length) return ["Nenhum exercício com carga melhorou no período."];
+  const out = ["Melhor: a melhor série de cada exercício no período. O % compara a força estimada (1RM); acima de 12 repetições, a diferença aparece em kg ou repetições."];
+  if (r.moreImproved > 0) out.push(r.moreImproved === 1 ? "Mais 1 exercício melhorou." : `Mais ${r.moreImproved} exercícios melhoraram.`);
+  if (r.steady > 0) out.push(r.steady === 1 ? "Outro exercício não melhorou no período." : `Outros ${r.steady} exercícios não melhoraram no período.`);
+  return out;
 }
 
 /** "9 h 40 min", "45 min". */
@@ -152,30 +189,42 @@ export function buildReport(input: { profile: Pick<Profile, "name" | "daysPerWee
   const prMap = new Map<string, string>();
   for (const s of inPeriod) for (const id of s.prs) prMap.set(id, s.exercises.find((e) => e.exerciseId === id)?.name ?? id);
 
-  // Cargas: melhor série do período contra o ponto de partida
-  // (último treino antes do período, ou o primeiro do período para quem começou agora).
+  // Exercícios que melhoraram (U6 R-16): só força, com as marcas e a trava de digitação da Evolução, sobre todo o
+  // histórico até o fim do período. Base = última marca válida antes do período (sem ela, a primeira do período);
+  // Melhor = a melhor marca válida do período depois da base. Melhorou ⇔ compareMarks(base, melhor) = "subiu".
+  const history = all.filter((s) => dayOf(s.startedAt) <= to);
   const ids = new Set<string>();
-  for (const s of inPeriod) for (const e of s.exercises) if (unitOf(e.exerciseId, e.unit) === "reps") ids.add(e.exerciseId);
-  const strength: StrengthRow[] = [];
+  for (const s of inPeriod) for (const e of s.exercises) ids.add(e.exerciseId);
+  const improved: { row: StrengthRow; gain: number }[] = [];
   let steady = 0;
   for (const id of ids) {
-    const logs = inPeriod.map((s) => s.exercises.find((e) => e.exerciseId === id)).filter((e): e is NonNullable<typeof e> => Boolean(e));
-    const marks = logs.map((l) => bestSet(l)).filter((b): b is NonNullable<typeof b> => Boolean(b && b.loadKg > 0));
-    if (!marks.length) continue;
-    const prior = [...before]
-      .reverse()
-      .map((s) => s.exercises.find((e) => e.exerciseId === id))
-      .map((l) => (l ? bestSet(l) : null))
-      .find((b) => b && b.loadKg > 0);
-    const base = prior ?? marks[0]!;
-    const later = prior ? marks : marks.slice(1);
-    if (!later.length) continue;
-    const best = later.reduce((a, b) => (b.e1rm > a.e1rm ? b : a));
-    const deltaPct = base.e1rm ? Math.round(((best.e1rm - base.e1rm) / base.e1rm) * 100) : 0;
-    if (deltaPct >= 1) strength.push({ exerciseId: id, name: logs[0]!.name, from: { loadKg: base.loadKg, reps: base.reps }, to: { loadKg: best.loadKg, reps: best.reps }, deltaPct, sessions: logs.length });
-    else steady += 1;
+    const h = exerciseMarks(history, id);
+    if (!h || h.kind !== "forca") continue;
+    const inside = h.marks.filter((m) => m.date >= from && m.date <= to);
+    const valid = inside.filter((m) => !m.suspect);
+    const prior = h.marks.filter((m) => m.date < from && !m.suspect);
+    const base = prior[prior.length - 1] ?? valid[0];
+    const later = prior.length ? valid : valid.slice(1);
+    const best = bestMarkOf(later, "forca");
+    if (!base || !best) continue;
+    if (compareMarks(base.mark, best.mark, "forca") !== "subiu") {
+      steady += 1;
+      continue;
+    }
+    const deltaPct = markDeltaPct(base.mark, best.mark);
+    const dl = Math.round((best.mark.loadKg - base.mark.loadKg) * 100) / 100;
+    const dr = best.mark.reps - base.mark.reps;
+    const compact = deltaPct ? null : dl > 0 ? `+${fmtKg(dl)}` : `+${dr} ${dr === 1 ? "rep" : "reps"}`;
+    const e0 = e1rm(base.mark.loadKg, base.mark.reps);
+    improved.push({
+      row: { exerciseId: id, name: h.name, from: base.mark, to: best.mark, fromDate: base.date, toDate: best.date, deltaPct, compact, sessions: inside.length },
+      // Ordem: variação do 1RM com o teto (sem arredondar), depois número de treinos.
+      gain: e0 ? (e1rm(best.mark.loadKg, best.mark.reps) - e0) / e0 : 0,
+    });
   }
-  strength.sort((a, b) => b.deltaPct - a.deltaPct || b.sessions - a.sessions);
+  improved.sort((a, b) => b.gain - a.gain || b.row.sessions - a.row.sessions);
+  const strength = improved.slice(0, STRENGTH_ROWS).map((x) => x.row);
+  const moreImproved = Math.max(0, improved.length - STRENGTH_ROWS);
 
   // Medidas: último registro até o início do período (até 60 dias antes) contra o último do período
   const metrics = [...input.metrics].sort((a, b) => a.date.localeCompare(b.date));
@@ -202,7 +251,7 @@ export function buildReport(input: { profile: Pick<Profile, "name" | "daysPerWee
   }
   if (strength[0]) {
     const s = strength[0];
-    highlights.push(`Maior evolução: ${s.name}, de ${num(s.from.loadKg, 2)} kg × ${s.from.reps} para ${num(s.to.loadKg, 2)} kg × ${s.to.reps} (${signed(s.deltaPct, 0)}%).`);
+    highlights.push(`Maior evolução: ${s.name}, de ${markText(s, "from")} para ${markText(s, "to")} (${strengthChange(s)}).`);
   }
   if (prMap.size) highlights.push(`${prMap.size} ${prMap.size === 1 ? "recorde pessoal" : "recordes pessoais"} no período.`);
   const weight = body.find((b) => b.key === "weightKg");
@@ -229,8 +278,9 @@ export function buildReport(input: { profile: Pick<Profile, "name" | "daysPerWee
     sets,
     previousSessions,
     prs: [...prMap].map(([exerciseId, name]) => ({ exerciseId, name })),
-    strength: strength.slice(0, 8),
+    strength,
     steady,
+    moreImproved,
     body,
     highlights,
     hasData: inPeriod.length > 0 || body.length > 0,
@@ -249,8 +299,8 @@ export function reportToText(r: EvolutionReport, opts: { coachName?: string; mes
   } else out.push("Nenhum treino registrado no período.");
 
   if (r.strength.length) {
-    out.push("", "*Cargas que subiram*");
-    for (const s of r.strength) out.push(`• ${s.name}: ${num(s.from.loadKg, 2)} kg × ${s.from.reps} → ${num(s.to.loadKg, 2)} kg × ${s.to.reps} (${signed(s.deltaPct, 0)}%)`);
+    out.push("", "*Exercícios que melhoraram*");
+    for (const s of r.strength) out.push(`• ${s.name}: ${markText(s, "from")} → ${markText(s, "to")} (${strengthChange(s)})`);
   }
   if (r.prs.length) out.push("", `*${r.prs.length} ${r.prs.length === 1 ? "recorde pessoal" : "recordes pessoais"}:* ${nameList(r.prs.map((p) => p.name))}`);
 

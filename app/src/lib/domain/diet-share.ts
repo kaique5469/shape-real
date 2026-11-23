@@ -28,17 +28,23 @@ export function householdMeasure(food: Pick<Food, "unit"> | undefined, grams: nu
   return `${qty} ${half > 1 ? plural(food.unit.label) : food.unit.label}`;
 }
 
-const itemLine = (i: DietItem) => {
+/** Um alimento como no texto do WhatsApp, sem o marcador: "Arroz branco cozido — 135 g (3 colheres de servir)". */
+export function dietItemText(i: Pick<DietItem, "name" | "grams" | "foodId">): string {
   const measure = householdMeasure(i.foodId ? getFood(i.foodId) : undefined, i.grams);
-  return `• ${i.name} — ${int(i.grams)} g${measure ? ` (${measure})` : ""}`;
-};
+  return `${i.name} — ${int(i.grams)} g${measure ? ` (${measure})` : ""}`;
+}
 
-const macroLine = (t: MacroTargets) => `${int(t.kcal)} kcal · proteína ${int(t.proteinG)} g · carboidrato ${int(t.carbsG)} g · gordura ${int(t.fatG)} g`;
+const itemLine = (i: DietItem) => `• ${dietItemText(i)}`;
+
+/** "1.650 kcal · proteína 126 g · carboidrato 172 g · gordura 51 g" (metas ou total do cardápio). */
+export function macroLine(t: MacroTargets): string {
+  return `${int(t.kcal)} kcal · proteína ${int(t.proteinG)} g · carboidrato ${int(t.carbsG)} g · gordura ${int(t.fatG)} g`;
+}
 
 /**
  * Dieta em texto simples, no formato que funciona no WhatsApp (*negrito* com asteriscos, sem emoji):
- * metas, uma refeição por bloco com porções em gramas e medida caseira, totais, orientações e a assinatura
- * do personal ("Nome · CREF …").
+ * metas do dia, uma refeição por bloco com porções em gramas e medida caseira, o total do cardápio (a soma do
+ * plano, não o que a pessoa comeu), orientações e a assinatura do personal ("Nome · CREF …").
  */
 export function dietToText(diet: DietPlan, opts: { studentName?: string; coachName?: string; coachCref?: string } = {}): string {
   const out: string[] = [`*${opts.studentName ? `Plano alimentar — ${opts.studentName}` : diet.name.trim() || "Plano alimentar"}*`];
@@ -52,7 +58,7 @@ export function dietToText(diet: DietPlan, opts: { studentName?: string; coachNa
     out.push(`Subtotal: ${int(t.kcal)} kcal · ${int(t.proteinG)} g de proteína`);
   }
 
-  if (diet.meals.some((m) => m.items.length)) out.push("", `*Total do dia*: ${macroLine(dietTotals(diet))}`);
+  if (diet.meals.some((m) => m.items.length)) out.push("", `*Total do cardápio*: ${macroLine(dietTotals(diet))}`);
   if (diet.notes?.trim()) out.push("", "*Orientações*", diet.notes.trim());
   const signature = coachSignature({ name: opts.coachName, cref: opts.coachCref });
   if (signature) out.push("", signature);

@@ -29,11 +29,12 @@ import {
   type LoadSuggestion,
 } from "@/lib/domain/progression";
 import { fmtClock, fmtOvertime, nextSetOf, restEndedAgoText, restFromDraft, restPhase, shiftRest, shouldStartRest, startRest, type RestTimer } from "@/lib/domain/rest";
-import { filledUnmarkedTitle, finishGate, markFilledDone, setCounts } from "@/lib/domain/session-checks";
-import type { Exercise, ExerciseLog, Program, Session, SetLog, Technique, Unit } from "@/lib/domain/types";
+import { filledUnmarkedTitle, finishGate, markFilledDone, setCounts, setRowDescription, setRowState } from "@/lib/domain/session-checks";
+import { dissolvedNote, isLinkDissolved, linkGroups, linkLabel } from "@/lib/domain/session-flow";
+import type { ExerciseLog, Program, Session, SetLog, Unit } from "@/lib/domain/types";
 import { reportError, track } from "@/lib/analytics";
 import { fmtNum } from "@/lib/hooks";
-import { clearDraft, decimalsOf, draftHasWork, draftHref, draftKey, draftProgressText, parseDraft, restDelayBand, saveDraft, splitCompareLine, suggestionEdit, tween, type WorkoutDraft } from "@/lib/workout-draft";
+import { buildDraft, clearDraft, decimalsOf, defaultPlan, draftHasWork, draftHref, draftKey, draftProgressText, parseDraft, restDelayBand, saveDraft, splitCompareLine, suggestionEdit, tween, type WorkoutDraft } from "@/lib/workout-draft";
 import { SendToCoach } from "@/components/transfer-share";
 
 export default function SessaoPage() {
@@ -47,49 +48,6 @@ export default function SessaoPage() {
 /** Rascunho do treino (gravado em sr:draft:{userId}; ver workout-draft.ts). O descanso fica num estado à parte e é gravado junto. */
 type Draft = WorkoutDraft;
 
-function buildDraft(userId: string, program: Program | null, dayKey: string | null, history: Session[]): Draft {
-  const day = program?.days.find((d) => d.key === dayKey) ?? null;
-  const suggestions: Record<string, LoadSuggestion> = {};
-  const restSec: Record<string, number> = {};
-  const exercises: ExerciseLog[] = (day?.exercises ?? []).map((p) => {
-    const unit = unitOf(p.exerciseId, p.unit);
-    // Com a data do último registro (retorno após pausa) e os anteriores (trava contra erro de digitação).
-    const sug = suggestFromHistory(history, p, p.exerciseId);
-    const logUid = uid();
-    if (unit === "reps") suggestions[logUid] = sug;
-    restSec[logUid] = p.restSec;
-    const impl = getExercise(p.exerciseId)?.implement;
-    // Peso corporal/elástico e séries por tempo: carga é opcional ("peso extra"); nunca começa com 0 kg.
-    const optionalLoad = unit !== "reps" || impl === "peso_corporal" || impl === "elastico";
-    const load = unit === "min" ? null : optionalLoad ? (unit === "reps" ? sug.loadKg : null) || p.loadKg || null : (sug.loadKg ?? p.loadKg ?? null);
-    return {
-      uid: logUid,
-      exerciseId: p.exerciseId,
-      name: p.name,
-      unit,
-      planned: { sets: p.sets, repsMin: p.repsMin, repsMax: p.repsMax, loadKg: p.loadKg, restSec: p.restSec, technique: p.technique, notes: p.notes },
-      sets: Array.from({ length: p.sets }, () => ({ loadKg: load, reps: null, done: false })),
-    };
-  });
-  return {
-    session: {
-      id: uid(),
-      userId,
-      programId: program?.id ?? null,
-      programName: program?.name,
-      dayKey: day?.key,
-      dayTitle: day?.title?.trim() || undefined,
-      startedAt: new Date().toISOString(),
-      exercises,
-      volumeKg: 0,
-      prs: [],
-    },
-    suggestions,
-    restSec,
-  };
-}
-
-const LINKED: Technique[] = ["bi_set", "tri_set", "super_serie"];
 const SOUND_KEY = "sr:sound";
 /** Por quanto tempo a linha "Recorde: …" fica no rodapé. */
 const RECORD_LINE_MS = 2500;
@@ -102,31 +60,6 @@ function readStorage(key: string): string | null {
   } catch {
     return null;
   }
-}
-
-/**
- * Grupos de exercícios feitos em sequência (bi-set, tri-set, supersérie).
- * Exercícios seguidos com a mesma técnica formam o grupo; se só o primeiro foi marcado,
- * ele se junta ao exercício seguinte.
- */
-function linkGroups(exercises: ExerciseLog[]): Record<string, { members: string[]; pos: number }> {
-  const out: Record<string, { members: string[]; pos: number }> = {};
-  let i = 0;
-  while (i < exercises.length) {
-    const t = exercises[i]!.planned?.technique;
-    if (!t || !LINKED.includes(t)) {
-      i++;
-      continue;
-    }
-    const size = t === "tri_set" ? 3 : 2;
-    let j = i;
-    while (j + 1 < exercises.length && j - i + 1 < size && exercises[j + 1]!.planned?.technique === t) j++;
-    if (j === i && i + 1 < exercises.length) j = Math.min(exercises.length - 1, i + size - 1);
-    const members = exercises.slice(i, j + 1).map((e) => e.uid);
-    if (members.length > 1) members.forEach((u, pos) => (out[u] = { members, pos }));
-    i = j + 1;
-  }
-  return out;
 }
 
 function Sessao() {
@@ -356,7 +289,8 @@ function Sessao() {
     update(logUid, (log) => ({ ...log, sets: log.sets.map((s, j) => (j === i ? { ...s, ...patch } : j > i && patch.loadKg !== undefined && !s.done ? { ...s, loadKg: patch.loadKg } : s)) }));
   };
 
-  const links = useMemo(() => linkGroups(draft?.session.exercises ?? []), [draft?.session.exercises]);
+  // Grupos de bi-set em vigor: os fixados no início do treino (rascunho), entre os exercícios que continuam nele.
+  const links = useMemo(() => linkGroups(draft?.session.exercises ?? [], draft?.links), [draft?.session.exercises, draft?.links]);
 
   // Recorde ao vivo (estado derivado, nunca salvo): índice da 1ª série recorde de cada registro, ou -1.
   // Mesma regra (setRecord) que detectPRs usa no fim: os dois nunca discordam.
@@ -687,6 +621,7 @@ function Sessao() {
             last={lastPerformance(history, log.exerciseId)}
             recordAt={recordAt[log.uid] ?? -1}
             link={links[log.uid] ? { pos: links[log.uid]!.pos, size: links[log.uid]!.members.length, partner: draft.session.exercises.find((e) => e.uid === links[log.uid]!.members[links[log.uid]!.pos === links[log.uid]!.members.length - 1 ? links[log.uid]!.pos - 1 : links[log.uid]!.pos + 1])?.name ?? "" } : undefined}
+            dissolved={draft.links && isLinkDissolved(log.uid, draft.session.exercises, draft.links) ? { label: linkLabel(log.planned?.technique, true), note: dissolvedNote(log.uid, draft.links) } : undefined}
             hold={hold && hold.logUid === log.uid ? { index: hold.index, elapsed: Math.max(0, Math.floor((now - hold.startedAt) / 1000)), max: hold.max } : null}
             onHoldStart={(i, max) => {
               unlockAudio();
@@ -817,7 +752,7 @@ function Sessao() {
               {error}
             </Alert>
           ) : null}
-          <Button ref={finishBtn} size="lg" className="w-full" onClick={askFinish} loading={finishing} variant={stats.done === stats.total && stats.total > 0 ? "record" : "primary"}>
+          <Button ref={finishBtn} size="lg" className="w-full" onClick={askFinish} loading={finishing} variant="primary">
             Finalizar treino
           </Button>
         </div>
@@ -975,14 +910,6 @@ function Sessao() {
   );
 }
 
-/** Prescrição padrão de um exercício adicionado na hora, conforme a unidade. */
-function defaultPlan(e: Exercise): { sets: number; repsMin: number; repsMax: number; restSec: number } {
-  const unit = unitOf(e.id);
-  if (unit === "min") return { sets: 1, repsMin: 15, repsMax: 15, restSec: 0 };
-  if (unit === "seg") return { sets: 3, repsMin: 30, repsMax: 45, restSec: 45 };
-  return { sets: 3, repsMin: 8, repsMax: 12, restSec: e.compound ? 120 : 75 };
-}
-
 function defaultReps(log: ExerciseLog, i: number, last: ExerciseLog | null): number | null {
   const prev = last ? completedSets(last)[i] : undefined;
   // Séries por tempo repetem a marca anterior; com carga, subir o peso volta ao mínimo da faixa.
@@ -997,9 +924,11 @@ interface BlockProps {
   onToggle: () => void;
   suggestion?: LoadSuggestion;
   last: ExerciseLog | null;
-  /** Índice da 1ª série recorde deste registro na sessão (✓ vermelho com troféu), ou -1. */
+  /** Índice da 1ª série recorde deste registro na sessão (✓ verde com o selo do troféu), ou -1. */
   recordAt: number;
   link?: { pos: number; size: number; partner: string };
+  /** Membro de um grupo (bi-set etc.) cujos outros exercícios saíram deste treino: rótulo da técnica e caixa. */
+  dissolved?: { label: string | null; note: string };
   hold: { index: number; elapsed: number; max: number } | null;
   onHoldStart: (i: number, max: number) => void;
   onHoldStop: () => void;
@@ -1014,7 +943,7 @@ interface BlockProps {
 
 const clock = (sec: number) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
 
-function ExerciseBlock({ index, log, open, onToggle, suggestion, last, recordAt, link, hold, onHoldStart, onHoldStop, onSwap, onSet, onDone, onAddSet, onRemoveSet, onRemove, onNotes }: BlockProps) {
+function ExerciseBlock({ index, log, open, onToggle, suggestion, last, recordAt, link, dissolved, hold, onHoldStart, onHoldStop, onSwap, onSet, onDone, onAddSet, onRemoveSet, onRemove, onNotes }: BlockProps) {
   const ex = getExercise(log.exerciseId);
   const unit: Unit = log.unit ?? unitOf(log.exerciseId);
   const doneCount = log.sets.filter((s) => s.done).length;
@@ -1027,9 +956,11 @@ function ExerciseBlock({ index, log, open, onToggle, suggestion, last, recordAt,
   const showLoad = unit !== "min";
   const cols = showLoad ? "grid-cols-[1rem_minmax(0,1fr)_minmax(0,1fr)_2.75rem]" : "grid-cols-[1rem_minmax(0,1fr)_2.75rem]";
   const rawTechnique = p?.technique && p.technique !== "normal" ? TECHNIQUE_LABEL[p.technique] : null;
-  // Último exercício de um bi-set/tri-set: o rótulo aponta para o anterior, não para o próximo.
-  const technique =
-    rawTechnique && link && link.pos > 0 && link.pos === link.size - 1
+  // Último exercício de um bi-set/tri-set: o rótulo aponta para o anterior, não para o próximo. Grupo desfeito
+  // (o outro exercício saiu deste treino): "Bi-set desfeito neste treino", nunca "com o próximo".
+  const technique = dissolved
+    ? (dissolved.label ?? rawTechnique)
+    : rawTechnique && link && link.pos > 0 && link.pos === link.size - 1
       ? rawTechnique.replace("com o próximo", "com o anterior").replace("com os próximos", "com os anteriores").replace("(antagonista)", "(com o anterior)")
       : rawTechnique;
   const nextPending = log.sets.findIndex((s) => !s.done);
@@ -1053,13 +984,15 @@ function ExerciseBlock({ index, log, open, onToggle, suggestion, last, recordAt,
 
       {open ? (
         <div className="border-t border-rule px-3 pb-4 pt-3 sm:px-4">
-          {technique || p?.notes || link ? (
+          {technique || p?.notes || link || dissolved ? (
             <div className="mb-3 space-y-1 rounded-[6px] border border-plate-yellow/60 bg-plate-yellow/12 px-3 py-2 text-sm">
               {technique ? <p className="font-bold">{technique}</p> : null}
               {link ? (
                 <p>
                   {link.pos < link.size - 1 ? `Faça em sequência com ${link.partner}, sem descanso entre os dois.` : `Depois desta série, descanse e volte para ${link.partner}.`}
                 </p>
+              ) : dissolved ? (
+                <p>{dissolved.note}</p>
               ) : null}
               {p?.notes ? <p>{p.notes}</p> : null}
             </div>
@@ -1084,7 +1017,12 @@ function ExerciseBlock({ index, log, open, onToggle, suggestion, last, recordAt,
           </div>
           <ol className="mt-1.5 space-y-2">
             {log.sets.map((s, i) => {
-              const record = s.done && recordAt === i;
+              // Estado da linha (derivado, nunca gravado): pendente = caixa vazia; preenchida = caixa vazia com borda
+              // escura ("falta marcar"); concluída = verde com ✓. Recorde = concluída + selo do troféu (o verde não muda).
+              const state = setRowState(s);
+              const record = state === "concluida" && recordAt === i;
+              const desc = setRowDescription(state, record);
+              const descId = `set-${log.uid}-${i}-desc`;
               return (
                 <li key={i} className={cx("grid items-center gap-1.5", cols)}>
                   <span className="num text-sm font-bold text-steel">{i + 1}</span>
@@ -1107,24 +1045,34 @@ function ExerciseBlock({ index, log, open, onToggle, suggestion, last, recordAt,
                     placeholder={String(defaultReps(log, i, last) ?? "")}
                     fallback={defaultReps(log, i, last)}
                   />
+                  {/* Caixa de marcar: nome fixo ("Série N feita"), o estado vai em aria-checked e, quando há, na descrição. */}
                   <button
+                    type="button"
+                    role="checkbox"
+                    aria-checked={s.done}
+                    aria-label={`Série ${i + 1} feita`}
+                    aria-describedby={desc ? descId : undefined}
                     onClick={() => onDone(i)}
-                    aria-pressed={s.done}
-                    aria-label={s.done ? `Desmarcar série ${i + 1}${record ? " (recorde)" : ""}` : `Marcar série ${i + 1} como feita`}
                     className={cx(
-                      "grid h-12 place-items-center rounded-[6px] border-2 transition-colors",
-                      record ? "animate-stamp border-plate-red bg-plate-red text-white" : s.done ? "animate-stamp border-plate-green bg-plate-green text-white" : "border-rule-strong hover:border-iron",
+                      "relative grid h-12 place-items-center rounded-[6px] border-2 transition-colors",
+                      // No mouse, o hover só tinge o fundo: escurecer a borda faria a pendente parecer preenchida.
+                      state === "concluida" ? "animate-stamp border-done bg-done text-white" : state === "preenchida" ? "border-iron bg-paper hover:bg-chalk" : "border-field bg-paper hover:bg-chalk",
                     )}
                   >
+                    {s.done ? <Check className="size-5" aria-hidden /> : null}
                     {record ? (
-                      <span className="flex items-center gap-0.5">
-                        <Check className="size-4" aria-hidden />
-                        <Trophy className="size-4" aria-hidden />
+                      // Selo do recorde (U1 §3.1): círculo `record` com troféu branco no canto, anel de papel para não
+                      // encostar no verde. Cabe nos 8 px entre as linhas e no respiro lateral do bloco.
+                      <span data-record className="absolute -right-1.5 -top-1.5 grid size-5 place-items-center rounded-full bg-record text-on-record ring-2 ring-paper">
+                        <Trophy className="size-3" aria-hidden />
                       </span>
-                    ) : (
-                      <Check className="size-5" />
-                    )}
+                    ) : null}
                   </button>
+                  {desc ? (
+                    <span id={descId} className="sr-only">
+                      {desc}
+                    </span>
+                  ) : null}
                 </li>
               );
             })}
@@ -1136,7 +1084,7 @@ function ExerciseBlock({ index, log, open, onToggle, suggestion, last, recordAt,
                 <span className="text-sm font-semibold text-steel">Série {hold.index + 1}</span>
                 <span className="num plate-type ml-auto text-3xl">{clock(hold.elapsed)}</span>
                 <span className="num text-sm text-steel">de {clock(hold.max)}</span>
-                <Button size="sm" variant="record" onClick={onHoldStop} icon={<Square className="size-4" />}>
+                <Button size="sm" variant="primary" onClick={onHoldStop} icon={<Square className="size-4" />}>
                   Parar
                 </Button>
               </div>
@@ -1489,7 +1437,7 @@ function Summary({ session, history, onDone }: { session: Session; history: Sess
               <SendToCoach
                 sessions={[{ ...session, feeling, note: note || undefined }]}
                 size={sent ? "md" : "lg"}
-                variant={sent ? "ghost" : "record"}
+                variant={sent ? "ghost" : "inverse"}
                 label={sent ? `Enviar de novo para ${coachFirst}` : `Enviar para ${coachFirst}`}
                 className={sent ? "mt-1 w-full !text-chalk/85 underline underline-offset-4 hover:!bg-white/10 focus-visible:outline-chalk!" : "w-full focus-visible:outline-chalk!"}
                 onSent={() => {

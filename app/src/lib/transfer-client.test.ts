@@ -257,3 +257,128 @@ describe("ficha recebida por link: autorização de saúde e CREF", () => {
     expect((await localRepo.getProfile("c1"))?.cref).toBe("012345-G/SP");
   });
 });
+
+// ---- UX0: registro de envio com evidência (sr:sent:*) ------------------------------------
+const delivery = await import("./transfer-client");
+
+describe("registro de envio (UX0)", () => {
+  it("markSessionsPrepared grava canal e hora por treino, a lista antiga e :at", () => {
+    delivery.markSessionsPrepared("a1", ["t1", "t2"], "whatsapp", "2026-11-23T21:40:00.000Z");
+    expect(delivery.prepLog("a1")).toEqual({
+      t1: { via: "whatsapp", at: "2026-11-23T21:40:00.000Z" },
+      t2: { via: "whatsapp", at: "2026-11-23T21:40:00.000Z" },
+    });
+    expect([...sentSessionIds("a1")].sort()).toEqual(["t1", "t2"]);
+    expect(storage.getItem("sr:sent:a1:at")).toBe("2026-11-23T21:40:00.000Z");
+    // Reenvio por cópia: o toque mais novo vale.
+    delivery.markSessionsPrepared("a1", ["t2"], "copy", "2026-11-24T10:00:00.000Z");
+    expect(delivery.prepLog("a1").t2).toEqual({ via: "copy", at: "2026-11-24T10:00:00.000Z" });
+    expect(delivery.prepLog("a1").t1?.via).toBe("whatsapp");
+  });
+
+  it("o log fica limitado a 200 treinos (saem os toques mais antigos)", () => {
+    const base = Date.UTC(2026, 0, 1);
+    for (let i = 0; i < 205; i++) delivery.markSessionsPrepared("a1", [`t${i}`], "copy", new Date(base + i * 60_000).toISOString());
+    const log = delivery.prepLog("a1");
+    expect(Object.keys(log)).toHaveLength(200);
+    expect(log.t0).toBeUndefined();
+    expect(log.t4).toBeUndefined();
+    expect(log.t5).toBeDefined();
+    expect(log.t204).toBeDefined();
+  });
+
+  it("log ilegível no armazenamento não quebra nem inventa envio", () => {
+    storage.setItem("sr:sent:a1:log", "{quebrado");
+    expect(delivery.prepLog("a1")).toEqual({});
+    storage.setItem("sr:sent:a1:log", JSON.stringify({ t1: { via: "pombo", at: "2026-11-23T21:40:00.000Z" } }));
+    expect(delivery.prepLog("a1")).toEqual({});
+  });
+
+  it("markFichaPrepared grava o registro único da ficha e garante o marcador @desde", () => {
+    expect(delivery.fichaSendRecord("s1")).toBeNull();
+    expect(storage.getItem("sr:sent:@desde")).toBeNull();
+    const rec = { at: "2026-11-20T17:02:00.000Z", via: "whatsapp" as const, programAt: "2026-11-19T10:00:00.000Z", dietAt: null };
+    delivery.markFichaPrepared("s1", rec);
+    expect(delivery.fichaSendRecord("s1")).toEqual(rec);
+    const since = storage.getItem("sr:sent:@desde");
+    expect(since).toBeTruthy();
+    // O marcador não muda num segundo envio.
+    delivery.markFichaPrepared("s1", { ...rec, at: "2026-11-21T10:00:00.000Z", via: "copy" });
+    expect(storage.getItem("sr:sent:@desde")).toBe(since);
+    expect(delivery.fichaSendRecord("s1")).toMatchObject({ at: "2026-11-21T10:00:00.000Z", via: "copy" });
+    // Enviar não grava nada na ficha.
+    expect(storage.getItem("sr:v1:programs")).toBeNull();
+  });
+
+  it("deliveryTrackingSince grava na primeira leitura e depois só lê", () => {
+    expect(delivery.deliveryTrackingSince("2026-11-01T00:00:00.000Z")).toBe("2026-11-01T00:00:00.000Z");
+    expect(delivery.deliveryTrackingSince("2026-11-30T00:00:00.000Z")).toBe("2026-11-01T00:00:00.000Z");
+    storage.setItem("sr:sent:@desde", "lixo");
+    expect(delivery.deliveryTrackingSince("2026-11-30T00:00:00.000Z")).toBe("2026-11-30T00:00:00.000Z");
+  });
+
+  it("recordFichaAck usa nextAck: um pacote de treinos mais antigo não faz o eco voltar atrás", () => {
+    const novo = { programAt: "2026-11-20T10:00:00.000Z", treinosSentAt: "2026-11-23T18:40:00.000Z", registeredAt: "2026-11-23T19:00:00.000Z" };
+    const antigo = { programAt: "2026-11-10T10:00:00.000Z", treinosSentAt: "2026-11-18T18:40:00.000Z", registeredAt: "2026-11-23T19:05:00.000Z" };
+    delivery.recordFichaAck("s1", novo);
+    delivery.recordFichaAck("s1", antigo);
+    expect(delivery.fichaAckOf("s1")).toEqual(novo);
+  });
+
+  it("a cópia de segurança leva :log, :ficha e :ack e não leva @desde; restaurar devolve as chaves", async () => {
+    await seedCoachDevice();
+    delivery.markFichaPrepared("s1", { at: "2026-11-20T17:02:00.000Z", via: "copy", programAt: program.updatedAt, dietAt: null });
+    delivery.recordFichaAck("s1", { programAt: program.updatedAt, treinosSentAt: "2026-11-23T18:40:00.000Z", registeredAt: "2026-11-23T19:00:00.000Z" });
+    delivery.markSessionsPrepared("c1", ["x"], "whatsapp", "2026-11-22T10:00:00.000Z");
+    const backup = await collectBackup(localRepo, coach, new Date("2026-11-23T12:00:00Z"));
+    expect(Object.keys(backup.sent ?? {}).sort()).toEqual(["sr:sent:c1", "sr:sent:c1:at", "sr:sent:c1:log", "sr:sent:s1:ack", "sr:sent:s1:ficha"]);
+    expect(JSON.stringify(backup)).not.toContain("@desde");
+
+    storage.clear();
+    await restoreBackup(parseBackup(JSON.stringify(backup))!);
+    expect(delivery.fichaSendRecord("s1")).toMatchObject({ via: "copy", programAt: program.updatedAt });
+    expect(delivery.fichaAckOf("s1")?.programAt).toBe(program.updatedAt);
+    expect(delivery.prepLog("c1").x?.via).toBe("whatsapp");
+    expect(storage.getItem("sr:sent:@desde")).toBeNull();
+  });
+
+  it("restaurar a cópia não muda o updatedAt da dieta", async () => {
+    await seedCoachDevice();
+    const diet = { id: "d1", ownerId: "s1", createdBy: "c1", name: "Plano", targets: { kcal: 1650, proteinG: 120, carbsG: 180, fatG: 50 }, meals: [], updatedAt: "2026-11-10T09:00:00.000Z" };
+    storage.setItem("sr:v1:diets", JSON.stringify([diet]));
+    const backup = await collectBackup(localRepo, coach, new Date("2026-11-23T12:00:00Z"));
+    storage.clear();
+    await restoreBackup(parseBackup(JSON.stringify(backup))!);
+    expect((await localRepo.getDiet("s1"))?.updatedAt).toBe("2026-11-10T09:00:00.000Z");
+  });
+
+  it("deleteAccount apaga as chaves de envio do perfil removido; wipe apaga todas as sr:sent*", async () => {
+    await seedCoachDevice();
+    delivery.markFichaPrepared("s1", { at: "2026-11-20T17:02:00.000Z", via: "copy", programAt: program.updatedAt, dietAt: null });
+    delivery.recordFichaAck("s1", { treinosSentAt: "2026-11-23T18:40:00.000Z", registeredAt: "2026-11-23T19:00:00.000Z" });
+    delivery.markSessionsPrepared("s1", ["t1"], "copy");
+    delivery.markFichaPrepared("s2", { at: "2026-11-20T17:02:00.000Z", via: "copy", programAt: null, dietAt: null });
+    await localRepo.deleteAccount("s1");
+    expect(storage.keys().filter((k) => k.startsWith("sr:sent:s1"))).toEqual([]);
+    expect(delivery.fichaSendRecord("s2")).not.toBeNull();
+
+    vi.stubGlobal("indexedDB", {
+      deleteDatabase: () => {
+        const req: { onsuccess?: () => void; onerror?: () => void; onblocked?: () => void } = {};
+        setTimeout(() => req.onsuccess?.(), 0);
+        return req;
+      },
+    });
+    storage.setItem("outra:chave", "fica");
+    await localRepo.wipe();
+    expect(storage.keys().filter((k) => k.startsWith("sr:sent"))).toEqual([]);
+    expect(storage.keys().filter((k) => k.startsWith("sr:v1:"))).toEqual([]);
+    expect(storage.getItem("outra:chave")).toBe("fica");
+  });
+
+  it("clearDeliveryKeys também sai por @/lib/transfer-client", () => {
+    delivery.markSessionsPrepared("a9", ["t1"], "copy");
+    delivery.clearDeliveryKeys("a9");
+    expect(storage.keys().filter((k) => k.startsWith("sr:sent:a9"))).toEqual([]);
+  });
+});

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildReport, fmtDuration, nameList, reportToText } from "./report";
+import { buildReport, fmtDuration, nameList, reportToText, strengthChange, strengthNotes } from "./report";
 import type { BodyMetric, ExerciseLog, Session } from "./types";
 
 const NOW = new Date(2026, 10, 20, 15, 0); // 20/11/2026, horário local
@@ -51,10 +51,18 @@ describe("relatório de evolução", () => {
     expect(squat.from).toEqual({ loadKg: 55, reps: 10 });
     expect(squat.to).toEqual({ loadKg: 70, reps: 8 });
     expect(squat.deltaPct).toBeGreaterThan(15);
+    expect(squat.compact).toBeNull();
     expect(r.strength[0]!.exerciseId).toBe("agachamento_livre");
   });
 
-  it("exercício que não subiu fica fora da lista e entra na conta dos mantidos", () => {
+  it("datas da base e da melhor marca (dias locais)", () => {
+    const squat = r.strength.find((s) => s.exerciseId === "agachamento_livre")!;
+    expect(squat.fromDate).toBe("2026-10-11");
+    expect(squat.toDate).toBe("2026-11-10");
+    expect(squat.sessions).toBe(3);
+  });
+
+  it("exercício que não melhorou fica fora da lista e entra na conta dos que não melhoraram", () => {
     expect(r.strength.some((s) => s.exerciseId === "supino_reto_barra")).toBe(false);
     expect(r.steady).toBe(1);
   });
@@ -74,6 +82,8 @@ describe("relatório de evolução", () => {
     expect(t).toContain("*Relatório de evolução — Juliana Prado*");
     expect(t).toContain("22/10 a 20/11/2026 (30 dias)");
     expect(t).toContain("4 de 13 treinos combinados (31%)");
+    expect(t).toContain("*Exercícios que melhoraram*");
+    expect(t).not.toContain("Cargas que subiram");
     expect(t).toContain("• Agachamento livre: 55 kg × 10 → 70 kg × 8 (+");
     expect(t).toContain("*1 recorde pessoal:* Agachamento livre");
     expect(t).toContain("• Peso: 64 → 62,5 kg (−1,5 kg)");
@@ -133,5 +143,126 @@ describe("relatório de evolução", () => {
     expect(fmtDuration(45)).toBe("45 min");
     expect(fmtDuration(60)).toBe("1 h");
     expect(fmtDuration(580)).toBe("9 h 40 min");
+  });
+});
+
+describe("relatório: exercícios que melhoraram (U6 R-16)", () => {
+  const build = (sessions: Session[]) => buildReport({ profile: { name: "Beatriz Lima", daysPerWeek: 3 }, sessions, metrics: [], days: 30, now: NOW });
+  const ids = (rep: ReturnType<typeof build>) => rep.strength.map((s) => s.exerciseId);
+
+  it("graviton fica fora (mais ajuda não é carga que subiu)", () => {
+    const rep = build([
+      session(20, [log("barra_fixa_assistida", "Barra fixa assistida (graviton/gravitron)", 40, 8)]),
+      session(10, [log("barra_fixa_assistida", "Barra fixa assistida (graviton/gravitron)", 50, 10)]),
+      session(5, [log("barra_fixa_assistida", "Barra fixa assistida (graviton/gravitron)", 35, 8)]),
+    ]);
+    expect(rep.strength).toEqual([]);
+    expect(rep.steady).toBe(0);
+    expect(rep.highlights.some((h) => h.includes("graviton"))).toBe(false);
+  });
+
+  it("barra fixa com carga extra, elástico com carga e tempo com carga ficam fora", () => {
+    const rep = build([
+      session(20, [log("barra_fixa", "Barra fixa", 5, 6), log("farmer_walk", "Farmer walk", 20, 40)]),
+      session(5, [log("barra_fixa", "Barra fixa", 10, 5), log("farmer_walk", "Farmer walk", 24, 40)]),
+    ]);
+    expect(rep.strength).toEqual([]);
+    expect(rep.steady).toBe(0);
+  });
+
+  it("200 kg digitado num exercício de 20 kg fica fora: sem +899% e fora dos destaques", () => {
+    const smith = (daysAgo: number, kg: number, reps = 10) => session(daysAgo, [log("agachamento_smith", "Agachamento no Smith", kg, reps, 2)]);
+    const rep = build([smith(21, 20), smith(14, 20, 11), smith(8, 200)]);
+    const row = rep.strength.find((s) => s.exerciseId === "agachamento_smith")!;
+    expect(row.to).toEqual({ loadKg: 20, reps: 11 });
+    expect(row.deltaPct).toBeLessThan(10);
+    const text = reportToText(rep);
+    expect(text).not.toContain("899");
+    expect(text).not.toContain("200 kg");
+    expect(rep.highlights.join(" ")).not.toContain("200 kg");
+    expect(rep.highlights.join(" ")).not.toContain("899");
+  });
+
+  it("marca suspeita antes do período não vira base", () => {
+    const smith = (daysAgo: number, kg: number) => session(daysAgo, [log("agachamento_smith", "Agachamento no Smith", kg, 10, 2)]);
+    const rep = build([smith(50, 20), smith(40, 200), smith(10, 22.5)]);
+    expect(rep.strength[0]).toMatchObject({ from: { loadKg: 20, reps: 10 }, to: { loadKg: 22.5, reps: 10 }, fromDate: "2026-10-01" });
+  });
+
+  it("exercício que caiu conta em steady, e a tela diz \"não melhorou\", nunca \"mantiveram\"", () => {
+    const rep = build([
+      session(29, [log("supino_inclinado_barra", "Supino inclinado com barra", 40, 8), log("agachamento_livre", "Agachamento livre", 60, 8)]),
+      session(10, [log("supino_inclinado_barra", "Supino inclinado com barra", 35, 8), log("agachamento_livre", "Agachamento livre", 65, 8)]),
+      session(1, [log("supino_inclinado_barra", "Supino inclinado com barra", 32.5, 8)]),
+    ]);
+    expect(ids(rep)).toEqual(["agachamento_livre"]);
+    expect(rep.steady).toBe(1);
+    const notes = strengthNotes(rep);
+    expect(notes).toContain("Outro exercício não melhorou no período.");
+    expect(notes.join(" ")).not.toMatch(/mantiv/);
+  });
+
+  it("3 × 12 → 3 × 17 com a mesma carga: melhorou, sem % e com \"+5 reps\"", () => {
+    const glute = (daysAgo: number, reps: number) => session(daysAgo, [log("gluteo_4_apoios_caneleira", "Glúteo 4 apoios com caneleira (coice)", 3, reps)]);
+    const rep = build([glute(40, 12), glute(10, 15), glute(3, 17)]);
+    expect(rep.strength).toEqual([
+      {
+        exerciseId: "gluteo_4_apoios_caneleira",
+        name: "Glúteo 4 apoios com caneleira (coice)",
+        from: { loadKg: 3, reps: 12 },
+        to: { loadKg: 3, reps: 17 },
+        fromDate: "2026-10-11",
+        toDate: "2026-11-17",
+        deltaPct: null,
+        compact: "+5 reps",
+        sessions: 2,
+      },
+    ]);
+    expect(strengthChange(rep.strength[0]!)).toBe("+5 reps");
+    const text = reportToText(rep);
+    expect(text).toContain("• Glúteo 4 apoios com caneleira (coice): 3 kg × 12 → 3 kg × 17 (+5 reps)");
+    expect(rep.highlights).toContain("Maior evolução: Glúteo 4 apoios com caneleira (coice), de 3 kg × 12 para 3 kg × 17 (+5 reps).");
+  });
+
+  it("sem % e com mais carga: \"+5 kg\"", () => {
+    const row = (daysAgo: number, kg: number, reps: number) => session(daysAgo, [log("remada_curvada_barra", "Remada curvada com barra", kg, reps)]);
+    const rep = build([row(20, 20, 15), row(5, 25, 20)]);
+    expect(rep.strength[0]).toMatchObject({ deltaPct: null, compact: "+5 kg" });
+  });
+
+  it("Melhor é a melhor marca do período, com a data dela, não a mais recente", () => {
+    const squat = (daysAgo: number, kg: number) => session(daysAgo, [log("agachamento_livre", "Agachamento livre", kg, 8)]);
+    const rep = build([squat(40, 60), squat(12, 70), squat(2, 65)]);
+    expect(rep.strength[0]).toMatchObject({ from: { loadKg: 60, reps: 8 }, to: { loadKg: 70, reps: 8 }, toDate: "2026-11-08" });
+    expect(strengthChange(rep.strength[0]!)).toBe(`+${rep.strength[0]!.deltaPct}%`);
+  });
+
+  it("10 exercícios melhorando → 8 linhas, da maior variação para a menor, e mais 2", () => {
+    const names = ["supino_reto_barra", "agachamento_livre", "stiff", "rosca_direta_barra", "remada_maquina", "agachamento_smith", "supino_inclinado_barra", "leg_press_45", "puxada_frente", "desenvolvimento_halter"];
+    const before = session(40, names.map((id) => log(id, id, 50, 8)));
+    const after = session(5, names.map((id, i) => log(id, id, 52 + i * 2, 8)));
+    const rep = build([before, after]);
+    expect(rep.strength).toHaveLength(8);
+    expect(rep.moreImproved).toBe(2);
+    expect(rep.strength[0]!.exerciseId).toBe("desenvolvimento_halter");
+    expect(rep.strength.map((s) => s.deltaPct)).toEqual([...rep.strength.map((s) => s.deltaPct)].sort((a, b) => b! - a!));
+    expect(strengthNotes(rep)).toContain("Mais 2 exercícios melhoraram.");
+  });
+
+  it("notas: plural, singular e sem nenhuma linha", () => {
+    const row = { exerciseId: "x", name: "X", from: { loadKg: 10, reps: 8 }, to: { loadKg: 12, reps: 8 }, fromDate: "2026-11-01", toDate: "2026-11-10", deltaPct: 20, compact: null, sessions: 2 };
+    expect(strengthNotes({ strength: [], steady: 3, moreImproved: 0 })).toEqual(["Nenhum exercício com carga melhorou no período."]);
+    const notes = strengthNotes({ strength: [row], steady: 3, moreImproved: 1 });
+    expect(notes[0]).toMatch(/^Melhor: a melhor série de cada exercício no período\./);
+    expect(notes).toContain("Mais 1 exercício melhorou.");
+    expect(notes).toContain("Outros 3 exercícios não melhoraram no período.");
+    expect(strengthNotes({ strength: [row], steady: 0, moreImproved: 0 })).toHaveLength(1);
+  });
+
+  it("% que arredonda para 0 não vira \"+0%\": mostra a carga", () => {
+    const sq = (daysAgo: number, kg: number) => session(daysAgo, [log("agachamento_livre", "Agachamento livre", kg, 10)]);
+    const rep = build([sq(40, 100), sq(5, 100.2)]);
+    expect(rep.strength[0]).toMatchObject({ deltaPct: 0, compact: "+0,2 kg" });
+    expect(strengthChange(rep.strength[0]!)).toBe("+0,2 kg");
   });
 });

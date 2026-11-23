@@ -56,10 +56,18 @@ export interface Validity {
   label: string;
 }
 
+/**
+ * Fim da validade da ficha: criação + semanas planejadas. A mesma conta de `programValidity`, para a tela, o
+ * resumo, a impressão ("Válida até DD/MM/AAAA") e a "Próxima reavaliação" mostrarem a mesma data.
+ */
+export function validityEnd(createdAt: string, weeks: number): Date {
+  return new Date(new Date(createdAt).getTime() + weeks * 7 * 86_400_000);
+}
+
 /** Validade da ficha a partir da data de criação e da duração planejada; null quando a ficha não tem validade. */
 export function programValidity(createdAt: string, durationWeeks: number | null | undefined, now = new Date()): Validity | null {
   if (!durationWeeks) return null;
-  const end = new Date(createdAt).getTime() + durationWeeks * 7 * 86_400_000;
+  const end = validityEnd(createdAt, durationWeeks).getTime();
   const days = Math.ceil((end - now.getTime()) / 86_400_000);
   if (days < 0) return { state: "expired", days, label: days === -1 ? "vencida ontem" : `vencida há ${-days} dias` };
   if (days === 0) return { state: "soon", days, label: "vence hoje" };
@@ -71,6 +79,13 @@ export function programValidity(createdAt: string, durationWeeks: number | null 
 export function fmtDayMonth(iso: string): string {
   const d = new Date(iso.length === 10 ? iso + "T12:00:00" : iso);
   return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/** "18:40": hora e minuto no fuso do aparelho (estados de envio: "Envio iniciado às 18:40"). "" se a data for inválida. */
+export function fmtTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
 /** Primeiro nome, para mensagens e botões. */

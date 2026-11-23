@@ -36,11 +36,34 @@ export interface NewsInput {
   lastSessionAt: string | null;
   /** Desde quando o aluno está vinculado ao personal (ISO). */
   linkedAt: string;
+  /**
+   * Criação da ficha ativa (ISO). Para quem nunca mandou treino, a conta começa na data mais recente entre o
+   * vínculo e a ficha: uma ficha montada dias depois do cadastro não nasce com alarme. Sem o campo, conta do vínculo.
+   */
+  programCreatedAt?: string | null;
 }
 
-/** Dias sem notícias: desde o último treino recebido ou, se nunca chegou nenhum, desde o vínculo. */
+function timeOf(iso: string): number {
+  return new Date(iso.length === 10 ? iso + "T12:00:00" : iso).getTime();
+}
+
+/**
+ * Desde quando conta o "sem notícias": o último treino recebido ou, se nunca chegou nenhum, o mais recente entre
+ * o vínculo e a criação da ficha ativa (U4 §3.1). Data da ficha inválida é ignorada.
+ */
+export function newsSince(s: NewsInput): string {
+  if (s.lastSessionAt) return s.lastSessionAt;
+  const p = s.programCreatedAt;
+  if (p) {
+    const tp = timeOf(p);
+    if (Number.isFinite(tp) && !(timeOf(s.linkedAt) >= tp)) return p;
+  }
+  return s.linkedAt;
+}
+
+/** Dias sem notícias: desde o último treino recebido ou, se nunca chegou nenhum, desde newsSince (vínculo ou ficha). */
 export function daysWithoutNews(s: NewsInput, now = new Date()): number {
-  return calendarDaysSince(s.lastSessionAt ?? s.linkedAt, now);
+  return calendarDaysSince(newsSince(s), now);
 }
 
 /** Aluno parado: dias sem notícias ≥ inactiveThreshold(meta). */
@@ -60,15 +83,22 @@ export function sessionsThisWeek(startedAts: readonly string[], now = new Date()
   return startedAts.filter((t) => weekStart(t) === week).length;
 }
 
+const daysText = (n: number) => (n === 1 ? "1 dia" : `${n} dias`);
+
 /**
  * Situação de quem está sem notícias, para o alerta e para a linha do aluno.
  *  - local: "Sem notícias há 9 dias · último treino recebido em 13/11" ou "Nada recebido ainda";
  *  - nuvem: "Sem treinar há 9 dias · último treino em 13/11" ou "Nenhum treino ainda".
+ * Sem treino recebido e com `opts.daysWithoutNews` (≥ 1), diz o tamanho do silêncio: "Sem notícias há 6 dias ·
+ * nada recebido ainda" (nuvem: "Sem treinar há 6 dias · nenhum treino ainda"). Sem `opts`, o texto de sempre.
  */
-export function newsLabel(lastSessionAt: string | null, mode: "local" | "supabase", now = new Date()): string {
-  if (!lastSessionAt) return mode === "local" ? "Nada recebido ainda" : "Nenhum treino ainda";
-  const n = calendarDaysSince(lastSessionAt, now);
-  const days = n === 1 ? "1 dia" : `${n} dias`;
+export function newsLabel(lastSessionAt: string | null, mode: "local" | "supabase", now = new Date(), opts?: { daysWithoutNews?: number }): string {
+  if (!lastSessionAt) {
+    const n = opts?.daysWithoutNews;
+    if (n === undefined || !Number.isInteger(n) || n < 1) return mode === "local" ? "Nada recebido ainda" : "Nenhum treino ainda";
+    return mode === "local" ? `Sem notícias há ${daysText(n)} · nada recebido ainda` : `Sem treinar há ${daysText(n)} · nenhum treino ainda`;
+  }
+  const days = daysText(calendarDaysSince(lastSessionAt, now));
   const date = fmtDayMonth(lastSessionAt);
   return mode === "local" ? `Sem notícias há ${days} · último treino recebido em ${date}` : `Sem treinar há ${days} · último treino em ${date}`;
 }
@@ -76,8 +106,13 @@ export function newsLabel(lastSessionAt: string | null, mode: "local" | "supabas
 /** Motivo do contato; também vai para a medição (student_contacted.reason). */
 export type ContactReason = "sem_noticias" | "ficha_vencendo";
 
-/** Sem notícias vem antes da ficha vencendo; ficha vencida ou sem ficha não entram (o personal monta outra, não manda mensagem). */
-export function contactReason(quiet: boolean, validity: Pick<Validity, "state"> | null): ContactReason | null {
+/**
+ * Motivo para o botão "Chamar": sem notícias vem antes da ficha vencendo. Ficha vencida não entra (o personal
+ * monta outra, não manda mensagem) e aluno sem ficha nunca entra (`hasProgram === false`): o próximo passo dele é
+ * a ficha, não "Se treinou, me manda pelo app". Sem `hasProgram`, conta como com ficha (o resultado de antes).
+ */
+export function contactReason(quiet: boolean, validity: Pick<Validity, "state"> | null, hasProgram = true): ContactReason | null {
+  if (!hasProgram) return null;
   if (quiet) return "sem_noticias";
   if (validity?.state === "soon") return "ficha_vencendo";
   return null;
@@ -108,8 +143,114 @@ export function contactMessage(reason: ContactReason, name: string, daysLeft = 0
  * Situação de quem está na fila, ao lado do botão "Chamar": a de "sem notícias" (newsLabel) ou a da ficha
  * vencendo ("Ficha vence em 3 dias").
  */
-export function reasonLabel(reason: ContactReason, s: { lastSessionAt: string | null; daysLeft?: number }, mode: "local" | "supabase", now = new Date()): string {
-  return reason === "ficha_vencendo" ? expiringLabel(s.daysLeft ?? 0) : newsLabel(s.lastSessionAt, mode, now);
+export function reasonLabel(
+  reason: ContactReason,
+  s: { lastSessionAt: string | null; daysLeft?: number; daysWithoutNews?: number },
+  mode: "local" | "supabase",
+  now = new Date(),
+): string {
+  return reason === "ficha_vencendo" ? expiringLabel(s.daysLeft ?? 0) : newsLabel(s.lastSessionAt, mode, now, { daysWithoutNews: s.daysWithoutNews });
+}
+
+// ───────────────────────── Cartão da lista (U4a: só o que tem dado confiável) ─────────────────────────
+
+/**
+ * Pendência do cartão de /alunos, na ordem de prioridade (U4 §3.2). "treino_novo" e a fila por motivo entram
+ * com a U4b; a prioridade 0 fica reservada aos estados de segurança do questionário.
+ */
+export type AttentionReason = "sem_ficha" | "sem_noticias" | "ficha_vencida" | "ficha_vencendo";
+export const ATTENTION_ORDER: readonly AttentionReason[] = ["sem_ficha", "sem_noticias", "ficha_vencida", "ficha_vencendo"];
+
+/**
+ * A pendência mais forte do aluno, ou null. Sem ficha bloqueia todo o resto e nunca vira "sem notícias";
+ * `quiet` já deve contar a partir de newsSince (vínculo ou ficha).
+ */
+export function topReason(i: { hasProgram: boolean; quiet: boolean; validity: Pick<Validity, "state"> | null }): AttentionReason | null {
+  if (!i.hasProgram) return "sem_ficha";
+  if (i.quiet) return "sem_noticias";
+  if (i.validity?.state === "expired") return "ficha_vencida";
+  if (i.validity?.state === "soon") return "ficha_vencendo";
+  return null;
+}
+
+/** "Ficha vence em 2 dias", "Ficha vence hoje", "Ficha vencida ontem", "Ficha vencida há 5 dias" (o rótulo de programValidity). */
+export function fichaStateText(validity: Pick<Validity, "label">): string {
+  return `Ficha ${validity.label}`;
+}
+
+/**
+ * Texto da linha de pendência do cartão (o mesmo da fila, sem o nome):
+ * "Sem ficha ativa"; "Sem notícias há 12 dias · último treino recebido em 11/11" ou, sem nada recebido,
+ * "Sem notícias há 6 dias · nada recebido ainda" (nuvem: "Sem treinar…"); "Ficha vencida há 5 dias"; "Ficha vence em 3 dias".
+ */
+export function pendingText(
+  reason: AttentionReason,
+  s: { lastSessionAt: string | null; daysWithoutNews?: number; validity?: Pick<Validity, "label"> | null },
+  mode: "local" | "supabase",
+  now = new Date(),
+): string {
+  switch (reason) {
+    case "sem_ficha":
+      return "Sem ficha ativa";
+    case "sem_noticias":
+      return newsLabel(s.lastSessionAt, mode, now, { daysWithoutNews: s.daysWithoutNews });
+    case "ficha_vencida":
+      return s.validity ? fichaStateText(s.validity) : "Ficha vencida";
+    case "ficha_vencendo":
+      return s.validity ? fichaStateText(s.validity) : "Ficha vencendo";
+  }
+}
+
+export interface ProgramLineInput {
+  /** Nome da ficha ativa; null ou ausente quando o aluno não tem ficha. */
+  programName?: string | null;
+  /** Objetivo do aluno ("Hipertrofia"), mostrado no lugar da ficha quando não há ficha. */
+  goalLabel?: string | null;
+  validity: Pick<Validity, "state" | "label"> | null;
+  /** Pendência do cartão (topReason). */
+  top: AttentionReason | null;
+}
+
+/**
+ * Linha da ficha no cartão (U4 §3.4, item 4). O estado vem ANTES do nome, para o corte (truncate) cair no nome:
+ *  - sem ficha: o objetivo, ou null sem objetivo;
+ *  - vencendo ou vencida e a pendência já fala da ficha: só o nome;
+ *  - vencendo ou vencida e a pendência é outra: { state: "Ficha vence em 2 dias", name };
+ *  - em dia ou sem validade: só o nome.
+ */
+export function programLine(i: ProgramLineInput): { state: string | null; name: string } | null {
+  if (i.programName == null) return i.goalLabel ? { state: null, name: i.goalLabel } : null;
+  const v = i.validity;
+  const warn = v !== null && (v.state === "soon" || v.state === "expired");
+  const pendingIsProgram = i.top === "ficha_vencida" || i.top === "ficha_vencendo";
+  return { state: warn && !pendingIsProgram ? fichaStateText(v) : null, name: i.programName };
+}
+
+/** Sem acento, minúsculas e dividido em palavras (espaço, hífen ou qualquer outro sinal que não seja letra ou dígito). */
+function searchWords(s: string): string[] {
+  return s
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLocaleLowerCase("pt-BR")
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+}
+
+/**
+ * Busca de /alunos: cada palavra digitada precisa ser o INÍCIO de alguma palavra do nome. "ana" acha Ana Souza
+ * e Ana Beatriz Souza, mas não Juliana nem Mariana; "joao" acha João; "clara" acha Maria-Clara; vazio acha todos.
+ */
+export function matchesQuery(name: string, query: string): boolean {
+  const wanted = searchWords(query);
+  if (!wanted.length) return true;
+  const words = searchWords(name);
+  return wanted.every((w) => words.some((n) => n.startsWith(w)));
+}
+
+/** Anúncio do resultado da busca para leitor de tela: "11 alunos", "1 aluno" ou "Nenhum aluno". */
+export function resultsStatus(n: number): string {
+  if (!Number.isFinite(n) || n < 1) return "Nenhum aluno";
+  return n === 1 ? "1 aluno" : `${Math.floor(n)} alunos`;
 }
 
 /** "Ana", "Ana e Bruno", "Ana, Bruno e Carla" ou, com mais gente na fila, "Ana, Bruno, Carla e mais 2". */

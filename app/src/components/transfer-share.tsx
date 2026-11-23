@@ -1,16 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Check, Copy, MessageCircle, Send, Smartphone } from "lucide-react";
+import { StatusRegion } from "@/components/delivery-status";
 import { Alert, Button, Dialog, Skeleton } from "@/components/ui";
-import { reportError, track } from "@/lib/analytics";
+import { reportError, track, type TreinosLinkWhere } from "@/lib/analytics";
 import { useApp } from "@/lib/app-context";
+import { prepStatusText, resendCounts, resendEntry, resendNote, sessionDelivery, type PrepEntry, type PrepVia, type SessionDelivery } from "@/lib/domain/delivery";
 import { firstName, waLink, waPhone } from "@/lib/domain/format";
 import { buildFichaPacket, buildTreinosPacket, MAX_SESSIONS_PER_LINK, treinosMessage } from "@/lib/domain/transfer";
 import { coachSignature } from "@/lib/domain/cref";
 import type { Profile, Session } from "@/lib/domain/types";
 import { packData } from "@/lib/share-link";
-import { lastSentAt, markSessionsSent, sentSessionIds } from "@/lib/transfer-client";
+import { markSessionsPrepared, prepLog, sentSessionIds } from "@/lib/transfer-client";
 
 const origin = () => (typeof window !== "undefined" ? window.location.origin : "");
 
@@ -127,7 +129,7 @@ export function SendToStudent({ student, className, variant = "secondary" }: { s
   );
 }
 
-/** Treinos ainda não enviados ao personal (aparelho do aluno que recebeu a ficha por link). */
+/** Treinos ainda não enviados ao personal (aparelho do aluno que recebeu a ficha por link). Sem mudança de comportamento. */
 export function usePendingWorkouts(sessions: Session[] | undefined, version = 0): Session[] {
   const { user } = useApp();
   const [sent, setSent] = useState<Set<string>>(new Set());
@@ -138,12 +140,36 @@ export function usePendingWorkouts(sessions: Session[] | undefined, version = 0)
   return sessions.filter((s) => !sent.has(s.id));
 }
 
+/** Lê do aparelho o estado de envio de cada treino (lista antiga + log de toques), na hora em que é chamada. */
+function readDelivery(userId: string): (id: string) => SessionDelivery {
+  const legacySent = sentSessionIds(userId);
+  const log = prepLog(userId);
+  return (id) => sessionDelivery({ id, legacySent, log });
+}
+
+/**
+ * Estado do envio de cada treino no aparelho do aluno (U2 §3.2). Só existe com personal remoto no modo local
+ * (T5); `sessions` undefined (ex.: "Ver como aluno") desliga. `version` relê o aparelho depois de um toque.
+ */
+export function useSessionDelivery(sessions: Session[] | undefined, version = 0): { enabled: boolean; stateOf: (id: string) => SessionDelivery | null } {
+  const { user, mode } = useApp();
+  const on = Boolean(user?.remoteCoach && mode === "local" && sessions);
+  const [read, setRead] = useState<((id: string) => SessionDelivery) | null>(null);
+  useEffect(() => {
+    setRead(() => (on && user ? readDelivery(user.id) : null));
+  }, [on, user, sessions, version]);
+  const stateOf = useCallback((id: string) => (on && read ? read(id) : null), [on, read]);
+  return { enabled: on && read !== null, stateOf };
+}
+
 /**
  * Aluno → personal. Manda os treinos pelo WhatsApp: o texto mostra o que foi feito e o link registra
- * tudo no painel do personal.
+ * tudo no painel do personal. O toque grava canal e hora por treino (`markSessionsPrepared`): o app registra
+ * o que viu (o toque, a cópia), nunca que a mensagem saiu ou chegou.
  */
 export function SendToCoach({
   sessions,
+  where,
   label,
   className,
   variant = "primary",
@@ -151,26 +177,42 @@ export function SendToCoach({
   onSent,
 }: {
   sessions: Session[];
+  /** Medição (`treinos_link_sent.where`). */
+  where?: TreinosLinkWhere;
   label?: string;
   className?: string;
   /** "ghost": ação secundária com cara de link (ex.: "Enviar de novo" no fim do treino, depois do envio). */
-  variant?: "primary" | "secondary" | "record" | "ghost";
+  variant?: "primary" | "secondary" | "inverse" | "ghost";
   size?: "sm" | "md" | "lg";
-  onSent?: () => void;
+  /** Depois do toque: canal e a hora gravada (a mesma do registro, para o texto "Envio iniciado às 18:40"). */
+  onSent?: (via: PrepVia, at: string) => void;
 }) {
   const { user, repo } = useApp();
   const [open, setOpen] = useState(false);
+  // Os treinos do link ficam fixos enquanto o diálogo está aberto: o toque marca exatamente os que foram na mensagem,
+  // mesmo que a lista de quem chamou mude (ex.: os pendentes somem depois da cópia).
+  const [shown, setShown] = useState<Session[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [status, setStatus] = useState<{ via: PrepVia; at: string } | null>(null);
   const coach = user?.remoteCoach;
   const coachFirst = coach ? firstName(coach.name) : "seu personal";
-  const shown = [...sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, MAX_SESSIONS_PER_LINK);
 
   useEffect(() => {
     if (!open || !user || !coach) return;
     let alive = true;
     setMsg(null);
     setErr(null);
+    setStatus(null);
+    // Nota de reenvio: o toque mais recente entre os treinos desta mensagem (lida ao abrir).
+    const stateOf = readDelivery(user.id);
+    setNote(
+      resendNote(
+        shown.map((s) => resendEntry(stateOf(s.id))).filter((e): e is PrepEntry | "antigo" => e !== null),
+        coachFirst,
+      ),
+    );
     (async () => {
       // Medidas registradas pelo aluno vão junto (o personal acompanha peso e circunferências).
       const metrics = await repo.listMetrics(user.id).catch(() => []);
@@ -187,24 +229,36 @@ export function SendToCoach({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  if (!coach || !sessions.length) return null;
-  const last = user ? lastSentAt(user.id) : null;
+  if (!coach || (!sessions.length && !open)) return null;
 
-  function sent(via: "whatsapp" | "copy") {
-    if (!user) return;
-    markSessionsSent(
+  function start() {
+    setShown([...sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, MAX_SESSIONS_PER_LINK));
+    setOpen(true);
+  }
+
+  function sent(via: PrepVia) {
+    if (!user || !shown.length) return;
+    const at = new Date().toISOString();
+    const stateOf = readDelivery(user.id);
+    const { resend, novos } = resendCounts(shown.map((s) => stateOf(s.id)));
+    markSessionsPrepared(
       user.id,
       shown.map((s) => s.id),
+      via,
+      at,
     );
-    track("treinos_link_sent", { via, sessions: shown.length });
-    onSent?.();
+    track("treinos_link_sent", { via, sessions: shown.length, where, resend, novos });
+    setStatus({ via, at });
+    onSent?.(via, at);
   }
 
   return (
     <>
-      <Button variant={variant} size={size} className={className} icon={<Send className="size-4" />} onClick={() => setOpen(true)}>
-        {label ?? (sessions.length === 1 ? `Enviar treino para ${coachFirst}` : `Enviar ${sessions.length} treinos para ${coachFirst}`)}
-      </Button>
+      {sessions.length ? (
+        <Button variant={variant} size={size} className={className} icon={<Send className="size-4" />} onClick={start}>
+          {label ?? (sessions.length === 1 ? `Enviar treino para ${coachFirst}` : `Enviar ${sessions.length} treinos para ${coachFirst}`)}
+        </Button>
+      ) : null}
       <Dialog open={open} onClose={() => setOpen(false)} title={`Enviar para ${coachFirst}`}>
         <div className="space-y-4">
           <p className="text-[0.9375rem] text-steel">
@@ -230,10 +284,12 @@ export function SendToCoach({
                 </a>
                 <CopyButton text={msg} onCopied={() => sent("copy")} />
               </div>
-              {last ? <p className="text-xs text-steel">Último envio: {new Date(last).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</p> : null}
             </>
           ) : null}
         </div>
+        {/* Sempre montada (mesmo antes da mensagem existir) e fora do space-y: vazia, não abre espaço. Só o texto muda. */}
+        <StatusRegion className="mt-3" text={status ? prepStatusText(status.via, status.at, coachFirst, "aluno") : null} icon={status?.via === "copy" ? "copia" : "whatsapp"} />
+        {msg && note ? <p className="mt-3 text-sm text-steel">{note}</p> : null}
       </Dialog>
     </>
   );

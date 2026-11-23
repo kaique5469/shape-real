@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filledUnmarked, filledUnmarkedTitle, finishGate, isFilledUnmarked, markFilledDone, setCounts } from "./session-checks";
+import { filledUnmarked, filledUnmarkedTitle, finishGate, isFilledUnmarked, markFilledDone, setCounts, setRowDescription, setRowState } from "./session-checks";
 import type { ExerciseLog, Session, SetLog } from "./types";
 
 /** Série como fica no rascunho: carga pré-preenchida, reps null até a pessoa digitar. */
@@ -86,5 +86,40 @@ describe("markFilledDone ('Marcar e finalizar')", () => {
   it("sem nada a marcar devolve o mesmo objeto", () => {
     const s = session([ex("a", [set(10, true)])]);
     expect(markFilledDone(s)).toBe(s);
+  });
+});
+
+describe("setRowState e setRowDescription (U1a)", () => {
+  it("pendente: reps vazias ou 0, mesmo com carga pré-preenchida", () => {
+    expect(setRowState(set(null))).toBe("pendente");
+    expect(setRowState(set(0))).toBe("pendente");
+    expect(setRowState(set(null, false, null))).toBe("pendente");
+  });
+
+  it("preenchida: reps digitadas sem ✓", () => {
+    expect(setRowState(set(8))).toBe("preenchida");
+    expect(setRowState(set(8, false, null))).toBe("preenchida");
+  });
+
+  it("concluída: com ✓, também com reps null", () => {
+    expect(setRowState(set(8, true))).toBe("concluida");
+    expect(setRowState(set(null, true))).toBe("concluida");
+    expect(setRowState(set(0, true))).toBe("concluida");
+  });
+
+  it("série por tempo segue a mesma regra (segundos no lugar das reps)", () => {
+    expect(setRowState({ reps: 45, done: false })).toBe("preenchida");
+    expect(setRowState({ reps: null, done: false })).toBe("pendente");
+    expect(setRowState({ reps: 45, done: true })).toBe("concluida");
+  });
+
+  it("descrição: os 2 textos e null", () => {
+    expect(setRowDescription("preenchida", false)).toBe("Preenchida, falta marcar");
+    expect(setRowDescription("concluida", true)).toBe("Recorde neste treino");
+    expect(setRowDescription("concluida", false)).toBeNull();
+    expect(setRowDescription("pendente", false)).toBeNull();
+    // Recorde só existe em série concluída.
+    expect(setRowDescription("pendente", true)).toBeNull();
+    expect(setRowDescription("preenchida", true)).toBe("Preenchida, falta marcar");
   });
 });

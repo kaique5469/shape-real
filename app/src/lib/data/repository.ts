@@ -34,7 +34,11 @@ export interface Repository {
 
   listPrograms(ownerId: string): Promise<Program[]>;
   getProgram(id: string): Promise<Program | null>;
-  saveProgram(program: Program): Promise<Program>;
+  /**
+   * `keepUpdatedAt`: grava sem marcar como edição da ficha (finalizar treino, copiar a carga que o aluno fez,
+   * restaurar a cópia). `updatedAt` = última edição de CONTEÚDO: o registro de envio e o eco dependem disso.
+   */
+  saveProgram(program: Program, opts?: { keepUpdatedAt?: boolean }): Promise<Program>;
   deleteProgram(id: string): Promise<void>;
   setActiveProgram(ownerId: string, programId: string): Promise<void>;
 
@@ -51,7 +55,8 @@ export interface Repository {
   deletePhoto(photo: ProgressPhoto): Promise<void>;
 
   getDiet(ownerId: string): Promise<DietPlan | null>;
-  saveDiet(diet: DietPlan): Promise<DietPlan>;
+  /** `keepUpdatedAt`: grava sem marcar como edição da dieta (restaurar a cópia). */
+  saveDiet(diet: DietPlan, opts?: { keepUpdatedAt?: boolean }): Promise<DietPlan>;
 
   listStudents(coachId: string): Promise<StudentSummary[]>;
   /** Cadastra um aluno sem conta, já vinculado ao personal (requer capabilities.managedStudents). */
@@ -76,7 +81,10 @@ export interface Repository {
   flushPending?(): Promise<number>;
 
   recordUpgradeIntent(userId: string, plan: string): Promise<void>;
-  /** LGPD: exclusão definitiva da conta e de todos os dados do usuário. */
+  /**
+   * LGPD: exclusão definitiva da conta e de todos os dados do usuário (no personal, também o cadastro de um
+   * aluno sem conta). Apaga junto o registro de envio deste aparelho (`clearDeliveryKeys`).
+   */
   deleteAccount(userId: string): Promise<void>;
 }
 

@@ -144,8 +144,11 @@ export interface Profile {
   /**
    * Aluno que recebeu a ficha por link, no próprio celular: quem é o personal e qual é o id deste
    * aluno no aparelho dele (os treinos voltam para esse cadastro).
+   * `recebido`: o `updatedAt` (no relógio do personal) da ficha e da dieta que chegaram pelo último link desse
+   * personal, gravado antes de o app sobrescrever o `updatedAt` local. Volta ao personal com os treinos, para ele
+   * saber qual versão o aluno tem (eco por conteúdo, nunca pelo horário do envio). Recomeça se o personal mudar.
    */
-  remoteCoach?: { id: string; name: string; phone?: string; cref?: string; studentRef: string };
+  remoteCoach?: { id: string; name: string; phone?: string; cref?: string; studentRef: string; recebido?: { programAt?: string; dietAt?: string } };
   /** CREF do personal, como ele informou (ex.: "012345-G/SP"). Opcional e não conferido pelo app. */
   cref?: string;
   /** Plano que vale agora (inclui o período de teste e o personal pagante). */
@@ -205,7 +208,13 @@ export interface Program {
   active: boolean;
   source: ProgramSource;
   createdAt: string;
+  /** Última edição de CONTEÚDO (finalizar treino, copiar carga e enviar não mudam; gravam com keepUpdatedAt). */
   updatedAt: string;
+  /**
+   * Só no aparelho do aluno: quando ele ajustou a ficha recebida do personal (o conteúdo deixa de ser o do
+   * personal: texto e impressão saem sem nome e CREF dele). Não viaja no link (o esquema do pacote descarta).
+   */
+  adjustedAt?: string;
 }
 
 export interface SetLog {
@@ -302,7 +311,13 @@ export interface DietPlan {
   targets: MacroTargets;
   meals: Meal[];
   notes?: string;
+  /** Última edição de CONTEÚDO (restaurar a cópia grava com keepUpdatedAt). */
   updatedAt: string;
+  /**
+   * Só no aparelho do aluno: quando ele ajustou o cardápio recebido do personal (só as refeições mudam).
+   * Não viaja no link (o esquema do pacote descarta).
+   */
+  adjustedAt?: string;
 }
 
 /** Dados que o personal informa ao cadastrar um aluno sem conta. */

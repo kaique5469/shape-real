@@ -2,13 +2,15 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, Check, Copy, IdCard, MessageCircle, MoreHorizontal, Pencil, Plus, Printer, Replace, Search, Sparkles, Trash2, Wand2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, CircleAlert, Copy, IdCard, MessageCircle, MoreHorizontal, Plus, Printer, Replace, Search, Sparkles, Trash2, Wand2, X } from "lucide-react";
 import { shareNames } from "@/components/program/program-share";
 import { ActionSheet, Alert, Button, Dialog, Empty, Field, IconButton, Input, Panel, Select, Skeleton, Textarea, cx, type SheetAction } from "@/components/ui";
+import { PlanVsTargets } from "@/components/views/diet-read";
 import { useApp } from "@/lib/app-context";
 import { OfflineError, aiAvailable, aiDietAnalyze, aiDietGenerate, useAI, type DietAnalysis } from "@/lib/ai/client";
 import { COACH_IDENTITY_HINT, needsCoachIdentity } from "@/lib/data/demo";
-import { dietToText, householdMeasure, parseDietBody, type DietBodyInput } from "@/lib/domain/diet-share";
+import { MACRO_LABEL, MACRO_ORDER, itemsBand } from "@/lib/domain/diet-plan";
+import { dietToText, householdMeasure, macroLine, parseDietBody, type DietBodyInput } from "@/lib/domain/diet-share";
 import { normalize } from "@/lib/domain/exercises";
 import { allFoods, getFood, type Food } from "@/lib/domain/foods";
 import { firstName, waLink, waPhone } from "@/lib/domain/format";
@@ -17,17 +19,24 @@ import { ACTIVITY_LABEL, analyzeDietText, buildDietTemplate, dietTotals, itemFro
 import { coachSignature, signerFor } from "@/lib/domain/program-share";
 import { consentConfirmed } from "@/lib/domain/transfer";
 import { fmtDate } from "@/lib/hooks";
-import { reportError, track } from "@/lib/analytics";
+import { reportError, track, type DietAnalyzedProps } from "@/lib/analytics";
 import type { ActivityLevel, DietItem, DietPlan, MacroTargets, Meal, Profile } from "@/lib/domain/types";
 
-const MACROS: { key: keyof MacroTargets; label: string; short: string; unit: string; color: string }[] = [
-  { key: "kcal", label: "Calorias", short: "kcal", unit: "kcal", color: "bg-iron" },
-  { key: "proteinG", label: "Proteína", short: "P", unit: "g", color: "bg-plate-red" },
-  { key: "carbsG", label: "Carboidrato", short: "C", unit: "g", color: "bg-plate-yellow" },
-  { key: "fatG", label: "Gordura", short: "G", unit: "g", color: "bg-plate-blue" },
-];
 const CRN_KEY = "sr:crn";
 const int = (v: number) => Math.round(v).toLocaleString("pt-BR");
+const countItems = (meals: Meal[]) => meals.reduce((n, m) => n + m.items.length, 0);
+
+/**
+ * Seleciona todo o valor agora e de novo no próximo tique (o Safari do iPhone pode pôr o cursor no fim depois
+ * do foco). Mesmo contrato do `selectAllSoon` da U8 (src/lib/hooks.ts); troque por ele quando existir lá.
+ */
+function selectAllSoon(el: HTMLInputElement | HTMLTextAreaElement) {
+  const value = el.value;
+  el.select();
+  setTimeout(() => {
+    if (document.activeElement === el && el.value === value) el.setSelectionRange(0, el.value.length);
+  }, 0);
+}
 
 /** Recalcula um item para uma nova quantidade (pelo alimento da base, ou proporcional quando não há). */
 function resizeItem(item: DietItem, grams: number): DietItem {
@@ -293,6 +302,7 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
   };
 
   const share = diet && hasItems ? dietToText(diet, textOpts) : "";
+  const analyzer = targets ? <Analyzer owner={owner} targets={targets} coach={coach} aiOn={ai.enabled} onUse={(meals) => (hasItems ? setPendingPlan(meals) : usePlan(meals))} /> : null;
 
   return (
     <div className="space-y-5">
@@ -318,50 +328,15 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
       ) : null}
 
       {targets ? (
-        <Panel
-          title="Metas diárias"
+        <PlanVsTargets
           className="no-print"
-          action={
-            <button type="button" onClick={() => setTargetsOpen(true)} className="-my-2 inline-flex min-h-10 items-center gap-1.5 text-sm font-semibold underline">
-              <Pencil className="size-3.5" aria-hidden /> Editar metas
-            </button>
-          }
-        >
-          <div className="grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-4">
-            {MACROS.map((m) => {
-              const t = targets[m.key];
-              const v = totals?.[m.key] ?? 0;
-              const pct = t ? (v / t) * 100 : 0;
-              const over = pct > 108;
-              return (
-                <div key={m.key} className="min-w-0">
-                  <p className="flex items-baseline justify-between gap-2 text-sm">
-                    <span className="font-semibold">{m.label}</span>
-                    <span className="num text-steel">meta {int(t)}</span>
-                  </p>
-                  <p className="num plate-type mt-1 text-2xl">
-                    {hasItems ? int(v) : "—"}
-                    <span className="text-sm font-semibold text-steel"> {m.unit}</span>
-                  </p>
-                  <div className="mt-1.5 h-2 rounded-full bg-chalk-2" aria-hidden>
-                    <div className={cx("h-full rounded-full transition-[width]", over ? "bg-plate-red" : m.color)} style={{ width: `${Math.min(100, pct)}%` }} />
-                  </div>
-                  {hasItems ? (
-                    <p className={cx("num mt-1 text-xs", over ? "font-semibold text-plate-red-ink" : "text-steel")}>
-                      {Math.abs(v - t) <= t * 0.05 ? "na meta" : v < t ? `faltam ${int(t - v)} ${m.unit}` : `passou ${int(v - t)} ${m.unit}`}
-                    </p>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-          <p className="mt-3 text-xs text-steel">
-            {computed ? `Gasto diário estimado${coach ? ` de ${who}` : ""}: ${int(computed.tdee)} kcal. ` : ""}
-            {hasItems ? "Os números grandes são o total do cardápio abaixo." : "Monte o cardápio para comparar com as metas."}
-          </p>
-        </Panel>
+          targets={targets}
+          totals={hasItems ? totals : null}
+          editTargets={() => setTargetsOpen(true)}
+          tdeeLine={computed ? `Gasto diário estimado${coach ? ` de ${who}` : ""}: ${int(computed.tdee)} kcal.` : null}
+        />
       ) : (
-        <Panel title="Metas diárias" className="no-print">
+        <Panel title="Metas do dia" className="no-print">
           {coach ? (
             <>
               <p className="text-[0.9375rem] text-steel">
@@ -377,102 +352,138 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
         </Panel>
       )}
 
-      {targets ? <Analyzer owner={owner} targets={targets} coach={coach} aiOn={ai.enabled} onUse={(meals) => (hasItems ? setPendingPlan(meals) : usePlan(meals))} /> : null}
+      {/* Analisador: no personal, recolhido acima do cardápio ("Usar como cardápio" troca o que está logo abaixo); no aluno, depois do cardápio. */}
+      {coach ? analyzer : null}
 
-      {diet ? (
-        <section className="no-print space-y-3" aria-label="Cardápio">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-            <div className="min-w-0 flex-1">
-              <input
-                aria-label="Nome do plano alimentar"
-                value={diet.name}
-                onChange={(e) => change((d) => ({ ...d, name: e.target.value }))}
-                maxLength={60}
-                className="h-10 w-full min-w-0 rounded border border-transparent bg-transparent text-lg font-bold hover:border-rule focus:border-iron focus:outline-none"
-              />
-              {diet.createdBy && diet.createdBy !== owner.id && !coach ? <p className="text-sm text-steel">Enviada pelo seu personal · atualizada em {fmtDate(diet.updatedAt)}</p> : null}
-            </div>
-            <Button variant="secondary" size="sm" className="self-start" icon={ai.enabled ? <Sparkles className="size-4" /> : <Wand2 className="size-4" />} onClick={() => setGenOpen(true)} disabled={!targets}>
-              {hasItems ? (ai.enabled ? "Gerar outro com IA" : "Montar outro automático") : ai.enabled ? "Gerar cardápio com IA" : "Montar cardápio automático"}
-            </Button>
-          </div>
-
-          {diet.meals.map((meal) => {
-            const t = sumItems(meal.items);
-            return (
-              <div key={meal.uid} className="overflow-hidden rounded-[8px] border border-rule bg-paper">
-                <div className="flex items-center gap-2 border-b border-rule bg-chalk py-1.5 pl-4 pr-1">
-                  <input
-                    aria-label="Nome da refeição"
-                    value={meal.name}
-                    onChange={(e) => changeMeal(meal.uid, (m) => ({ ...m, name: e.target.value }))}
-                    maxLength={40}
-                    className="h-10 min-w-0 flex-1 rounded border border-transparent bg-transparent font-bold hover:border-rule focus:border-iron focus:outline-none"
-                  />
-                  <input
-                    aria-label={`Horário de ${meal.name}`}
-                    type="time"
-                    value={meal.time ?? ""}
-                    onChange={(e) => changeMeal(meal.uid, (m) => ({ ...m, time: e.target.value || undefined }))}
-                    className="num h-10 w-24 shrink-0 rounded border border-transparent bg-transparent text-sm text-steel hover:border-rule focus:border-iron focus:outline-none"
-                  />
-                  <IconButton label={`Opções de ${meal.name}`} onClick={() => setMealMenu(meal)}>
-                    <MoreHorizontal className="size-5" />
-                  </IconButton>
-                </div>
-                {meal.items.length ? (
-                  <ul className="ruled">
-                    {meal.items.map((i) => {
-                      const measure = householdMeasure(i.foodId ? getFood(i.foodId) : undefined, i.grams);
-                      return (
-                        <li key={i.uid} className="flex items-center gap-2 py-1.5 pl-4 pr-1">
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-[0.9375rem] font-semibold">{i.name}</span>
-                            <span className="num block truncate text-xs text-steel">
-                              {measure ? `${measure} · ` : ""}
-                              {int(i.kcal)} kcal · P {int(i.proteinG)} · C {int(i.carbsG)} · G {int(i.fatG)}
-                            </span>
-                          </span>
-                          <GramsInput value={i.grams} label={`Gramas de ${i.name}`} onChange={(g) => changeMeal(meal.uid, (m) => ({ ...m, items: m.items.map((x) => (x.uid === i.uid ? resizeItem(x, g) : x)) }))} />
-                          <IconButton label={`Opções de ${i.name}`} onClick={() => setItemMenu({ meal: meal.uid, item: i })}>
-                            <MoreHorizontal className="size-5" />
-                          </IconButton>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                ) : (
-                  <p className="px-4 py-3 text-sm text-steel">Nenhum alimento nesta refeição.</p>
-                )}
-                <div className="flex items-center justify-between gap-3 border-t border-rule pl-2 pr-4">
-                  <button type="button" onClick={() => setPicker({ meal: meal.uid })} className="flex min-h-11 items-center gap-2 px-2 text-sm font-semibold hover:underline">
-                    <Plus className="size-4" aria-hidden /> Adicionar alimento
-                  </button>
-                  {meal.items.length ? (
-                    <span className="num text-sm font-semibold">
-                      {int(t.kcal)} kcal · {int(t.proteinG)} g P
-                    </span>
-                  ) : null}
-                </div>
+      <div className="no-print space-y-3">
+        {!diet && msg ? <Alert tone={msg.tone}>{msg.text}</Alert> : null}
+        {diet ? (
+          <section id="cardapio" className="space-y-3" aria-label="Cardápio">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div className="min-w-0 flex-1">
+                <input
+                  aria-label="Nome do plano alimentar"
+                  value={diet.name}
+                  onChange={(e) => change((d) => ({ ...d, name: e.target.value }))}
+                  maxLength={60}
+                  className="h-11 w-full min-w-0 rounded border border-transparent bg-transparent text-lg font-bold hover:border-rule focus:border-iron focus:outline-none"
+                />
+                {diet.createdBy && diet.createdBy !== owner.id && !coach ? <p className="text-sm text-steel">Enviada pelo seu personal · atualizada em {fmtDate(diet.updatedAt)}</p> : null}
               </div>
-            );
-          })}
+              <Button variant="secondary" size="sm" className="self-start" icon={ai.enabled ? <Sparkles className="size-4" /> : <Wand2 className="size-4" />} onClick={() => setGenOpen(true)} disabled={!targets}>
+                {hasItems ? (ai.enabled ? "Gerar outro com IA" : "Montar outro automático") : ai.enabled ? "Gerar cardápio com IA" : "Montar cardápio automático"}
+              </Button>
+            </div>
 
-          <Button variant="secondary" size="sm" icon={<Plus className="size-4" />} onClick={() => change((d) => ({ ...d, meals: [...d.meals, { uid: uid(), name: "Nova refeição", items: [] }] }))}>
-            Adicionar refeição
-          </Button>
+            {diet.meals.map((meal) => {
+              const t = sumItems(meal.items);
+              return (
+                <div key={meal.uid} className="overflow-hidden rounded-[8px] border border-rule bg-paper">
+                  <div className="flex items-center gap-2 border-b border-rule bg-chalk py-1.5 pl-4 pr-1">
+                    <input
+                      aria-label="Nome da refeição"
+                      value={meal.name}
+                      onChange={(e) => changeMeal(meal.uid, (m) => ({ ...m, name: e.target.value }))}
+                      maxLength={40}
+                      className="h-11 min-w-0 flex-1 rounded border border-transparent bg-transparent text-base font-bold hover:border-rule focus:border-iron focus:outline-none"
+                    />
+                    <input
+                      aria-label={`Horário de ${meal.name}`}
+                      type="time"
+                      value={meal.time ?? ""}
+                      onChange={(e) => changeMeal(meal.uid, (m) => ({ ...m, time: e.target.value || undefined }))}
+                      className="num h-11 w-[6.5rem] shrink-0 rounded border border-transparent bg-transparent text-base text-steel hover:border-rule focus:border-iron focus:outline-none"
+                    />
+                    <IconButton label={`Opções de ${meal.name}`} onClick={() => setMealMenu(meal)}>
+                      <MoreHorizontal className="size-5" />
+                    </IconButton>
+                  </div>
+                  {meal.items.length ? (
+                    <ul className="ruled">
+                      {meal.items.map((i) => {
+                        const measure = householdMeasure(i.foodId ? getFood(i.foodId) : undefined, i.grams);
+                        return (
+                          <li key={i.uid} className="flex items-center gap-2 py-1.5 pl-4 pr-1">
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-[0.9375rem] font-semibold">{i.name}</span>
+                              <span className="num block truncate text-xs text-steel">
+                                {measure ? `${measure} · ` : ""}
+                                {int(i.kcal)} kcal · P {int(i.proteinG)} · C {int(i.carbsG)} · G {int(i.fatG)}
+                              </span>
+                            </span>
+                            <GramsInput value={i.grams} label={`Gramas de ${i.name}`} onChange={(g) => changeMeal(meal.uid, (m) => ({ ...m, items: m.items.map((x) => (x.uid === i.uid ? resizeItem(x, g) : x)) }))} />
+                            <IconButton label={`Opções de ${i.name}`} onClick={() => setItemMenu({ meal: meal.uid, item: i })}>
+                              <MoreHorizontal className="size-5" />
+                            </IconButton>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <p className="px-4 py-3 text-sm text-steel">Nenhum alimento nesta refeição.</p>
+                  )}
+                  <div className="flex items-center justify-between gap-3 border-t border-rule pl-2 pr-4">
+                    <button type="button" onClick={() => setPicker({ meal: meal.uid })} className="flex min-h-11 items-center gap-2 px-2 text-sm font-semibold hover:underline">
+                      <Plus className="size-4" aria-hidden /> Adicionar alimento
+                    </button>
+                    {meal.items.length ? (
+                      <span className="num text-sm font-semibold">
+                        {int(t.kcal)} kcal · {int(t.proteinG)} g P
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
 
-          <Field label="Orientações gerais" hint={coach ? "Água, substituições, pré e pós-treino. Vai junto no texto do WhatsApp." : "Água, substituições, lembretes para você."}>
-            <Textarea value={diet.notes ?? ""} onChange={(e) => change((d) => ({ ...d, notes: e.target.value }))} rows={3} maxLength={800} placeholder="Ex.: 35 ml de água por kg. Pode trocar arroz por batata ou macarrão na mesma quantidade." />
-          </Field>
+            <Button variant="secondary" size="sm" icon={<Plus className="size-4" />} onClick={() => change((d) => ({ ...d, meals: [...d.meals, { uid: uid(), name: "Nova refeição", items: [] }] }))}>
+              Adicionar refeição
+            </Button>
 
-          {msg ? <Alert tone={msg.tone}>{msg.text}</Alert> : null}
-          {restored && dirty ? (
-            <button type="button" onClick={() => void discard()} className="min-h-11 text-sm font-semibold text-steel underline hover:text-iron">
-              Descartar essas alterações e voltar à versão salva
-            </button>
-          ) : null}
+            <Field label="Orientações gerais" hint={coach ? "Água, substituições, pré e pós-treino. Vai junto no texto do WhatsApp." : "Água, substituições, lembretes para você."}>
+              <Textarea value={diet.notes ?? ""} onChange={(e) => change((d) => ({ ...d, notes: e.target.value }))} rows={3} maxLength={800} placeholder="Ex.: 35 ml de água por kg. Pode trocar arroz por batata ou macarrão na mesma quantidade." />
+            </Field>
+          </section>
+        ) : (
+          <Empty
+            title={coach ? `${who} ainda não tem cardápio` : "Monte seu cardápio"}
+            body={
+              targets
+                ? "Comece por um cardápio base com alimentos do dia a dia que fecha as metas de calorias e proteína, ou monte refeição por refeição."
+                : "Defina as metas acima para montar o cardápio."
+            }
+            action={
+              <div className="flex flex-wrap gap-2">
+                <Button icon={ai.enabled ? <Sparkles className="size-4" /> : <Wand2 className="size-4" />} onClick={() => (ai.enabled ? setGenOpen(true) : void generate())} loading={genBusy && !genOpen} disabled={!targets}>
+                  {ai.enabled ? "Gerar cardápio com IA" : "Montar cardápio automático"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={!targets}
+                  onClick={() => {
+                    if (!targets) return;
+                    setDiet(blankDiet(targets));
+                    setDirty(true);
+                  }}
+                >
+                  Montar do zero
+                </Button>
+              </div>
+            }
+          />
+        )}
 
+        {diet && msg ? <Alert tone={msg.tone}>{msg.text}</Alert> : null}
+        {diet && restored && dirty ? (
+          <button type="button" onClick={() => void discard()} className="min-h-11 text-sm font-semibold text-steel underline hover:text-iron">
+            Descartar essas alterações e voltar à versão salva
+          </button>
+        ) : null}
+
+        {/* Aluno: o analisador vem depois do cardápio, sempre no mesmo lugar da árvore (com ou sem dieta, não perde o texto). */}
+        {!coach ? analyzer : null}
+
+        {diet ? (
           <Panel title={coach ? `Enviar para ${who}` : "Compartilhar"}>
             {coach && needsCoachIdentity(user) ? (
               <Link href="/conta" className="mb-2 flex min-h-11 items-center gap-2 text-sm font-semibold underline">
@@ -510,47 +521,17 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
               </Button>
             </div>
           </Panel>
+        ) : null}
 
-          {dirty ? (
-            <div className="sticky bottom-20 z-10 flex items-center justify-end gap-3 lg:bottom-4">
-              <span className="rounded bg-plate-yellow px-2 py-1 text-sm font-semibold">Alterações não salvas</span>
-              <Button size="lg" onClick={save} loading={saving} className="shadow-lift">
-                Salvar dieta
-              </Button>
-            </div>
-          ) : null}
-        </section>
-      ) : (
-        <div className="no-print space-y-3">
-          {msg ? <Alert tone={msg.tone}>{msg.text}</Alert> : null}
-          <Empty
-            title={coach ? `${who} ainda não tem cardápio` : "Monte seu cardápio"}
-            body={
-              targets
-                ? "Comece por um cardápio base com alimentos do dia a dia que fecha as metas de calorias e proteína, ou monte refeição por refeição."
-                : "Defina as metas acima para montar o cardápio."
-            }
-            action={
-              <div className="flex flex-wrap gap-2">
-                <Button icon={ai.enabled ? <Sparkles className="size-4" /> : <Wand2 className="size-4" />} onClick={() => (ai.enabled ? setGenOpen(true) : void generate())} loading={genBusy && !genOpen} disabled={!targets}>
-                  {ai.enabled ? "Gerar cardápio com IA" : "Montar cardápio automático"}
-                </Button>
-                <Button
-                  variant="secondary"
-                  disabled={!targets}
-                  onClick={() => {
-                    if (!targets) return;
-                    setDiet(blankDiet(targets));
-                    setDirty(true);
-                  }}
-                >
-                  Montar do zero
-                </Button>
-              </div>
-            }
-          />
-        </div>
-      )}
+        {diet && dirty ? (
+          <div className="sticky bottom-nav-safe z-10 flex items-center justify-end gap-3 lg:bottom-4">
+            <span className="rounded bg-warn-fill px-2 py-1 text-sm font-semibold text-iron">Alterações não salvas</span>
+            <Button size="lg" onClick={save} loading={saving} className="shadow-lift">
+              Salvar dieta
+            </Button>
+          </div>
+        ) : null}
+      </div>
 
       <Dialog open={Boolean(dropMeal)} onClose={() => setDropMeal(null)} title="Excluir esta refeição?">
         <p className="text-[0.9375rem] text-steel">
@@ -579,9 +560,7 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
           <header className="mb-4 border-b-2 border-iron pb-2">
             <h1 className="plate-type text-2xl">{coach ? `Plano alimentar — ${owner.name}` : diet.name}</h1>
             {signature ? <p className="text-sm font-semibold">{signature}</p> : null}
-            <p className="num text-sm">
-              Metas do dia: {int(diet.targets.kcal)} kcal · proteína {int(diet.targets.proteinG)} g · carboidrato {int(diet.targets.carbsG)} g · gordura {int(diet.targets.fatG)} g
-            </p>
+            <p className="num text-sm">Metas do dia: {macroLine(diet.targets)}</p>
           </header>
           {diet.meals
             .filter((m) => m.items.length)
@@ -620,9 +599,7 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
               );
             })}
           {totals ? (
-            <p className="num text-sm font-bold">
-              Total do dia: {int(totals.kcal)} kcal · proteína {int(totals.proteinG)} g · carboidrato {int(totals.carbsG)} g · gordura {int(totals.fatG)} g
-            </p>
+            <p className="num text-sm font-bold">Total do cardápio: {macroLine(totals)}</p>
           ) : null}
           {diet.notes?.trim() ? (
             <div className="mt-4">
@@ -780,7 +757,7 @@ function DietBodyForm({ owner, onManual }: { owner: Profile; onManual: () => voi
       </Field>
       {needsConsent ? (
         <div>
-          <label className={cx("flex min-h-11 cursor-pointer items-start gap-3 rounded-[8px] border bg-paper p-3 text-[0.9375rem]", err?.field === "consent" ? "border-plate-red" : "border-rule")}>
+          <label className={cx("flex min-h-11 cursor-pointer items-start gap-3 rounded-[8px] border bg-paper p-3 text-[0.9375rem]", err?.field === "consent" ? "border-danger" : "border-rule")}>
             <input
               type="checkbox"
               data-field="consent"
@@ -796,8 +773,9 @@ function DietBodyForm({ owner, onManual }: { owner: Profile; onManual: () => voi
             <span>{consentLabel}</span>
           </label>
           {err?.field === "consent" ? (
-            <p id="dieta-autorizacao-erro" className="mt-1 text-sm text-plate-red-ink">
-              {err.text}
+            <p id="dieta-autorizacao-erro" className="mt-1 flex items-start gap-1.5 text-sm text-danger">
+              <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+              <span className="min-w-0">{err.text}</span>
             </p>
           ) : null}
         </div>
@@ -830,7 +808,7 @@ function GramsInput({ value, onChange, label }: { value: number; onChange: (g: n
         value={text}
         onFocus={(e) => {
           setFocused(true);
-          e.target.select();
+          selectAllSoon(e.currentTarget);
         }}
         onChange={(e) => {
           const raw = e.target.value.replace(/\D/g, "").slice(0, 4);
@@ -839,7 +817,7 @@ function GramsInput({ value, onChange, label }: { value: number; onChange: (g: n
           if (raw && n >= 1 && n <= 2000) onChange(n);
         }}
         onBlur={() => setFocused(false)}
-        className="num h-10 w-[4.5rem] rounded-[6px] border border-rule-strong bg-paper pl-2 pr-6 text-right text-sm font-bold focus:border-iron focus:outline-none"
+        className="num h-11 w-20 rounded-[6px] border border-field bg-paper pl-2 pr-6 text-right text-base font-bold focus:border-iron focus:outline-none"
       />
       <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-steel">g</span>
     </span>
@@ -873,12 +851,12 @@ function TargetsDialog({ open, onClose, current, computed, onApply }: { open: bo
   }
 
   return (
-    <Dialog open={open} onClose={onClose} title="Metas diárias">
+    <Dialog open={open} onClose={onClose} title="Metas do dia">
       <form onSubmit={submit} className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
-          {MACROS.map((m) => (
-            <Field key={m.key} label={`${m.label} (${m.unit})`}>
-              <Input inputMode="numeric" value={f[m.key]} onChange={(e) => setF({ ...f, [m.key]: e.target.value.replace(/\D/g, "").slice(0, 4) })} />
+          {MACRO_ORDER.map((k) => (
+            <Field key={k} label={`${MACRO_LABEL[k].long} (${MACRO_LABEL[k].unit})`}>
+              <Input inputMode="numeric" value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value.replace(/\D/g, "").slice(0, 4) })} />
             </Field>
           ))}
         </div>
@@ -1136,7 +1114,7 @@ function Analyzer({ owner, targets, coach, aiOn, onUse }: { owner: Profile; targ
   function runLocal(offline: boolean) {
     const r = analyzeDietText(text, targets, owner.weightKg);
     setRes({ ...r, source: "motor", notice: offline && aiOn ? "Sem conexão agora: a análise foi feita pela base de alimentos do app, sem a IA." : undefined });
-    track("diet_analyzed", { source: offline ? "offline" : "motor", score: r.score, where: coach ? "coach" : "self" });
+    track("diet_analyzed", { source: offline ? "offline" : "motor", where: coach ? "coach" : "self", itens: itemsBand(countItems(r.meals)) } satisfies DietAnalyzedProps);
   }
 
   async function run() {
@@ -1147,7 +1125,7 @@ function Analyzer({ owner, targets, coach, aiOn, onUse }: { owner: Profile; targ
       if (!(await aiAvailable(dataMode === "supabase"))) return runLocal(false);
       const r = await aiDietAnalyze({ text, targets, goal: owner.goal, weightKg: owner.weightKg, ownerId: owner.id, createdBy: user!.id }, await accessToken());
       setRes({ ...r.data, source: r.source, notice: r.notice, quota: r.quota });
-      track("diet_analyzed", { source: r.source, score: r.data.score, where: coach ? "coach" : "self" });
+      track("diet_analyzed", { source: r.source, where: coach ? "coach" : "self", itens: itemsBand(countItems(r.data.meals)) } satisfies DietAnalyzedProps);
     } catch (e) {
       if (e instanceof OfflineError) return runLocal(true);
       setErr(e instanceof Error ? e.message : "Não foi possível analisar. Tente de novo.");
@@ -1160,11 +1138,11 @@ function Analyzer({ owner, targets, coach, aiOn, onUse }: { owner: Profile; targ
 
   return (
     <Panel
-      title={coach ? `Analisar o que ${who} comeu` : "O que você comeu hoje?"}
+      title={coach ? `Analisar o que ${who} comeu` : "Conferir o que comi"}
       className="no-print"
       action={
         coach ? (
-          <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="-my-2 inline-flex min-h-10 min-w-11 items-center justify-end text-sm font-semibold underline">
+          <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="-my-2 inline-flex min-h-11 min-w-11 items-center justify-end text-sm font-semibold underline">
             {open ? "Fechar" : "Abrir"}
           </button>
         ) : undefined
@@ -1185,7 +1163,9 @@ function Analyzer({ owner, targets, coach, aiOn, onUse }: { owner: Profile; targ
             <Button onClick={run} loading={busy} disabled={text.trim().length < 3} icon={aiOn ? <Sparkles className="size-4" /> : undefined}>
               {aiOn ? "Analisar com IA" : "Analisar"}
             </Button>
-            <span className="min-w-0 flex-1 text-xs text-steel">Escreva como no WhatsApp. Com quantidades (gramas, colheres, unidades) a conta fica mais precisa.</span>
+            <span className="min-w-0 flex-1 text-xs text-steel">
+              {coach ? "Escreva como no WhatsApp. Com quantidades (gramas, colheres, unidades) a conta fica mais precisa." : "Escreva como no WhatsApp. O app estima pelo que você escreveu, e o texto não fica salvo."}
+            </span>
           </div>
           {err ? (
             <Alert tone="error" className="mt-3">
@@ -1195,14 +1175,9 @@ function Analyzer({ owner, targets, coach, aiOn, onUse }: { owner: Profile; targ
           {res ? (
             <div className="mt-4 space-y-3 border-t border-rule pt-4">
               {res.notice?.trim() ? <Alert tone={res.quota ? "warn" : "info"}>{res.notice}</Alert> : null}
-              <div className="flex items-center gap-4">
-                <span
-                  className={cx("num plate-type grid size-16 shrink-0 place-items-center rounded-full text-2xl text-white", res.score >= 80 ? "bg-plate-green" : res.score >= 55 ? "bg-plate-yellow !text-iron" : "bg-plate-red")}
-                  aria-label={`Nota ${res.score} de 100`}
-                >
-                  {res.score}
-                </span>
-                <div className="min-w-0 flex-1">
+              {/* Sem nota nem cor de problema (U3 R11/R13): resumo, números e as dicas, com ✓ (steel) e ponto (iron). */}
+              <div data-area="dieta-numeros" className="space-y-3">
+                <div className="min-w-0">
                   <p className="font-semibold">{res.summary}</p>
                   <p className="num text-sm text-steel">
                     {int(res.totals.kcal)} de {int(targets.kcal)} kcal · proteína {int(res.totals.proteinG)} de {int(targets.proteinG)} g
@@ -1211,27 +1186,27 @@ function Analyzer({ owner, targets, coach, aiOn, onUse }: { owner: Profile; targ
                     carboidrato {int(res.totals.carbsG)} g · gordura {int(res.totals.fatG)} g
                   </p>
                 </div>
+                {res.highlights.length ? (
+                  <ul className="space-y-1 text-[0.9375rem]">
+                    {res.highlights.map((h) => (
+                      <li key={h} className="flex gap-2">
+                        <Check className="mt-1 size-4 shrink-0 text-steel" aria-hidden />
+                        {h}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {res.adjustments.length ? (
+                  <ul className="space-y-1 text-[0.9375rem]">
+                    {res.adjustments.map((h) => (
+                      <li key={h} className="flex gap-2">
+                        <span className="ml-[5px] mr-[5px] mt-2 size-1.5 shrink-0 rounded-full bg-iron" aria-hidden />
+                        {h}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </div>
-              {res.highlights.length ? (
-                <ul className="space-y-1 text-[0.9375rem]">
-                  {res.highlights.map((h) => (
-                    <li key={h} className="flex gap-2">
-                      <span className="mt-2 size-1.5 shrink-0 rounded-full bg-plate-green" aria-hidden />
-                      {h}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              {res.adjustments.length ? (
-                <ul className="space-y-1 text-[0.9375rem]">
-                  {res.adjustments.map((h) => (
-                    <li key={h} className="flex gap-2">
-                      <span className="mt-2 size-1.5 shrink-0 rounded-full bg-plate-red" aria-hidden />
-                      {h}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
               {recognized.length ? (
                 <details className="rounded-[6px] border border-rule">
                   <summary className="flex min-h-11 cursor-pointer items-center px-3 text-sm font-semibold">O que foi reconhecido</summary>

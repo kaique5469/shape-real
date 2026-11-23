@@ -8,7 +8,7 @@ export default function DietaPage() {
   const { user } = useApp();
   return (
     <>
-      <PageHeader title="Dieta" sub="Metas calculadas para o seu objetivo, cardápio e análise do que você comeu." />
+      <PageHeader title="Dieta" sub="Seu cardápio e as metas do dia. Você também pode conferir o que comeu." />
       <DietView owner={user!} mode="self" />
     </>
   );

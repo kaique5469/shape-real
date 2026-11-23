@@ -483,6 +483,9 @@ export interface DietFeedback {
   adjustments: string[];
 }
 
+/** Inteiro com separador de milhar pt-BR ("1.650"), para os textos do analisador baterem com a tela. */
+const kc = (v: number) => Math.round(v).toLocaleString("pt-BR");
+
 export function analyzeDiet(meals: Meal[], targets: MacroTargets, weightKg?: number): DietFeedback {
   const totals = sumItems(meals.flatMap((m) => m.items));
   const highlights: string[] = [];
@@ -502,9 +505,9 @@ export function analyzeDiet(meals: Meal[], targets: MacroTargets, weightKg?: num
       `Faltam cerca de ${gap} g de proteína. Equivale a ${Math.max(30, Math.round((gap / 0.32) / 10) * 10)} g de frango grelhado, ${scoops} ${scoops === 1 ? "scoop" : "scoops"} de whey ou ${eggs} ${eggs === 1 ? "ovo" : "ovos"}.`,
     );
   }
-  if (kcalRatio > 1.12) adjustments.push(`Calorias ${Math.round((kcalRatio - 1) * 100)}% acima da meta (${totals.kcal} de ${targets.kcal} kcal). Reduza primeiro as porções de carboidrato ou gordura.`);
-  else if (kcalRatio < 0.85) adjustments.push(`Calorias ${Math.round((1 - kcalRatio) * 100)}% abaixo da meta (${totals.kcal} de ${targets.kcal} kcal). Se o dia foi isso mesmo, falta comida para treinar e recuperar bem; se faltou anotar algo, complete.`);
-  else highlights.push(`Calorias dentro da faixa: ${totals.kcal} de ${targets.kcal} kcal.`);
+  if (kcalRatio > 1.12) adjustments.push(`Calorias ${Math.round((kcalRatio - 1) * 100)}% acima da meta (${kc(totals.kcal)} de ${kc(targets.kcal)} kcal). Reduza primeiro as porções de carboidrato ou gordura.`);
+  else if (kcalRatio < 0.85) adjustments.push(`Calorias ${Math.round((1 - kcalRatio) * 100)}% abaixo da meta (${kc(totals.kcal)} de ${kc(targets.kcal)} kcal). Se o dia foi isso mesmo, falta comida para treinar e recuperar bem; se faltou anotar algo, complete.`);
+  else highlights.push(`Calorias dentro da faixa: ${kc(totals.kcal)} de ${kc(targets.kcal)} kcal.`);
   if (fatRatio > 1.3) adjustments.push(`Gordura alta (${Math.round(totals.fatG)} g). Atenção a frituras, queijos e óleos.`);
 
   const proteinMeals = meals.filter((m) => sumItems(m.items).proteinG >= 20).length;
@@ -519,7 +522,7 @@ export function analyzeDiet(meals: Meal[], targets: MacroTargets, weightKg?: num
   if (junk.length) {
     const names = [...new Set(junk.map((j) => j.name.replace(/\s*\(.*?\)/g, "").toLowerCase()))];
     const kcal = junk.reduce((a, j) => a + j.kcal, 0);
-    adjustments.push(`${capitalize(names.join(", "))}: cerca de ${kcal} kcal do dia. Cabe com moderação, desde que entre na conta.`);
+    adjustments.push(`${capitalize(names.join(", "))}: cerca de ${kc(kcal)} kcal do dia. Cabe com moderação, desde que entre na conta.`);
   }
   if (weightKg && totals.proteinG / weightKg > 3) adjustments.push("Proteína acima de 3 g/kg não traz ganho extra; troque parte por carboidrato.");
 
@@ -555,7 +558,7 @@ export function analyzeDietText(text: string, targets: MacroTargets, weightKg?: 
   const fb = analyzeDiet(meals, targets, weightKg);
   const count = meals.reduce((n, m) => n + m.items.length, 0);
   const summary = meals.length
-    ? `${count === 1 ? "1 alimento lido" : `${count} alimentos lidos`} em ${meals.length === 1 ? "1 refeição" : `${meals.length} refeições`}: ${fb.totals.kcal} kcal e ${Math.round(fb.totals.proteinG)} g de proteína (valores aproximados).`
+    ? `${count === 1 ? "1 alimento lido" : `${count} alimentos lidos`} em ${meals.length === 1 ? "1 refeição" : `${meals.length} refeições`}: ${kc(fb.totals.kcal)} kcal e ${Math.round(fb.totals.proteinG)} g de proteína (valores aproximados).`
     : "Não reconheci os alimentos. Escreva a quantidade e o nome, por exemplo: “2 ovos, 1 pão francês”.";
   return { meals, totals: fb.totals, score: fb.score, summary, highlights: fb.highlights, adjustments: fb.adjustments, unknown };
 }
