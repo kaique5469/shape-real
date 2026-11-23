@@ -6,14 +6,25 @@
  * - /api e /ingest nunca passam por aqui: IA e medição de uso só existem com rede.
  * Ao mudar a lógica deste arquivo, troque VERSION para descartar os caches antigos.
  */
-const VERSION = "v1";
+const VERSION = "v3";
 const PAGES = `sr-pages-${VERSION}`;
 const ASSETS = `sr-assets-${VERSION}`;
-const CORE = ["/hoje", "/sessao", "/treinos", "/historico", "/evolucao", "/dieta", "/conta", "/alunos"];
+// /abrir e /receber: o link do WhatsApp precisa abrir mesmo sem sinal (os dados vêm no próprio link).
+// /entrar, /onboarding e /treinos/novo ("Montar do zero"): quem abriu a página inicial uma vez cria o perfil e a ficha em
+// modo avião. A busca (?modo=criar, ?perfil=personal) é lida no aparelho; a cópia guardada é a do caminho.
+const CORE = ["/hoje", "/sessao", "/treinos", "/treinos/novo", "/historico", "/evolucao", "/dieta", "/conta", "/alunos", "/abrir", "/receber", "/entrar", "/onboarding"];
 const MAX_ASSETS = 320;
 
-self.addEventListener("install", () => {
+self.addEventListener("install", (event) => {
   self.skipWaiting();
+  // Atualização de versão: guarda as telas principais nos caches novos antes de o "activate" apagar os
+  // antigos, para não abrir um buraco sem tela offline. Na primeira instalação quem faz isso é o app.
+  event.waitUntil(
+    caches
+      .keys()
+      .then((keys) => (keys.some((k) => k.startsWith("sr-pages-") && k !== PAGES) ? warm() : undefined))
+      .catch(() => {}),
+  );
 });
 
 self.addEventListener("activate", (event) => {

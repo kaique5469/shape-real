@@ -1,4 +1,5 @@
 import type { Food } from "@/lib/domain/foods";
+import { sessionsThisWeek, weeklyGoal } from "@/lib/domain/attention";
 import type {
   BodyMetric,
   DietPlan,
@@ -104,6 +105,7 @@ export function summarizeStudent(
   const latest = withWeight[0]?.weightKg ?? profile.weightKg ?? null;
   const cutoff = new Date(t - 28 * day).toISOString().slice(0, 10);
   const older = withWeight.find((m) => m.date <= cutoff) ?? withWeight[withWeight.length - 1];
+  const active = programs.find((x) => x.active);
   return {
     profile,
     linkedAt,
@@ -117,5 +119,8 @@ export function summarizeStudent(
     })(),
     latestWeightKg: latest,
     weightDelta28d: latest && older?.weightKg && older !== withWeight[0] ? Math.round((latest - older.weightKg) * 10) / 10 : null,
+    // Calculados aqui, com os dados já carregados: /alunos não busca treinos e ficha de cada aluno de novo.
+    sessionsWeek: sessionsThisWeek(sessions.map((s) => s.startedAt), now),
+    weeklyGoal: weeklyGoal(active?.daysPerWeek, profile.daysPerWeek),
   };
 }

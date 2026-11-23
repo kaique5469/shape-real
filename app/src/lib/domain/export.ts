@@ -1,4 +1,5 @@
-import type { Program, Session } from "./types";
+import type { Food } from "./foods";
+import type { BodyMetric, DietPlan, Exercise, Profile, Program, Session } from "./types";
 import { UNIT_LABEL, unitOf } from "./exercises";
 import { TECHNIQUE_LABEL } from "./generator";
 import { completedSets } from "./progression";
@@ -17,14 +18,25 @@ function toCsv(rows: (string | number | null | undefined)[][]): string {
   return "﻿" + rows.map((r) => r.map(cell).join(";")).join("\r\n");
 }
 
-export function programToCsv(program: Program): string {
-  const rows: (string | number | null)[][] = [["Ficha", "Dia", "Ordem", "Exercício", "Séries", "Mín", "Máx", "Unidade", "Carga (kg)", "Descanso (s)", "Técnica", "Observações"]];
+const PROGRAM_HEAD = ["Ficha", "Dia", "Ordem", "Exercício", "Séries", "Mín", "Máx", "Unidade", "Carga (kg)", "Descanso (s)", "Técnica", "Observações"];
+
+function programRows(program: Program): (string | number | null)[][] {
+  const rows: (string | number | null)[][] = [];
   for (const day of program.days) {
     day.exercises.forEach((e, i) => {
       rows.push([program.name, day.title ? `${day.key} — ${day.title}` : day.key, i + 1, e.name, e.sets, e.repsMin, e.repsMax, UNIT_LABEL[unitOf(e.exerciseId, e.unit)].noun, e.loadKg ?? null, e.restSec, e.technique === "normal" ? "" : TECHNIQUE_LABEL[e.technique], e.notes ?? ""]);
     });
   }
-  return toCsv(rows);
+  return rows;
+}
+
+export function programToCsv(program: Program): string {
+  return toCsv([PROGRAM_HEAD, ...programRows(program)]);
+}
+
+/** Várias fichas numa planilha só (a coluna "Ficha" separa uma da outra). */
+export function programsToCsv(programs: Program[]): string {
+  return toCsv([PROGRAM_HEAD, ...programs.flatMap(programRows)]);
 }
 
 export function sessionsToCsv(sessions: Session[]): string {
@@ -51,4 +63,181 @@ export function downloadText(filename: string, content: string, mime = "text/csv
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ---- cópia de segurança ------------------------------------------------------------
+/**
+ * Cópia de segurança em um arquivo só (tudo mora no aparelho: trocar de celular sem ela é perder o histórico).
+ *  v1 (antigo "shape-real-backup.json"): perfil, fichas, treinos, medidas, dieta e alunos do personal.
+ *  v2: + exercícios e alimentos próprios, o personal que manda a ficha por link e os treinos já enviados a ele.
+ * Fotos não entram (ficariam grandes demais para um arquivo de compartilhar).
+ */
+export const BACKUP_FORMAT = "shape-real-copia";
+export const BACKUP_VERSION = 2;
+
+export interface BackupBundle {
+  profile: Profile;
+  programs?: Program[];
+  sessions?: Session[];
+  metrics?: BodyMetric[];
+  diet?: DietPlan | null;
+  /** v2: exercícios e alimentos criados por este perfil (as fichas e dietas apontam para eles). */
+  customExercises?: Exercise[];
+  customFoods?: Food[];
+}
+
+export interface Backup extends BackupBundle {
+  format?: typeof BACKUP_FORMAT;
+  /** Ausente nos arquivos v1. */
+  v?: number;
+  exportedAt?: string;
+  /** Personal: os alunos cadastrados, cada um com fichas, treinos, medidas e dieta. */
+  students?: BackupBundle[];
+  /** v2, aluno que recebe a ficha por link: o personal guardado no aparelho e os exercícios/alimentos dele. */
+  remoteCoach?: BackupBundle;
+  /** v2: chaves "sr:sent:*" (quais treinos já foram enviados ao personal e quando). */
+  sent?: Record<string, string>;
+}
+
+/** Só estas chaves voltam para o aparelho ao restaurar (o arquivo nunca grava outra coisa no navegador). */
+export const SENT_KEY_RE = /^sr:sent:[\w-]{1,80}(?::at)?$/;
+
+// Validação à mão (sem zod): este arquivo entra no pacote de todas as telas, junto com o convite de instalar.
+type Obj = Record<string, unknown>;
+const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
+const isId = (v: unknown) => typeof v === "string" && v.length >= 1 && v.length <= 120;
+const isText = (v: unknown, max = 200) => typeof v === "string" && v.length <= max;
+const CUSTOM_ID = /^custom_[\w-]{1,80}$/;
+const none = (v: unknown) => v === undefined || v === null;
+const listOf = (v: unknown, ok: (x: unknown) => boolean, max = 100_000) => none(v) || (Array.isArray(v) && v.length <= max && v.every(ok));
+const customOk = (x: unknown) => isObj(x) && typeof x.id === "string" && CUSTOM_ID.test(x.id) && isText(x.name);
+
+function bundleOk(x: unknown): boolean {
+  if (!isObj(x)) return false;
+  const p = x.profile;
+  if (!isObj(p) || !isId(p.id) || !isText(p.name) || (p.role !== "coach" && p.role !== "athlete")) return false;
+  return (
+    listOf(x.programs, (pr) => isObj(pr) && isId(pr.id) && Array.isArray(pr.days) && pr.days.every((d) => isObj(d) && Array.isArray(d.exercises) && d.exercises.every((e) => isObj(e) && typeof e.exerciseId === "string"))) &&
+    listOf(x.sessions, (s) => isObj(s) && isId(s.id) && typeof s.startedAt === "string") &&
+    listOf(x.metrics, (m) => isObj(m) && isId(m.id) && typeof m.date === "string") &&
+    (none(x.diet) || (isObj(x.diet) && isId(x.diet.id))) &&
+    listOf(x.customExercises, customOk) &&
+    listOf(x.customFoods, customOk)
+  );
+}
+
+function backupOk(x: unknown): x is Obj {
+  return (
+    bundleOk(x) &&
+    isObj(x) &&
+    (none(x.exportedAt) || isText(x.exportedAt, 40)) &&
+    listOf(x.students, bundleOk, 2000) &&
+    (none(x.remoteCoach) || bundleOk(x.remoteCoach)) &&
+    (none(x.sent) || (isObj(x.sent) && Object.values(x.sent).every((v) => isText(v, 200_000))))
+  );
+}
+
+/**
+ * Lê o arquivo da cópia (v1 ou v2). null quando não é uma cópia do Shape Real.
+ * Campos vazios (null) viram ausentes e chaves estranhas em `sent` são descartadas.
+ */
+export function parseBackup(text: string): Backup | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!backupOk(raw)) return null;
+  const b = raw as unknown as Backup & { students?: BackupBundle[] | null; remoteCoach?: BackupBundle | null; sent?: Record<string, string> | null };
+  const sent = Object.fromEntries(Object.entries(b.sent ?? {}).filter(([k]) => SENT_KEY_RE.test(k)));
+  const out: Backup = { ...b, students: b.students ?? undefined, remoteCoach: b.remoteCoach ?? undefined, sent: Object.keys(sent).length ? sent : undefined };
+  if (!out.students) delete out.students;
+  if (!out.remoteCoach) delete out.remoteCoach;
+  if (!out.sent) delete out.sent;
+  return out;
+}
+
+/** Monta o arquivo v2 a partir do que foi lido do aparelho. */
+export function buildBackup(input: Omit<Backup, "format" | "v" | "exportedAt">, now = new Date()): Backup {
+  const out: Backup = { format: BACKUP_FORMAT, v: BACKUP_VERSION, exportedAt: now.toISOString(), ...input };
+  if (!out.students?.length) delete out.students;
+  if (!out.remoteCoach) delete out.remoteCoach;
+  if (!out.sent || !Object.keys(out.sent).length) delete out.sent;
+  return out;
+}
+
+/** "shape-real-copia-2026-11-22.json" (data do aparelho). */
+export function backupFileName(now = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `shape-real-copia-${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}.json`;
+}
+
+/** Contagem que a confirmação de restaurar mostra (o personal soma as fichas e os treinos dos alunos). */
+export function backupSummary(b: Backup): { programs: number; sessions: number; students: number } {
+  const all = [b, ...(b.students ?? [])];
+  return {
+    programs: all.reduce((n, x) => n + (x.programs?.length ?? 0), 0),
+    sessions: all.reduce((n, x) => n + (x.sessions?.length ?? 0), 0),
+    students: b.students?.length ?? 0,
+  };
+}
+
+// ---- lembretes -------------------------------------------------------------------
+const DAY = 86_400_000;
+
+/** Dias inteiros desde `iso` (0 = menos de 24 h). null sem data válida. */
+export function daysSince(iso: string | null | undefined, now = new Date()): number | null {
+  const t = iso ? Date.parse(iso) : NaN;
+  if (!Number.isFinite(t)) return null;
+  return Math.max(0, Math.floor((now.getTime() - t) / DAY));
+}
+
+/** "Cópia de segurança: há 12 dias" / "Você ainda não fez nenhuma cópia". */
+export function backupStatusText(lastBackupAt: string | null, now = new Date()): string {
+  const d = daysSince(lastBackupAt, now);
+  if (d === null) return "Você ainda não fez nenhuma cópia";
+  return `Cópia de segurança: ${d === 0 ? "hoje" : d === 1 ? "há 1 dia" : `há ${d} dias`}`;
+}
+
+/**
+ * Versão curta para o celular (a linha do lembrete cabe em 1 linha a 360 px com o "Fazer agora"):
+ * "Última cópia há 12 dias" / "Nenhuma cópia ainda".
+ */
+export function backupStatusShort(lastBackupAt: string | null, now = new Date()): string {
+  const d = daysSince(lastBackupAt, now);
+  if (d === null) return "Nenhuma cópia ainda";
+  return `Última cópia ${d === 0 ? "hoje" : d === 1 ? "há 1 dia" : `há ${d} dias`}`;
+}
+
+/** Faixa para a medição de uso (nunca a data em si). */
+export function backupAgeBucket(lastBackupAt: string | null, now = new Date()): "0-13" | "14-30" | "31+" | "nunca" {
+  const d = daysSince(lastBackupAt, now);
+  if (d === null) return "nunca";
+  return d <= 13 ? "0-13" : d <= 30 ? "14-30" : "31+";
+}
+
+export const BACKUP_REMIND_DAYS = 14;
+
+/**
+ * Lembrete fora de Conta (Hoje e Alunos): só com dados que doeria perder (5 treinos ou mais, ou 1 aluno real)
+ * e 14 dias ou mais sem cópia. Regra só de tempo. Quem nunca fez cópia conta os 14 dias a partir de `since` (o início
+ * dos dados: a criação do perfil), não a partir de "nunca": o personal que acabou de cadastrar o 1º aluno não vê o aviso
+ * no primeiro dia. Sem `since` (data desconhecida), nunca ter feito cópia já conta como atrasado.
+ */
+export function backupReminderDue(input: { lastBackupAt: string | null; sessions: number; realStudents: number; since?: string | null; now?: Date }): boolean {
+  if (input.sessions < 5 && input.realStudents < 1) return false;
+  const d = daysSince(input.lastBackupAt ?? input.since, input.now);
+  return d === null || d >= BACKUP_REMIND_DAYS;
+}
+
+/**
+ * Convite dispensado (instalar o app): some e volta uma única vez, `afterDays` depois da dispensa.
+ * `dismissed` null = nunca dispensado.
+ */
+export function promptShowsAgain(dismissed: { n: number; at: string | null } | null, now = new Date(), afterDays = 14): boolean {
+  if (!dismissed || dismissed.n <= 0) return true;
+  if (dismissed.n >= 2) return false;
+  const d = daysSince(dismissed.at, now);
+  return d !== null && d >= afterDays;
 }

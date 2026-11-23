@@ -1,9 +1,17 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
-import { Download, Share, WifiOff, X } from "lucide-react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { CircleCheck, Download, Share, WifiOff, X } from "lucide-react";
 import { Button, cx } from "@/components/ui";
-import { track } from "@/lib/analytics";
+import { reportError, track } from "@/lib/analytics";
+import { useApp } from "@/lib/app-context";
+import { promptShowsAgain } from "@/lib/domain/export";
+
+/**
+ * A cópia de segurança (validação dos links, montagem do arquivo) só é carregada quando o card do iPhone
+ * aparece: este arquivo entra no pacote de todas as telas por causa do PwaRegister.
+ */
+const loadBackup = () => import("@/lib/transfer-client");
 
 /** Evento do Chrome/Android que permite oferecer a instalação com um botão nosso. */
 type InstallEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: "accepted" | "dismissed" }> };
@@ -18,6 +26,28 @@ const subscribe = (l: () => void) => {
 
 const WARM_KEY = "sr:sw-warm";
 const DISMISS_KEY = "sr:install-dismissed";
+const IOS_INSTALLED_KEY = "sr:installed-seen";
+
+/** O app está aberto pela tela de início (instalado), e não no navegador. */
+export function isStandaloneDisplay(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia?.("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
+}
+
+/** iPhone ou iPad (o iPad com iPadOS se apresenta como Mac com tela de toque). */
+export function isIosDevice(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  return /iphone|ipad|ipod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+}
+
+/**
+ * Safari (ou outro navegador) do iPhone, fora do app instalado. Ali os dados são outros: o app da tela de
+ * início não enxerga o que está no Safari, e o WhatsApp sempre abre os links no Safari.
+ */
+export function isIosBrowser(): boolean {
+  return isIosDevice() && !isStandaloneDisplay();
+}
 
 /**
  * Registra o service worker (só em produção) e guarda o evento de instalação.
@@ -43,6 +73,14 @@ export function PwaRegister() {
     // (o Safari limpa o armazenamento de sites parados por sete dias).
     try {
       if (localStorage.getItem("sr:session")) void navigator.storage?.persist?.().catch(() => {});
+    } catch {}
+
+    // iPhone não avisa a instalação (não há "appinstalled"): conta a primeira abertura pela tela de início.
+    try {
+      if (isIosDevice() && isStandaloneDisplay() && !localStorage.getItem(IOS_INSTALLED_KEY)) {
+        localStorage.setItem(IOS_INSTALLED_KEY, "1");
+        track("app_installed", { plataforma: "ios" });
+      }
     } catch {}
 
     if (process.env.NODE_ENV === "production" && "serviceWorker" in navigator) {
@@ -113,38 +151,100 @@ function usePlatform(): Platform | null {
   );
   const [platform, setPlatform] = useState<Platform | null>(null);
   useEffect(() => {
-    const standalone = window.matchMedia("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
-    const ua = navigator.userAgent;
-    const ios = /iphone|ipad|ipod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
-    setPlatform(standalone ? "installed" : event ? "prompt" : ios ? "ios" : "other");
+    setPlatform(isStandaloneDisplay() ? "installed" : event ? "prompt" : isIosDevice() ? "ios" : "other");
   }, [event]);
   return platform;
 }
 
+type Dismissal = { n: number; at: string | null };
+
+/** Quantas vezes o convite foi dispensado e quando. O valor antigo "1" conta como uma dispensa feita agora. */
+function readDismissal(): Dismissal | null {
+  try {
+    const raw = localStorage.getItem(DISMISS_KEY);
+    if (!raw) return null;
+    if (raw === "1") {
+      const d = { n: 1, at: new Date().toISOString() };
+      localStorage.setItem(DISMISS_KEY, JSON.stringify(d));
+      return d;
+    }
+    const d = JSON.parse(raw) as Partial<Dismissal> | null;
+    return typeof d?.n === "number" ? { n: d.n, at: typeof d.at === "string" ? d.at : null } : null;
+  } catch {
+    return null;
+  }
+}
+
+type Trigger = "primeiro_treino" | "primeiro_aluno";
+
+/**
+ * Hora certa do convite: depois do 1º treino concluído (aluno ou quem treina sozinho) ou do 1º aluno real
+ * cadastrado (personal; exemplos não contam). null enquanto não chegou a hora; undefined enquanto confere.
+ */
+function useInstallTrigger(enabled: boolean): Trigger | null | undefined {
+  const { ready, user, repo, isDemo, returnTo } = useApp();
+  const [trigger, setTrigger] = useState<Trigger | null | undefined>(undefined);
+  const userId = user?.id;
+  const role = user?.role;
+  useEffect(() => {
+    if (!enabled || !ready) return;
+    if (!userId || isDemo || returnTo) return setTrigger(null);
+    let alive = true;
+    (async () => {
+      if (role === "coach") {
+        const list = await repo.listStudents(userId).catch(() => []);
+        if (alive) setTrigger(list.some((s) => !s.profile.sample) ? "primeiro_aluno" : null);
+      } else {
+        const done = await repo.listSessions(userId, { limit: 1 }).catch(() => []);
+        if (alive) setTrigger(done.length ? "primeiro_treino" : null);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [enabled, ready, userId, role, repo, isDemo, returnTo]);
+  return trigger;
+}
+
 /**
  * Convite para instalar o app na tela inicial.
- * `banner`: aparece em Hoje e Alunos quando o aparelho permite instalar, e some de vez ao ser dispensado.
- * `panel`: fica em Conta, com o passo a passo de cada aparelho.
+ * `banner`: Hoje e Alunos, só depois do 1º treino concluído ou do 1º aluno real; dispensado, volta uma
+ * única vez 14 dias depois.
+ * `panel`: fica em Conta, sempre, com o passo a passo de cada aparelho.
+ * No iPhone, o app instalado não enxerga os dados do Safari: o card mostra os 3 passos (cópia, instalar,
+ * restaurar a cópia dentro do app) em vez de prometer que os dados passam sozinhos.
  */
 export function InstallCard({ variant, where }: { variant: "banner" | "panel"; where: string }) {
   const platform = usePlatform();
-  const [dismissed, setDismissed] = useState(true);
+  const { user, repo, returnTo } = useApp();
+  const trigger = useInstallTrigger(variant === "banner");
+  const [dismissal, setDismissal] = useState<Dismissal | null | undefined>(undefined);
   const [busy, setBusy] = useState(false);
+  const [copy, setCopy] = useState<"idle" | "busy" | "done" | "error">("idle");
+  const shown = useRef(false);
   useEffect(() => {
-    try {
-      setDismissed(localStorage.getItem(DISMISS_KEY) === "1");
-    } catch {
-      setDismissed(false);
-    }
+    setDismissal(readDismissal());
   }, []);
 
+  const bannerVisible = variant === "banner" && (platform === "prompt" || platform === "ios") && dismissal !== undefined && promptShowsAgain(dismissal) && Boolean(trigger);
+
+  useEffect(() => {
+    if (platform === "ios" && (variant === "panel" || bannerVisible)) void loadBackup().catch(() => {});
+  }, [platform, variant, bannerVisible]);
+
+  useEffect(() => {
+    if (!bannerVisible || shown.current) return;
+    shown.current = true;
+    track("app_install_prompted", { gatilho: trigger ?? null, where, plataforma: platform, acao: "card" });
+  }, [bannerVisible, trigger, where, platform]);
+
   if (!platform || platform === "installed") return variant === "panel" && platform === "installed" ? <p className="text-[0.9375rem] text-steel">O app já está instalado neste aparelho.</p> : null;
-  if (variant === "banner" && (dismissed || platform === "other")) return null;
+  if (variant === "banner" && !bannerVisible) return null;
 
   async function install() {
     if (!installEvent) return;
     setBusy(true);
-    track("app_install_prompted", { where });
+    track("app_install_prompted", { gatilho: trigger ?? null, where, plataforma: "prompt", acao: "instalar" });
     try {
       await installEvent.prompt();
       await installEvent.userChoice;
@@ -157,28 +257,95 @@ export function InstallCard({ variant, where }: { variant: "banner" | "panel"; w
     }
   }
 
-  const steps =
-    platform === "ios" ? (
-      <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm">
-        No Safari, toque em <Share className="inline size-4" aria-label="Compartilhar" /> <strong>Compartilhar</strong> e depois em <strong>Adicionar à Tela de Início</strong>.
-      </p>
-    ) : platform === "other" ? (
-      <p className="text-sm">
-        No menu do navegador, escolha <strong>Instalar app</strong> ou <strong>Adicionar à tela inicial</strong>.
-      </p>
-    ) : null;
+  async function backupFirst() {
+    if (!user) return;
+    setCopy("busy");
+    try {
+      // Já carregado quando o card apareceu: o compartilhar do iPhone abre dentro do mesmo toque.
+      const { makeBackup } = await loadBackup();
+      const r = await makeBackup(repo, user, "instalar");
+      setCopy(r ? "done" : "idle");
+    } catch (e) {
+      reportError(e, "instalar:copia");
+      setCopy("error");
+    }
+  }
+
+  function dismiss() {
+    const next: Dismissal = { n: (dismissal?.n ?? 0) + 1, at: new Date().toISOString() };
+    setDismissal(next);
+    try {
+      localStorage.setItem(DISMISS_KEY, JSON.stringify(next));
+    } catch {}
+  }
+
+  const ios = platform === "ios";
+  const step = (n: number) => (
+    <span className="plate-type grid size-7 shrink-0 place-items-center rounded bg-iron text-sm text-chalk" aria-hidden>
+      {n}
+    </span>
+  );
+
+  const body = ios ? (
+    <>
+      <h2 className="text-[0.9375rem] font-bold">Instale na tela de início</h2>
+      <p className="mt-0.5 max-w-[60ch] text-sm text-steel">No iPhone, o Safari pode apagar dados de sites parados por 7 dias. Instalado, seus treinos ficam guardados e o app abre sem internet.</p>
+      <p className="mt-2 max-w-[60ch] text-sm text-steel">O app instalado começa vazio: ele não enxerga o que está no Safari. Para levar o que já está aqui:</p>
+      <ol className="mt-3 space-y-2.5 text-sm" aria-label="Passos para instalar sem perder os dados">
+        <li className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
+          {step(1)}
+          <span className="sr-only">1.</span>
+          <span className="min-w-0 flex-1 font-semibold">Faça uma cópia</span>
+          {copy === "done" ? (
+            <span role="status" className="inline-flex min-h-11 items-center gap-1.5 font-semibold text-plate-green-ink">
+              <CircleCheck className="size-4" aria-hidden /> Cópia feita
+            </span>
+          ) : user && !returnTo ? (
+            <Button variant="secondary" onClick={backupFirst} loading={copy === "busy"} className="shrink-0">
+              Fazer cópia
+            </Button>
+          ) : null}
+          {copy === "error" ? (
+            <span role="alert" className="basis-full text-plate-red-ink">
+              Não foi possível fazer a cópia. Tente de novo.
+            </span>
+          ) : null}
+        </li>
+        <li className="flex items-start gap-2.5">
+          {step(2)}
+          <span className="sr-only">2.</span>
+          <span className="min-w-0 pt-1">
+            <strong>Instale:</strong> no Safari, toque em <Share className="inline size-4 align-[-2px]" aria-label="Compartilhar" /> <strong>Compartilhar</strong> e depois em <strong>Adicionar à Tela de Início</strong>.
+          </span>
+        </li>
+        <li className="flex items-start gap-2.5">
+          {step(3)}
+          <span className="sr-only">3.</span>
+          <span className="min-w-0 pt-1">
+            No app, toque em <strong>Restaurar cópia</strong> e escolha o arquivo.
+          </span>
+        </li>
+      </ol>
+    </>
+  ) : (
+    <>
+      <h2 className="text-[0.9375rem] font-bold">Instale o Shape Real no celular</h2>
+      <p className="mt-0.5 max-w-[60ch] text-sm text-steel">Abre direto da tela inicial, em tela cheia, e continua funcionando na academia mesmo sem sinal.</p>
+      {platform === "other" ? (
+        <p className="mt-2 text-sm">
+          No menu do navegador, escolha <strong>Instalar app</strong> ou <strong>Adicionar à tela inicial</strong>.
+        </p>
+      ) : null}
+    </>
+  );
 
   return (
     <section
       aria-label="Instalar o app"
       className={cx(variant === "banner" ? "no-print relative rounded-[var(--radius-ficha)] border border-rule-strong bg-paper p-4 pr-12" : "space-y-3")}
     >
-      <div className={cx(variant === "banner" && "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between")}>
-        <div className="min-w-0">
-          <h2 className="text-[0.9375rem] font-bold">Instale o Shape Real no celular</h2>
-          <p className="mt-0.5 max-w-[60ch] text-sm text-steel">Abre direto da tela inicial, em tela cheia, e continua funcionando na academia mesmo sem sinal.</p>
-          {steps ? <div className="mt-2">{steps}</div> : null}
-        </div>
+      <div className={cx(variant === "banner" && !ios && "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between")}>
+        <div className="min-w-0">{body}</div>
         {platform === "prompt" ? (
           <Button onClick={install} loading={busy} icon={<Download className="size-4" />} className={cx("shrink-0", variant === "panel" && "mt-3")}>
             Instalar app
@@ -186,17 +353,7 @@ export function InstallCard({ variant, where }: { variant: "banner" | "panel"; w
         ) : null}
       </div>
       {variant === "banner" ? (
-        <button
-          type="button"
-          onClick={() => {
-            setDismissed(true);
-            try {
-              localStorage.setItem(DISMISS_KEY, "1");
-            } catch {}
-          }}
-          aria-label="Dispensar o convite para instalar"
-          className="absolute right-0 top-0 grid size-11 place-items-center text-steel hover:text-iron"
-        >
+        <button type="button" onClick={dismiss} aria-label="Dispensar o convite para instalar" className="absolute right-0 top-0 grid size-11 place-items-center text-steel hover:text-iron">
           <X className="size-4" />
         </button>
       ) : null}

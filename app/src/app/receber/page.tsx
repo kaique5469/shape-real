@@ -5,14 +5,16 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Trophy } from "lucide-react";
 import { Logo } from "@/components/brand";
+import { ColarNoAppCard } from "@/components/colar-link";
+import { isIosBrowser } from "@/components/pwa";
 import { Alert, Button, LinkButton, Select, Skeleton } from "@/components/ui";
 import { reportError, track } from "@/lib/analytics";
-import { useApp } from "@/lib/app-context";
+import { localRepo, useApp } from "@/lib/app-context";
 import { firstName } from "@/lib/domain/format";
 import { completedSets } from "@/lib/domain/progression";
 import { parsePacket, type TreinosPacket } from "@/lib/domain/transfer";
 import type { StudentSummary } from "@/lib/domain/types";
-import { packedFromHash, unpackData } from "@/lib/share-link";
+import { cameFromPaste, packedFromHash, unpackData } from "@/lib/share-link";
 import { importTreinos } from "@/lib/transfer-client";
 
 /** Link que o aluno manda ao personal: leva os treinos feitos para o painel do personal. */
@@ -24,13 +26,22 @@ export default function ReceberPage() {
   const [students, setStudents] = useState<StudentSummary[] | null>(null);
   const [target, setTarget] = useState<string>("");
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState<{ added: number; updated: number; studentId: string } | null>(null);
+  const [done, setDone] = useState<{ added: number; updated: number; mirrored: number; studentId: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  /** Veio pelo campo "Colar link" (dentro do app) e não pelo toque no link do WhatsApp. */
+  const [viaPaste, setViaPaste] = useState(false);
+  /** Safari do iPhone, fora do app instalado. */
+  const [iosBrowser, setIosBrowser] = useState(false);
+  /** null enquanto não conferiu. */
+  const [noProfile, setNoProfile] = useState<boolean | null>(null);
   const read = useRef(false);
+  const deadEnd = useRef(false);
 
   useEffect(() => {
     if (read.current) return;
     read.current = true;
+    setViaPaste(cameFromPaste(window.location.hash));
+    setIosBrowser(isIosBrowser());
     const packed = packedFromHash(window.location.hash);
     if (window.location.hash) window.history.replaceState(null, "", window.location.pathname);
     if (!packed) return setState("invalido");
@@ -43,6 +54,33 @@ export default function ReceberPage() {
       })
       .catch(() => setState("invalido"));
   }, []);
+
+  // Nenhum perfil neste navegador: no iPhone, quase sempre é o personal que usa o app da tela de início.
+  useEffect(() => {
+    if (ready) setNoProfile(mode === "local" && localRepo.listLocalProfiles().length === 0);
+  }, [ready, mode]);
+
+  const showAppCard = ready && state === "pronto" && !done && iosBrowser && noProfile === true;
+
+  // Beco sem saída: link que não abre, Safari do iPhone sem perfil, aparelho sem painel de personal ou sem alunos.
+  useEffect(() => {
+    if (deadEnd.current || !ready || state === "lendo" || done || noProfile === null) return;
+    const motivo =
+      state === "invalido"
+        ? "invalido"
+        : mode !== "local" || returnTo
+          ? null
+          : showAppCard
+            ? "iphone"
+            : user?.role !== "coach"
+              ? "nao_personal"
+              : students && !students.length
+                ? "sem_alunos"
+                : null;
+    if (!motivo) return;
+    deadEnd.current = true;
+    track("link_dead_end_shown", { tela: "receber", motivo, via_paste: viaPaste });
+  }, [ready, state, done, noProfile, mode, returnTo, showAppCard, user, students, viaPaste]);
 
   // Acha o aluno no painel: pelo cadastro de onde a ficha saiu ou, se não achar, pela escolha do personal.
   useEffect(() => {
@@ -61,7 +99,7 @@ export default function ReceberPage() {
     setErr(null);
     try {
       const r = await importTreinos(packet, target);
-      track("treinos_link_received", { sessions: packet.sessions.length, added: r.added, matched: target === packet.studentRef });
+      track("treinos_link_received", { sessions: packet.sessions.length, added: r.added, matched: target === packet.studentRef, mirrored: r.mirrored, via_paste: viaPaste, ios_browser: iosBrowser });
       setDone({ ...r, studentId: target });
     } catch (e) {
       reportError(e, "link:receber-treinos");
@@ -103,6 +141,7 @@ export default function ReceberPage() {
             <p className="text-steel">
               {done.added === 1 ? "1 treino novo" : `${done.added} treinos novos`}
               {done.updated ? ` e ${done.updated === 1 ? "1 atualizado" : `${done.updated} atualizados`}` : ""}. Frequência, cargas e o relatório de evolução já contam com eles.
+              {done.mirrored ? ` A ficha já mostra as cargas que ${first} fez, e o próximo envio leva essas cargas.` : ""}
             </p>
             <div className="flex flex-col gap-2">
               <LinkButton href={`/alunos/${done.studentId}?aba=historico`} size="lg" className="w-full">
@@ -115,6 +154,7 @@ export default function ReceberPage() {
           </div>
         ) : (
           <div className="space-y-5">
+            {showAppCard ? <ColarNoAppCard /> : null}
             <div>
               <p className="text-sm font-semibold text-steel">Enviado por {packet.studentName}</p>
               <h1 className="plate-type mt-1 text-[2rem] leading-[1.05]">
@@ -146,7 +186,7 @@ export default function ReceberPage() {
                   Voltar ao painel
                 </Button>
               </div>
-            ) : user?.role !== "coach" ? (
+            ) : showAppCard ? null : user?.role !== "coach" ? (
               <Alert tone="warn">Este link é para o personal: abra no celular de quem acompanha {first}.</Alert>
             ) : students === null ? (
               <Skeleton className="h-11" />

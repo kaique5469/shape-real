@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Food } from "./foods";
 import { completedSets } from "./progression";
-import type { BodyMetric, DietPlan, Exercise, Profile, Program, Session } from "./types";
+import type { BodyMetric, ConsentSource, DietPlan, Exercise, Profile, Program, Session } from "./types";
 
 /**
  * Troca entre o celular do personal e o do aluno sem servidor: tudo viaja dentro de um link.
@@ -20,7 +20,8 @@ export interface FichaPacket {
   v: number;
   kind: "ficha";
   sentAt: string;
-  coach: { id: string; name: string; phone?: string };
+  /** `cref` é opcional (links antigos não têm; apps antigos ignoram o campo). */
+  coach: { id: string; name: string; phone?: string; cref?: string };
   /** `ref` é o id do aluno no aparelho do personal: os treinos voltam para ele. */
   student: StudentFields & { ref: string };
   program: Program | null;
@@ -145,7 +146,7 @@ const fichaSchema = z.object({
   v: z.literal(TRANSFER_VERSION),
   kind: z.literal("ficha"),
   sentAt: text(40),
-  coach: z.object({ id, name: text(120), phone: opt(text(20)) }),
+  coach: z.object({ id, name: text(120), phone: opt(text(20)), cref: opt(text(30)) }),
   student: z
     .object({
       ref: id,
@@ -190,10 +191,18 @@ export function parsePacket(value: unknown): Packet | null {
 }
 
 // ---- montagem -----------------------------------------------------------------
-function pickStudent(p: Profile): StudentFields {
+function pickStudent(p: Partial<Profile>): StudentFields {
   const out: Record<string, unknown> = {};
   for (const k of STUDENT_FIELDS) if (p[k] !== undefined && p[k] !== null && p[k] !== "") out[k] = p[k];
   return out as StudentFields;
+}
+
+/**
+ * Só os campos de cadastro que o link pode trazer. O esquema aceita campos extras (versões novas do app),
+ * mas nada de fora desta lista entra no perfil do aluno: nem consentimento, nem papel, nem vínculo.
+ */
+export function studentFieldsOf(student: FichaPacket["student"]): StudentFields {
+  return pickStudent(student as Partial<Profile>);
 }
 
 /** Pacote que o personal manda ao aluno: ficha ativa, dieta e os exercícios/alimentos próprios usados nelas. */
@@ -212,7 +221,7 @@ export function buildFichaPacket(input: {
     v: TRANSFER_VERSION,
     kind: "ficha",
     sentAt: (input.now ?? new Date()).toISOString(),
-    coach: { id: input.coach.id, name: input.coach.name, ...(input.coach.phone ? { phone: input.coach.phone } : {}) },
+    coach: { id: input.coach.id, name: input.coach.name, ...(input.coach.phone ? { phone: input.coach.phone } : {}), ...(input.coach.cref?.trim() ? { cref: input.coach.cref.trim() } : {}) },
     student: { ref: input.student.id, ...pickStudent(input.student) },
     program: input.program,
     diet: input.diet,
@@ -234,6 +243,105 @@ export function buildTreinosPacket(input: { student: Profile; coachId: string; s
     sessions,
     metrics: input.metrics ?? [],
   };
+}
+
+// ---- recebimento: carga atual e medidas ------------------------------------------
+/** Carga de cada exercício num treino: a maior entre as séries feitas (mesma regra do fim do treino em /sessao). */
+export function topLoads(session: Session): Map<string, number> {
+  const top = new Map<string, number>();
+  for (const e of session.exercises) {
+    const sets = completedSets(e);
+    if (!sets.length) continue;
+    top.set(e.exerciseId, Math.max(top.get(e.exerciseId) ?? 0, ...sets.map((x) => x.loadKg ?? 0)));
+  }
+  return top;
+}
+
+/**
+ * A ficha passa a mostrar a carga atual de cada exercício, como acontece no celular de quem treinou.
+ * Só contam treinos desta ficha começados depois da última alteração dela (`updatedAt`): uma redução que o
+ * personal fez depois do treino não é desfeita. Treinos em ordem: vale o mais recente, como no aparelho do aluno.
+ * Devolve null quando nada muda. Não mexe em `updatedAt` (copiar a carga não é uma edição da ficha).
+ */
+export function mirrorLoads(program: Program, sessions: Session[]): Program | null {
+  const since = Date.parse(program.updatedAt);
+  if (!Number.isFinite(since)) return null;
+  const relevant = sessions.filter((s) => s.programId === program.id && Date.parse(s.startedAt) > since).sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt));
+  if (!relevant.length) return null;
+  const load = new Map<string, number>();
+  for (const s of relevant) for (const [id, kg] of topLoads(s)) if (kg > 0) load.set(id, kg);
+  let changed = false;
+  const days = program.days.map((d) => ({
+    ...d,
+    exercises: d.exercises.map((p) => {
+      const kg = load.get(p.exerciseId);
+      if (!kg || kg === p.loadKg) return p;
+      changed = true;
+      return { ...p, loadKg: kg };
+    }),
+  }));
+  return changed ? { ...program, days } : null;
+}
+
+const METRIC_FIELDS = ["weightKg", "bodyFatPct", "waistCm", "hipCm", "chestCm", "armCm", "thighCm", "note"] as const;
+const filled = (v: unknown) => v !== undefined && v !== null && v !== "";
+
+/**
+ * Medida que chega do aluno numa data em que o personal já tem registro.
+ *  - registro do personal (outro id): nada do personal é apagado nem trocado; o aluno só preenche campos vazios;
+ *  - o mesmo registro do aluno chegando de novo (mesmo id): os valores novos do aluno valem, mas um campo
+ *    que não veio nunca apaga o que já estava.
+ * Mantém id e dono do registro existente.
+ */
+export function mergeMetric(existing: BodyMetric | null | undefined, incoming: BodyMetric): BodyMetric {
+  if (!existing) return incoming;
+  const sameRecord = existing.id === incoming.id;
+  const out: BodyMetric = { ...existing };
+  const target = out as unknown as Record<string, unknown>;
+  const from = incoming as unknown as Record<string, unknown>;
+  for (const k of METRIC_FIELDS) {
+    if (!filled(from[k])) continue;
+    if (sameRecord || !filled(target[k])) target[k] = from[k];
+  }
+  return out;
+}
+
+// ---- autorização de dados de saúde (LGPD) ----------------------------------------
+type ConsentFields = Pick<Profile, "consentHealthAt" | "consentSource">;
+
+/** Limitação, peso ou altura preenchidos: dados de saúde que só são guardados com a autorização registrada. */
+export function hasHealthData(p: Partial<Pick<Profile, "limitations" | "weightKg" | "heightCm">>): boolean {
+  return Boolean(p.limitations?.trim()) || (typeof p.weightKg === "number" && p.weightKg > 0) || (typeof p.heightCm === "number" && p.heightCm > 0);
+}
+
+type ConsentOwner = Partial<ConsentFields & Pick<Profile, "managedBy" | "remoteCoach">>;
+
+/**
+ * A autorização de dados de saúde vale? Versões anteriores carimbavam `consentHealthAt` sozinhas em todo aluno
+ * cadastrado pelo personal (managedBy) e em toda ficha recebida por link (remoteCoach), sem ninguém marcar nada.
+ * Nesses perfis, a data sem origem (`consentSource`) não conta: o personal ou o aluno confirma de novo. No perfil próprio
+ * (solo ou aluno da nuvem), a data sem origem continua valendo: ela só era gravada pelo checkbox do onboarding ou de Conta.
+ */
+export function consentConfirmed(p: ConsentOwner | null | undefined): boolean {
+  if (!p?.consentHealthAt) return false;
+  if (p.consentSource) return true;
+  return !p.managedBy && !p.remoteCoach;
+}
+
+/**
+ * O que o checkbox de autorização grava. Marcado: mantém a autorização que já valia (data e origem originais)
+ * ou registra uma nova, com a data de agora e quem marcou. Desmarcado: retira a autorização.
+ */
+export function consentFromCheckbox(prev: ConsentOwner | null | undefined, checked: boolean, source: ConsentSource, now: string): ConsentFields {
+  if (!checked) return { consentHealthAt: undefined, consentSource: undefined };
+  if (prev?.consentHealthAt && consentConfirmed(prev)) return { consentHealthAt: prev.consentHealthAt, consentSource: prev.consentSource };
+  return { consentHealthAt: now, consentSource: source };
+}
+
+/** Propriedade "consent" dos eventos de cadastro de aluno: só a situação, nunca o dado de saúde. */
+export function consentMetric(draft: Partial<Pick<Profile, "limitations" | "weightKg" | "heightCm">>, consented: boolean): "sim" | "nao" | "sem_dados_saude" {
+  if (consented) return "sim";
+  return hasHealthData(draft) ? "nao" : "sem_dados_saude";
 }
 
 // ---- texto para o WhatsApp -------------------------------------------------------

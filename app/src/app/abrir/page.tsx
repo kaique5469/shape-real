@@ -5,12 +5,14 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarCheck, ClipboardList, Salad } from "lucide-react";
 import { Logo } from "@/components/brand";
+import { ColarNoAppCard } from "@/components/colar-link";
+import { isIosBrowser } from "@/components/pwa";
 import { Alert, Button, LinkButton, Skeleton } from "@/components/ui";
 import { reportError, track } from "@/lib/analytics";
 import { useApp, localRepo } from "@/lib/app-context";
 import { firstName } from "@/lib/domain/format";
 import { parsePacket, type FichaPacket } from "@/lib/domain/transfer";
-import { packedFromHash, unpackData } from "@/lib/share-link";
+import { cameFromPaste, packedFromHash, unpackData } from "@/lib/share-link";
 import { importFicha } from "@/lib/transfer-client";
 
 /**
@@ -25,11 +27,19 @@ export default function AbrirPage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ownStudent, setOwnStudent] = useState(false);
+  /** Veio pelo campo "Colar link" (dentro do app) e não pelo toque no link do WhatsApp. */
+  const [viaPaste, setViaPaste] = useState(false);
+  /** Safari do iPhone, fora do app instalado. */
+  const [iosBrowser, setIosBrowser] = useState(false);
+  const [noProfile, setNoProfile] = useState(false);
   const read = useRef(false);
+  const deadEnd = useRef(false);
 
   useEffect(() => {
     if (read.current) return;
     read.current = true;
+    setViaPaste(cameFromPaste(window.location.hash));
+    setIosBrowser(isIosBrowser());
     const packed = packedFromHash(window.location.hash);
     // O conteúdo sai da barra de endereço assim que é lido.
     if (window.location.hash) window.history.replaceState(null, "", window.location.pathname);
@@ -44,6 +54,22 @@ export default function AbrirPage() {
       .catch(() => setState("invalido"));
   }, []);
 
+  // Nenhum perfil neste navegador: no iPhone, pode ser alguém que usa o app da tela de início.
+  useEffect(() => {
+    if (ready) setNoProfile(mode === "local" && localRepo.listLocalProfiles().length === 0);
+  }, [ready, mode]);
+
+  const showAppCard = ready && state === "pronto" && iosBrowser && noProfile;
+
+  // Beco sem saída: link que não abre ou Safari do iPhone sem perfil (o app instalado não vê estes dados).
+  useEffect(() => {
+    if (deadEnd.current || !ready || state === "lendo") return;
+    const motivo = state === "invalido" ? "invalido" : showAppCard ? "iphone" : null;
+    if (!motivo) return;
+    deadEnd.current = true;
+    track("link_dead_end_shown", { tela: "abrir", motivo, via_paste: viaPaste });
+  }, [ready, state, showAppCard, viaPaste]);
+
   useEffect(() => {
     if (!packet || !user || user.role !== "coach") return;
     localRepo.getProfile(packet.student.ref).then((p) => setOwnStudent(Boolean(p && p.managedBy === user.id)));
@@ -54,9 +80,10 @@ export default function AbrirPage() {
     setBusy(true);
     setErr(null);
     try {
-      const profile = await importFicha(packet, user && user.role === "athlete" && !returnTo ? user : null);
+      // O toque no botão, com o texto de autorização logo acima, registra a autorização de dados de saúde.
+      const profile = await importFicha(packet, user && user.role === "athlete" && !returnTo ? user : null, { consent: true });
       enterLocalProfile(profile);
-      track("ficha_link_opened", { had_profile: Boolean(user), has_program: Boolean(packet.program), has_diet: Boolean(packet.diet) });
+      track("ficha_link_opened", { had_profile: Boolean(user), has_program: Boolean(packet.program), has_diet: Boolean(packet.diet), via_paste: viaPaste, ios_browser: iosBrowser });
       router.replace("/hoje?ficha=1");
     } catch (e) {
       reportError(e, "link:abrir-ficha");
@@ -69,6 +96,11 @@ export default function AbrirPage() {
   const studentFirst = packet ? firstName(packet.student.name) : "";
   const days = packet?.program?.days.length ?? 0;
   const meals = packet?.diet?.meals.filter((m) => m.items.length).length ?? 0;
+  const updating = user?.role === "athlete" && !returnTo;
+  // Reenvio: só o que veio no link é trocado (sem dieta no link, a dieta atual fica).
+  const replaced = packet?.program && packet.diet ? `A ficha e a dieta passam a ser as novas de ${coachFirst}.` : packet?.program ? `A ficha passa a ser a nova de ${coachFirst}.` : packet?.diet ? `A dieta passa a ser a nova de ${coachFirst}.` : "";
+  // LGPD: dados de saúde só ficam guardados com autorização; ela é dada pelo toque no botão logo abaixo deste texto.
+  const consentLine = packet ? `Ao ${updating ? "atualizar" : "salvar"}, você autoriza guardar neste celular seus dados de treino e saúde enviados por ${packet.coach.name}.` : "";
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-md flex-col px-5 py-8">
@@ -91,6 +123,9 @@ export default function AbrirPage() {
           </div>
         ) : (
           <div className="space-y-5">
+            {/* iPhone sem perfil: o card só orienta quem já tem o app instalado (lá, "Colar aqui"). O caminho principal continua
+                embaixo, igual ao do Android: texto de autorização logo acima de "Salvar no meu celular". */}
+            {showAppCard ? <ColarNoAppCard /> : null}
             <div>
               <p className="text-sm font-semibold text-steel">Enviado por {packet.coach.name}</p>
               <h1 className="plate-type mt-1 text-[2rem] leading-[1.05]">{studentFirst}, sua ficha chegou.</h1>
@@ -153,13 +188,14 @@ export default function AbrirPage() {
             ) : (
               <div className="space-y-3">
                 {err ? <Alert tone="error">{err}</Alert> : null}
-                <Button size="lg" className="w-full" loading={busy} onClick={save}>
-                  {user?.role === "athlete" && !returnTo ? "Atualizar minha ficha" : "Salvar no meu celular"}
-                </Button>
-                <p className="text-sm text-steel">
-                  Sem cadastro: a ficha, a dieta e os seus treinos ficam guardados neste celular.{" "}
-                  {user?.role === "athlete" && !returnTo ? "Seus treinos já registrados continuam aqui." : "Na próxima vez, é só abrir o app."}
+                {updating ? <p className="text-[0.9375rem] text-steel">Seus treinos, recordes e histórico continuam. {replaced}</p> : null}
+                <p id="abrir-autorizacao" className="text-sm text-iron">
+                  {consentLine}
                 </p>
+                <Button size="lg" className="w-full" loading={busy} onClick={save} aria-describedby="abrir-autorizacao">
+                  {updating ? "Atualizar minha ficha" : "Salvar no meu celular"}
+                </Button>
+                {updating ? null : <p className="text-sm text-steel">Sem cadastro: a ficha, a dieta e os seus treinos ficam guardados neste celular. Na próxima vez, é só abrir o app.</p>}
               </div>
             )}
           </div>

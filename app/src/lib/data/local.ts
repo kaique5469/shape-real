@@ -55,6 +55,35 @@ function remove(name: string, id: string) {
   );
 }
 
+// ---- cópia de segurança -----------------------------------------------------
+/** Quando a última cópia de segurança deste aparelho foi feita (some junto com os dados em "Apagar"). */
+const LAST_BACKUP_KEY = PREFIX + "last-backup-at";
+export const BACKUP_EVENT = "sr:backup";
+
+export function lastBackupAt(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const v = localStorage.getItem(LAST_BACKUP_KEY);
+    return v && Number.isFinite(Date.parse(v)) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Guarda a data da cópia (só avança: restaurar uma cópia antiga não "atrasa" o lembrete) e avisa as telas abertas. */
+export function markBackupDone(at: string = new Date().toISOString()) {
+  try {
+    const cur = lastBackupAt();
+    if (cur && Date.parse(cur) >= Date.parse(at)) return;
+    localStorage.setItem(LAST_BACKUP_KEY, at);
+  } catch {
+    return;
+  }
+  try {
+    window.dispatchEvent(new Event(BACKUP_EVENT));
+  } catch {}
+}
+
 // ---- IndexedDB mínimo para imagens ----------------------------------------
 const DB_NAME = "shape-real";
 function idb(): Promise<IDBDatabase> {
@@ -131,8 +160,12 @@ export class LocalRepository implements Repository {
   async getProgram(id: string) {
     return read<Program>("programs").find((p) => p.id === id) ?? null;
   }
-  async saveProgram(program: Program) {
-    const saved = upsert("programs", { ...program, updatedAt: new Date().toISOString() });
+  /**
+   * `keepUpdatedAt`: grava sem marcar como alteração da ficha (restaurar a cópia, copiar a carga que o aluno
+   * fez). `updatedAt` diz quando a ficha foi editada de fato; o recebimento de treinos depende disso.
+   */
+  async saveProgram(program: Program, opts?: { keepUpdatedAt?: boolean }) {
+    const saved = upsert("programs", { ...program, updatedAt: opts?.keepUpdatedAt && program.updatedAt ? program.updatedAt : new Date().toISOString() });
     if (saved.active) await this.setActiveProgram(saved.ownerId, saved.id);
     return saved;
   }
@@ -240,8 +273,13 @@ export class LocalRepository implements Repository {
       onboarded: true,
       managedBy: coachId,
       createdAt: now,
-      // Dados de saúde informados ao personal pelo próprio aluno.
-      consentHealthAt: now,
+      // Autorização de dados de saúde: só a que veio no cadastro (o personal marcou "O aluno autorizou
+      // registrar estes dados de saúde"). Nada é carimbado sozinho.
+      // Migração da nuvem: a RPC create_managed_student (supabase/migrations/0002) ainda grava
+      // consent_health_at = now() para todo aluno; deve passar a usar student_data.consentHealthAt
+      // (e guardar consentSource) em vez de now().
+      consentHealthAt: draft.consentHealthAt || undefined,
+      consentSource: draft.consentHealthAt ? draft.consentSource : undefined,
     };
     await this.saveProfile(profile);
     this.linkDirect(coachId, profile.id, now);

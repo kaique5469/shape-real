@@ -2,24 +2,28 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Download, LogOut, MessageSquareText, RotateCcw, Trash2, Upload } from "lucide-react";
+import { Check, DatabaseBackup, FileSpreadsheet, LogOut, MessageSquareText, RotateCcw, Trash2 } from "lucide-react";
 import { Alert, Badge, Button, Dialog, Field, Input, PageHeader, Panel, Segmented, Select, Textarea } from "@/components/ui";
 import { useApp, localRepo } from "@/lib/app-context";
 import { ACTIVITY_LABEL } from "@/lib/domain/nutrition";
 import { GOAL_LABEL, LEVEL_LABEL } from "@/lib/domain/generator";
 import { SYSTEMS } from "@/lib/domain/systems";
 import { PLANS, brl } from "@/lib/domain/plans";
-import { downloadText, programToCsv, sessionsToCsv } from "@/lib/domain/export";
+import { downloadText, programsToCsv, sessionsToCsv } from "@/lib/domain/export";
 import { reportError, track } from "@/lib/analytics";
-import { fileSlug } from "@/components/program/program-share";
 import { InstallCard } from "@/components/pwa";
+import { BackupReminder, backupDoneText } from "@/components/backup-reminder";
+import { RestoreBackupButton } from "@/components/backup-restore";
+import { ColarLink } from "@/components/colar-link";
 import { FeedbackDialog } from "@/components/tester";
 import { maskPhone } from "@/lib/domain/format";
-import { parseBackup, restoreBackup } from "@/lib/transfer-client";
+import { CREF_MAX, crefLooksValid, maskCref, normalizeCref } from "@/lib/domain/cref";
+import { consentConfirmed, consentFromCheckbox } from "@/lib/domain/transfer";
+import { makeBackup } from "@/lib/transfer-client";
 import type { ActivityLevel, Equipment, Goal, Level, PlanId, Profile, Sex, SystemId } from "@/lib/domain/types";
 
 export default function ContaPage() {
-  const { user, repo, mode, isDemo, isTester, plan, returnTo, updateProfile, signOut, enterLocalProfile } = useApp();
+  const { user, repo, mode, isDemo, isTester, plan, returnTo, updateProfile, signOut } = useApp();
   const router = useRouter();
   const [form, setForm] = useState<Profile>(user!);
   const [weight, setWeight] = useState(user!.weightKg ? String(user!.weightKg).replace(".", ",") : "");
@@ -32,11 +36,13 @@ export default function ContaPage() {
   const [codeMsg, setCodeMsg] = useState<{ tone: "done" | "error"; text: string } | null>(null);
   const [planMsg, setPlanMsg] = useState<string | null>(null);
   const [del, setDel] = useState(false);
-  const [exportMsg, setExportMsg] = useState<{ tone: "done" | "error"; text: string } | null>(null);
-  const [restore, setRestore] = useState<NonNullable<ReturnType<typeof parseBackup>> | null>(null);
-  const [restoring, setRestoring] = useState(false);
+  const [exportMsg, setExportMsg] = useState<{ tone: "done" | "error" | "info"; text: string } | null>(null);
+  const [backingUp, setBackingUp] = useState(false);
+  const [backupMsg, setBackupMsg] = useState<{ tone: "done" | "error"; text: string } | null>(null);
   const [feedback, setFeedback] = useState(false);
   const [delText, setDelText] = useState("");
+  /** O aviso de formato do CREF só aparece depois que a pessoa sai do campo (não enquanto digita). */
+  const [crefTouched, setCrefTouched] = useState(Boolean(user!.cref));
 
   useEffect(() => {
     if (user!.role === "athlete") repo.getCoach(user!.id).then(setCoach);
@@ -55,8 +61,14 @@ export default function ContaPage() {
       const thisYear = new Date().getFullYear();
       if (form.birthYear && (form.birthYear < thisYear - 100 || form.birthYear > thisYear - 10)) throw new Error("Confira o ano de nascimento: use quatro dígitos, por exemplo 1994.");
       const hasBody = w || form.heightCm || form.birthYear;
-      if (hasBody && !form.consentHealthAt) throw new Error("Para salvar peso, altura e idade, marque a autorização de dados de saúde.");
-      await updateProfile({ ...form, weightKg: w, name: form.name.trim() || user!.name });
+      if (hasBody && !consentConfirmed(form)) throw new Error("Para salvar peso, altura e idade, marque a autorização de dados de saúde.");
+      const cref = user!.role === "coach" ? normalizeCref(form.cref) : form.cref;
+      const crefBefore = user!.cref;
+      await updateProfile({ ...form, weightKg: w, name: form.name.trim() || user!.name, cref });
+      // Só a situação (preenchido, no formato ou não), nunca o número.
+      if (user!.role === "coach" && (cref ?? "") !== (crefBefore ?? "")) track("coach_cref_set", { filled: Boolean(cref), valid: crefLooksValid(cref), first: !crefBefore });
+      if (cref !== form.cref) set({ cref });
+      setCrefTouched(true);
       setMsg({ tone: "done", text: "Perfil atualizado." });
     } catch (err) {
       setMsg({ tone: "error", text: err instanceof Error ? err.message : "Não foi possível salvar." });
@@ -65,26 +77,34 @@ export default function ContaPage() {
     }
   }
 
-  async function exportAll() {
+  /** Cópia de segurança em 1 arquivo (grátis em todos os planos): compartilhar no iPhone, download no resto. */
+  async function backup() {
+    setBackingUp(true);
+    setBackupMsg(null);
     try {
-      const [sessions, programs, metrics, diet] = await Promise.all([repo.listSessions(user!.id), repo.listPrograms(user!.id), repo.listMetrics(user!.id), repo.getDiet(user!.id)]);
-      // Personal: o backup leva também os alunos, com fichas, treinos, medidas e dieta de cada um.
-      const students =
-        user!.role === "coach"
-          ? await Promise.all(
-              (await repo.listStudents(user!.id)).map(async ({ profile }) => {
-                const [p, s, m, d] = await Promise.all([repo.listPrograms(profile.id), repo.listSessions(profile.id), repo.listMetrics(profile.id), repo.getDiet(profile.id)]);
-                return { profile, programs: p, sessions: s, metrics: m, diet: d };
-              }),
-            )
-          : undefined;
-      if (sessions.length) downloadText("shape-real-historico.csv", sessionsToCsv(sessions));
-      for (const p of programs) downloadText(`shape-real-ficha-${fileSlug(p.name)}.csv`, programToCsv(p));
-      downloadText("shape-real-backup.json", JSON.stringify({ exportedAt: new Date().toISOString(), profile: user, programs, sessions, metrics, diet, students }, null, 2), "application/json");
-      track("export_downloaded", { kind: "all", students: students?.length ?? 0 });
-      setExportMsg({ tone: "done", text: students ? `Backup baixado com ${students.length === 1 ? "1 aluno" : `${students.length} alunos`}, modelos de ficha e seus dados.` : "Arquivos baixados. Se o navegador perguntar, permita baixar vários arquivos." });
+      const r = await makeBackup(repo, user!, "conta");
+      if (r) setBackupMsg({ tone: "done", text: backupDoneText(r) });
     } catch (e) {
-      reportError(e, "conta:exportar");
+      reportError(e, "conta:copia");
+      setBackupMsg({ tone: "error", text: e instanceof Error && e.message ? e.message : "Não foi possível fazer a cópia. Tente de novo." });
+    } finally {
+      setBackingUp(false);
+    }
+  }
+
+  /** Planilha (CSV para Excel): histórico de treinos e fichas, separada da cópia de segurança. */
+  async function exportCsv() {
+    setExportMsg(null);
+    try {
+      const [sessions, programs] = await Promise.all([repo.listSessions(user!.id), repo.listPrograms(user!.id)]);
+      if (!sessions.length && !programs.length) return setExportMsg({ tone: "info", text: "Ainda não há treinos nem fichas para a planilha." });
+      if (sessions.length) downloadText("shape-real-historico.csv", sessionsToCsv(sessions));
+      if (programs.length) downloadText("shape-real-fichas.csv", programsToCsv(programs));
+      const files = (sessions.length ? 1 : 0) + (programs.length ? 1 : 0);
+      track("export_downloaded", { kind: "csv", files });
+      setExportMsg({ tone: "done", text: files === 2 ? "Planilhas baixadas: histórico de treinos e fichas. Se o navegador perguntar, permita baixar os dois arquivos." : sessions.length ? "Planilha do histórico de treinos baixada." : "Planilha das fichas baixada." });
+    } catch (e) {
+      reportError(e, "conta:planilha");
       setExportMsg({ tone: "error", text: e instanceof Error ? e.message : "Não foi possível exportar. Tente de novo." });
     }
   }
@@ -101,6 +121,7 @@ export default function ContaPage() {
   }
 
   const canExport = PLANS[plan].export || isDemo;
+  const crefWarn = user!.role === "coach" && crefTouched && Boolean(form.cref?.trim()) && !crefLooksValid(form.cref);
   const viewingAsStudent = Boolean(returnTo);
 
   return (
@@ -121,6 +142,30 @@ export default function ContaPage() {
               <Field label="Seu WhatsApp" hint="Os alunos usam para mandar os treinos de volta para você.">
                 <Input value={maskPhone(form.phone ?? "")} onChange={(e) => set({ phone: e.target.value.replace(/\D/g, "").slice(-13) || undefined })} inputMode="tel" autoComplete="tel" placeholder="(11) 91234-5678" />
               </Field>
+            ) : null}
+            {user!.role === "coach" ? (
+              <div>
+                <Field label="CREF (opcional)" hint="Aparece nas suas fichas, dietas e relatórios. Informado por você.">
+                  <Input
+                    value={form.cref ?? ""}
+                    onChange={(e) => set({ cref: maskCref(e.target.value) || undefined })}
+                    onBlur={() => setCrefTouched(true)}
+                    maxLength={CREF_MAX}
+                    autoCapitalize="characters"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="000000-G/UF"
+                    aria-describedby={crefWarn ? "cref-aviso" : undefined}
+                  />
+                </Field>
+                {crefWarn ? (
+                  // Aviso, não erro: o registro pode estar escrito de outro jeito e salvar continua liberado.
+                  <p id="cref-aviso" role="status" className="mt-1.5 flex items-start gap-2 text-[0.8125rem] text-iron">
+                    <span className="mt-1.5 size-2 shrink-0 rounded-full bg-plate-yellow" aria-hidden />
+                    <span>Fora do formato 000000-G/UF. Confira o número; dá para salvar assim mesmo.</span>
+                  </p>
+                ) : null}
+              </div>
             ) : null}
             {user!.role === "athlete" ? (
               <>
@@ -199,8 +244,8 @@ export default function ContaPage() {
                   <label className="flex items-start gap-3 rounded-[8px] border border-rule p-3 text-sm">
                     <input
                       type="checkbox"
-                      checked={Boolean(form.consentHealthAt)}
-                      onChange={(e) => set({ consentHealthAt: e.target.checked ? new Date().toISOString() : undefined })}
+                      checked={consentConfirmed(form)}
+                      onChange={(e) => set(consentFromCheckbox(user, e.target.checked, "aluno", new Date().toISOString()))}
                       className="mt-0.5 size-5 shrink-0 accent-[var(--color-iron)]"
                     />
                     <span>Autorizo guardar meus dados de saúde (peso, medidas, fotos e dieta) para acompanhar meu treino. Só eu e o personal que eu aceitar temos acesso.</span>
@@ -273,7 +318,7 @@ export default function ContaPage() {
           <Panel title="Versão beta">
             <ul className="space-y-1.5 text-[0.9375rem]">
               <li>O Shape Real está em beta: tudo liberado e gratuito, sem limite de alunos, fichas ou fotos.</li>
-              <li>Sem cadastro, os dados ficam neste aparelho. Exporte o backup de vez em quando e use “Restaurar backup” para levar tudo a outro celular.</li>
+              <li>Sem cadastro, os dados ficam neste aparelho. Faça a cópia de segurança de vez em quando e use “Restaurar cópia” para levar tudo a outro celular.</li>
               <li>Para melhorar o app, registramos de forma anônima quais telas e recursos são usados e os erros que acontecem. Nomes, medidas e o que você digita não são enviados.</li>
             </ul>
             <Button variant="secondary" className="mt-4" icon={<MessageSquareText className="size-4" />} onClick={() => setFeedback(true)}>
@@ -328,31 +373,38 @@ export default function ContaPage() {
 
         <Panel title="App no celular">
           <InstallCard variant="panel" where="conta" />
+          {viewingAsStudent ? null : <ColarLink className="mt-3 border-t border-rule pt-2" />}
         </Panel>
+
+        {viewingAsStudent ? null : (
+          <section id="copia">
+            <Panel title="Cópia de segurança">
+              <BackupReminder where="conta" className="-mt-1 mb-2" />
+              <p className="max-w-[60ch] text-[0.9375rem] text-steel">
+                {mode === "local"
+                  ? `Tudo fica neste aparelho. A cópia junta num arquivo só ${user!.role === "coach" ? "seus alunos, " : ""}fichas, treinos, medidas e dieta, para levar a outro celular ou ao app instalado. Salve o arquivo no celular (no iPhone, em Arquivos) e toque em Restaurar. Fotos não entram na cópia.`
+                  : `Um arquivo com ${user!.role === "coach" ? "seus alunos, " : ""}fichas, treinos, medidas e dieta. Fotos não entram na cópia.`}
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button icon={<DatabaseBackup className="size-4" />} onClick={backup} loading={backingUp}>
+                  Fazer cópia de segurança
+                </Button>
+                <RestoreBackupButton origin="conta" />
+              </div>
+              {backupMsg ? (
+                <Alert tone={backupMsg.tone} className="mt-3">
+                  {backupMsg.text}
+                </Alert>
+              ) : null}
+            </Panel>
+          </section>
+        )}
 
         <Panel title={viewingAsStudent ? "Dados do aluno" : "Seus dados"}>
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" icon={<Download className="size-4" />} onClick={exportAll} disabled={!canExport} title={!canExport ? "Exportação disponível no Pro" : undefined}>
-              Exportar tudo (Excel + backup)
+            <Button variant="secondary" icon={<FileSpreadsheet className="size-4" />} onClick={exportCsv} disabled={!canExport} title={!canExport ? "Planilha disponível no Pro" : undefined}>
+              Baixar planilha (CSV)
             </Button>
-            {mode === "local" && !viewingAsStudent ? (
-              <label className="inline-flex h-11 cursor-pointer items-center gap-2 rounded-[6px] border border-rule-strong bg-paper px-4 text-[0.9375rem] font-semibold hover:border-iron focus-within:outline-2 focus-within:outline-plate-blue">
-                <Upload className="size-4" aria-hidden /> Restaurar backup
-                <input
-                  type="file"
-                  accept="application/json,.json"
-                  className="sr-only"
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    e.target.value = "";
-                    if (!file) return;
-                    const parsed = parseBackup(await file.text());
-                    if (!parsed) return setExportMsg({ tone: "error", text: "Este arquivo não é um backup do Shape Real. Use o “shape-real-backup.json” baixado em Exportar tudo." });
-                    setRestore(parsed);
-                  }}
-                />
-              </label>
-            ) : null}
             {isTester || viewingAsStudent ? null : (
               <Button variant="danger" icon={<Trash2 className="size-4" />} onClick={() => setDel(true)}>
                 {mode === "local" ? "Apagar dados deste aparelho" : "Excluir minha conta"}
@@ -364,7 +416,7 @@ export default function ContaPage() {
               {exportMsg.text}
             </Alert>
           ) : null}
-          {!canExport ? <p className="mt-2 text-sm text-steel">A exportação em planilha faz parte do Pro. Seus dados continuam seus: peça uma cópia a qualquer momento.</p> : null}
+          {!canExport ? <p className="mt-2 text-sm text-steel">A planilha faz parte do Pro. A cópia de segurança é grátis em todos os planos.</p> : null}
         </Panel>
 
         {isTester || viewingAsStudent ? null : (
@@ -408,47 +460,9 @@ export default function ContaPage() {
         </div>
       </Dialog>
 
-      <Dialog open={Boolean(restore)} onClose={() => (restoring ? undefined : setRestore(null))} title="Restaurar este backup?">
-        {restore ? (
-          <div className="space-y-4">
-            <p className="text-[0.9375rem] text-steel">
-              Backup de <strong className="text-iron">{restore.profile.name}</strong>
-              {restore.exportedAt ? `, de ${new Date(restore.exportedAt).toLocaleDateString("pt-BR")}` : ""}: {restore.programs?.length ?? 0} fichas, {restore.sessions?.length ?? 0} treinos
-              {restore.students?.length ? ` e ${restore.students.length === 1 ? "1 aluno" : `${restore.students.length} alunos`}` : ""}. Os mesmos registros que já estiverem neste aparelho são substituídos. Fotos não vão no arquivo.
-            </p>
-            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <Button variant="secondary" onClick={() => setRestore(null)} disabled={restoring}>
-                Cancelar
-              </Button>
-              <Button
-                loading={restoring}
-                onClick={async () => {
-                  setRestoring(true);
-                  try {
-                    const r = await restoreBackup(restore);
-                    track("backup_restored", { role: r.profile.role, students: r.students });
-                    enterLocalProfile(r.profile);
-                    setRestore(null);
-                    router.push(r.profile.role === "coach" ? "/alunos" : "/hoje");
-                  } catch (e) {
-                    reportError(e, "conta:restaurar");
-                    setExportMsg({ tone: "error", text: e instanceof Error ? e.message : "Não foi possível restaurar. Tente de novo." });
-                    setRestore(null);
-                  } finally {
-                    setRestoring(false);
-                  }
-                }}
-              >
-                Restaurar
-              </Button>
-            </div>
-          </div>
-        ) : null}
-      </Dialog>
-
       <Dialog open={del} onClose={() => setDel(false)} title={mode === "local" ? "Apagar dados deste aparelho?" : "Excluir conta?"}>
         <p className="text-[0.9375rem] text-steel">
-          Fichas, treinos, medidas, fotos e dieta serão apagados definitivamente. Exporte antes se quiser guardar. Digite <strong>APAGAR</strong> para confirmar.
+          Fichas, treinos, medidas, fotos e dieta serão apagados definitivamente. Se quiser guardar, faça a cópia de segurança antes. Digite <strong>APAGAR</strong> para confirmar.
         </p>
         <Input value={delText} onChange={(e) => setDelText(e.target.value)} className="mt-3" aria-label="Digite APAGAR para confirmar" />
         <div className="mt-5 flex justify-end gap-2">

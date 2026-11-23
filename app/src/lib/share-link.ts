@@ -69,3 +69,23 @@ export function packedFromHash(hash: string): string | null {
   const m = /[#&]d=([A-Za-z0-9._-]+)/.exec(hash);
   return m?.[1] ?? null;
 }
+
+/**
+ * Acha o pacote em um texto colado: a mensagem inteira do WhatsApp, só o link ou o link com o "#"
+ * codificado (%23). Para no primeiro caractere que não pode fazer parte do pacote (ponto final, espaço,
+ * parêntese), então a pontuação depois do link não estraga a leitura.
+ */
+export function packedFromText(text: string): string | null {
+  const m = /(?:[#&]|%23)d=([01]\.[A-Za-z0-9_-]+)/.exec(text);
+  return m?.[1] ?? null;
+}
+
+/** Endereço interno que abre o pacote colado: ficha → /abrir, treinos → /receber. `colar=1` marca que veio pelo campo. */
+export function pastedLinkHref(kind: "ficha" | "treinos", packed: string): string {
+  return `${kind === "ficha" ? "/abrir" : "/receber"}#d=${packed}&colar=1`;
+}
+
+/** O endereço atual veio do campo "Colar link"? */
+export function cameFromPaste(hash: string): boolean {
+  return /[#&]colar=1(?:&|$)/.test(hash);
+}
