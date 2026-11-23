@@ -6,7 +6,7 @@ import { Textarea } from "@/components/ui";
 
 const SAMPLE = "Café da manhã: 2 ovos, 1 pão francês, café\nAlmoço: 150g de arroz, 1 concha de feijão, 130g de frango, salada\nLanche: iogurte natural, 1 banana\nJantar: 200g de batata-doce e 120g de patinho";
 
-/** Demonstração real do leitor de dieta (roda no navegador, sem IA). */
+/** Demonstração real do leitor de dieta (roda no navegador, com a mesma base de alimentos do app). */
 export function DietDemo() {
   const [text, setText] = useState(SAMPLE);
   const { meals, unknown } = useMemo(() => parseDietText(text), [text]);
@@ -51,7 +51,7 @@ export function DietDemo() {
           )}
           {unknown.length ? <li className="px-3 py-2 text-plate-red-ink">Não reconheci: {unknown.join(", ")}</li> : null}
         </ul>
-        <p className="border-t border-rule px-3 py-2 text-xs text-pencil">Base de alimentos com valores aproximados (TACO). A análise completa por IA aponta ajustes e trocas.</p>
+        <p className="border-t border-rule px-3 py-2 text-xs text-pencil">Base de alimentos com valores aproximados (TACO). No app, a dieta compara com as suas metas e mostra o que ajustar.</p>
       </div>
     </div>
   );

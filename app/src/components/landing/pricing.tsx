@@ -49,9 +49,9 @@ export function Pricing() {
                 href={p.id === "coach" ? "/entrar?modo=criar&perfil=personal" : "/entrar?modo=criar"}
                 variant={featured ? "primary" : "secondary"}
                 className="mt-6 w-full"
-                onClick={() => track("landing_cta_clicked", { where: "pricing", plan: p.id, yearly })}
+                onClick={() => track("landing_cta_clicked", { where: "pricing", porta: p.id === "coach" ? "criar_painel" : "solo", plan: p.id, yearly })}
               >
-                {p.id === "free" ? "Começar grátis" : p.id === "pro" ? "Começar e testar o Pro" : "Criar conta de personal"}
+                {p.id === "free" ? "Começar grátis" : p.id === "pro" ? "Começar e testar o Pro" : "Criar meu painel de personal"}
               </LinkButton>
             </div>
           );

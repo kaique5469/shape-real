@@ -119,7 +119,7 @@ export function CoachMock() {
           <li key={r.name} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-white/10 px-4 py-3 last:border-0 sm:grid-cols-[1.3fr_1fr_auto_5rem]">
             <span className="min-w-0">
               <span className="block truncate font-semibold text-chalk">{r.name}</span>
-              {r.alert ? <span className="mt-0.5 block text-xs font-semibold text-plate-yellow">Sem treinar há 9 dias</span> : <span className="block truncate text-xs text-chalk/55 sm:hidden">{r.program}</span>}
+              {r.alert ? <span className="mt-0.5 block text-xs font-semibold text-plate-yellow">Sem notícias há 9 dias</span> : <span className="block truncate text-xs text-chalk/55 sm:hidden">{r.program}</span>}
             </span>
             <span className="hidden truncate text-sm text-chalk/70 sm:block">{r.program}</span>
             <span className="flex gap-1" aria-label={`${r.week.filter(Boolean).length} treinos na semana`}>

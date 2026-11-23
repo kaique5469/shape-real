@@ -28,8 +28,8 @@ export function SiteHeader() {
           <Link href="/entrar" className="hidden h-10 items-center rounded-[6px] px-3 text-[0.9375rem] font-semibold hover:bg-chalk-2 sm:inline-flex">
             Entrar
           </Link>
-          <Link href="/entrar?modo=criar" className="inline-flex h-10 items-center rounded-[6px] bg-iron px-4 text-[0.9375rem] font-semibold text-chalk hover:bg-iron-2">
-            Começar grátis
+          <Link href="/entrar?modo=criar" className="inline-flex min-h-11 items-center whitespace-nowrap rounded-[6px] bg-iron px-3 text-[0.9375rem] font-semibold text-chalk hover:bg-iron-2 sm:px-4">
+            Começar<span className="hidden sm:inline">&nbsp;grátis</span>
           </Link>
         </div>
       </div>
@@ -43,7 +43,7 @@ export function SiteFooter() {
       <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-10 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <Logo />
-          <p className="mt-2 max-w-sm text-sm text-steel">Ficha de treino com IA, registro de cargas e acompanhamento de personal. Feito no Brasil.</p>
+          <p className="mt-2 max-w-sm text-sm text-steel">Ficha de treino montada por regras que você entende e edita, registro de cargas e acompanhamento de personal. Feito no Brasil.</p>
         </div>
         <nav aria-label="Rodapé" className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
           <a href={BLOG} className="hover:underline">

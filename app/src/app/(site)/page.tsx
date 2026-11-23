@@ -1,8 +1,9 @@
-import { Brain, CalendarRange, Camera, ClipboardList, Dumbbell, FileSpreadsheet, LineChart as LineIcon, Send, ShieldCheck, Timer, Users } from "lucide-react";
+import { CalendarRange, Camera, ClipboardList, Dumbbell, FileSpreadsheet, LineChart as LineIcon, Send, ShieldCheck, Timer, Users } from "lucide-react";
 import { HeroFicha } from "@/components/landing/hero-ficha";
 import { SystemPicker } from "@/components/landing/system-picker";
 import { DietDemo } from "@/components/landing/diet-demo";
 import { DemoButton } from "@/components/landing/demo-button";
+import { HeroCtas } from "@/components/landing/hero-ctas";
 import { CoachMock, EvolutionMock, SessionPhone } from "@/components/landing/mocks";
 import { Pricing } from "@/components/landing/pricing";
 import { SiteFooter, SiteHeader } from "@/components/landing/site-chrome";
@@ -15,20 +16,24 @@ const FAQ = [
     a: "Sim. Durante o beta, tudo está liberado de graça para personais e alunos, sem limite de alunos, fichas, fotos ou exportação. Os planos pagos só passam a valer depois do beta, com aviso antes.",
   },
   {
-    q: "A IA substitui um personal?",
-    a: "Não. A IA monta uma ficha sólida para o seu objetivo, tempo e equipamento, e o app conduz a progressão de carga. Um personal enxerga técnica, ajusta por lesão e cobra constância — por isso o Shape Real tem uma área inteira para personais acompanharem alunos.",
+    q: "O app substitui um personal?",
+    a: "Não. O app entrega uma ficha montada por regras que você entende e edita, para o seu objetivo, tempo e equipamento, e conduz a progressão de carga. Um personal enxerga técnica, ajusta por lesão e cobra constância — por isso o Shape Real tem uma área inteira para personais acompanharem alunos.",
   },
   {
     q: "Posso usar o sistema de treino que eu gosto?",
-    a: "Pode. ABC, ABCD, ABCDE, AB, Upper/Lower, Push/Pull/Legs (3 ou 6 dias), Full Body e Força 5×5. A IA gera no sistema escolhido e você edita qualquer exercício, série, repetição ou carga.",
+    a: "Pode. ABC, ABCD, ABCDE, AB, Upper/Lower, Push/Pull/Legs (3 ou 6 dias), Full Body e Força 5×5. A ficha sai no sistema escolhido, montada por regras que você entende, e você edita qualquer exercício, série, repetição ou carga.",
   },
   {
     q: "Como funciona para o personal?",
     a: "Você cadastra o aluno, monta a ficha e a dieta e toca em “Enviar para o celular do aluno”. Ele recebe um link no WhatsApp, abre no celular dele e passa a treinar pelo app, sem cadastro. No fim de cada treino, ele manda o resultado de volta e você registra no seu painel com um toque: frequência, cargas e relatório de evolução se atualizam sozinhos.",
   },
   {
+    q: "Onde ficam meus dados?",
+    a: "No seu celular. Só saem quando você manda um link pelo WhatsApp ou, no teste com IA por convite, quando pede uma ficha ou dieta à IA (vão o objetivo, as limitações e as metas, sem nome). Nada de saúde vai para as nossas métricas.",
+  },
+  {
     q: "Meus dados de saúde ficam seguros?",
-    a: "Medidas, fotos e dieta são dados sensíveis pela LGPD. No beta, tudo fica guardado no seu próprio celular, sem cadastro e sem servidor: só circula o que você mesmo envia pelo WhatsApp. Você pode exportar um backup, restaurar em outro aparelho ou apagar tudo quando quiser.",
+    a: "Medidas, fotos e dieta são dados sensíveis pela LGPD. No beta, tudo fica guardado no seu próprio celular, sem cadastro: só circula o que você mesmo envia pelo WhatsApp (e, no teste com IA por convite, o pedido feito à IA). Você pode exportar um backup, restaurar em outro aparelho ou apagar tudo quando quiser.",
   },
   {
     q: "Funciona no celular na academia?",
@@ -44,7 +49,7 @@ export default function Landing() {
     applicationCategory: "HealthApplication",
     operatingSystem: "Web, Android, iOS",
     inLanguage: "pt-BR",
-    description: "Ficha de treino com IA, registro de cargas, evolução, dieta e área para personal trainers.",
+    description: "Ficha de treino montada por regras que você entende e edita, registro de cargas, evolução, dieta e área para personal trainers.",
     offers: [PLANS.free, PLANS.pro, PLANS.coach].map((p) => ({ "@type": "Offer", name: p.name, price: p.priceMonthly.toFixed(2), priceCurrency: "BRL" })),
   };
   const faqLd = {
@@ -64,17 +69,9 @@ export default function Landing() {
               Sua ficha de treino, agora com <span className="text-plate-red">memória</span>.
             </h1>
             <p className="mt-4 max-w-[34rem] text-base leading-relaxed text-steel sm:mt-5 sm:text-[1.0625rem]">
-              A IA monta a ficha no sistema que você gosta. O app lembra cada carga que você levantou e avisa a hora de subir o peso. Para quem treina sozinho e para personais que acompanham alunos.
+              Ficha montada por regras que você entende e edita, no sistema que você gosta. O app lembra cada carga que você levantou e avisa a hora de subir o peso. Para quem treina sozinho e para personais que acompanham alunos.
             </p>
-            <div className="mt-6 flex flex-wrap gap-3 sm:mt-7">
-              <LinkButton href="/entrar?modo=criar" size="lg">
-                Começar grátis
-              </LinkButton>
-              <DemoButton role="athlete" variant="secondary" size="lg">
-                Ver por dentro
-              </DemoButton>
-            </div>
-            <p className="mt-4 text-sm text-steel">Sem cartão. Funciona no celular, direto do navegador.</p>
+            <HeroCtas />
           </div>
           <HeroFicha />
         </section>
@@ -83,9 +80,9 @@ export default function Landing() {
         <section id="como-funciona" className="border-t border-rule bg-chalk-2/60">
           <div className="mx-auto max-w-6xl px-4 py-16 lg:py-24">
             <div className="max-w-2xl">
-              <h2 className="plate-type text-[2rem] leading-tight text-balance sm:text-[2.6rem]">Monte no sistema que você gosta. A IA faz o resto.</h2>
+              <h2 className="plate-type text-[2rem] leading-tight text-balance sm:text-[2.6rem]">Escolha o sistema. A ficha sai montada por regras que você entende e edita.</h2>
               <p className="mt-4 text-[1.0625rem] text-steel">
-                Diga objetivo, nível, quantos dias e quanto tempo você tem, o equipamento disponível e se sente alguma dor. A ficha sai pronta em segundos — e continua editável, exercício por exercício.
+                Diga objetivo, nível, quantos dias e quanto tempo você tem, o equipamento disponível e se sente alguma dor. A ficha sai pronta na hora — e continua editável, exercício por exercício.
               </p>
             </div>
             <div className="mt-10">
@@ -104,7 +101,7 @@ export default function Landing() {
                 {[
                   [ClipboardList, "A última vez na tela", "Carga e repetições do treino anterior ao lado de cada exercício. Nada de lembrar de cabeça."],
                   [Dumbbell, "Quando subir o peso", "Bateu o topo da faixa em todas as séries? O app sugere a próxima carga. Falhou? Sugere ajustar."],
-                  [Timer, "Descanso automático", "Marcou a série, o timer começa. Vibra quando é hora de voltar."],
+                  [Timer, "Descanso automático", "Marcou a série, o timer começa e avisa na tela quando é hora de voltar."],
                   [CalendarRange, "Anilhas por lado", "Digite 82,5 kg e veja exatamente o que colocar em cada lado da barra."],
                 ].map(([Icon, t, d]) => {
                   const I = Icon as typeof Timer;
@@ -174,10 +171,10 @@ export default function Landing() {
               </p>
               <ul className="mt-7 space-y-3.5 text-[0.9375rem]">
                 {[
-                  [Send, "Convite por código ou link no WhatsApp"],
-                  [Brain, "Ficha com IA em segundos — você revisa e envia"],
+                  [Send, "Ficha e dieta chegam ao aluno por link no WhatsApp"],
+                  [ClipboardList, "Ficha montada por regras que você entende e edita — você revisa e envia"],
                   [Users, "Painel de aderência com alerta de aluno parado"],
-                  [ShieldCheck, `Alunos usam recursos Pro sem pagar, até ${PLANS.coach.maxStudents} no plano Personal`],
+                  [ShieldCheck, "Alunos usam recursos Pro sem pagar"],
                 ].map(([Icon, t]) => {
                   const I = Icon as typeof Send;
                   return (
@@ -190,7 +187,7 @@ export default function Landing() {
               </ul>
               <div className="mt-8 flex flex-wrap gap-3">
                 <LinkButton href="/entrar?modo=criar&perfil=personal" size="lg" className="!bg-chalk !text-iron hover:!bg-white">
-                  Criar conta de personal
+                  Criar meu painel de personal
                 </LinkButton>
                 <DemoButton role="coach" variant="ghost" size="lg" className="!text-chalk ring-1 ring-white/30 hover:!bg-white/10">
                   Ver painel de exemplo
@@ -198,18 +195,6 @@ export default function Landing() {
               </div>
             </div>
             <CoachMock />
-          </div>
-        </section>
-
-        {/* Planos */}
-        <section id="planos" className="mx-auto max-w-6xl px-4 py-16 lg:py-24">
-          <h2 className="plate-type text-[2rem] leading-tight sm:text-[2.6rem]">Comece grátis. Pague quando fizer sentido.</h2>
-          <p className="mt-3 max-w-2xl text-[1.0625rem] text-steel">Registro de treino ilimitado em todos os planos. Os pagos liberam IA, fotos e a área do personal.</p>
-          <p className="mt-4 max-w-2xl rounded-[var(--radius-ficha)] border border-plate-yellow/60 bg-plate-yellow/15 px-4 py-3 text-[0.9375rem]">
-            <strong>Beta aberto:</strong> enquanto o app está em teste, todos os recursos estão liberados de graça. Os preços abaixo valem só depois do beta, com aviso antes.
-          </p>
-          <div className="mt-8">
-            <Pricing />
           </div>
         </section>
 
@@ -230,6 +215,18 @@ export default function Landing() {
                 </details>
               ))}
             </div>
+          </div>
+        </section>
+
+        {/* Planos: só valem depois do beta */}
+        <section id="planos" className="mx-auto max-w-6xl px-4 py-16 lg:py-24">
+          <h2 className="plate-type text-[2rem] leading-tight sm:text-[2.6rem]">Depois do beta</h2>
+          <p className="mt-3 max-w-2xl text-[1.0625rem] text-steel">Registro de treino ilimitado e cópia de segurança em todos os planos. Os pagos liberam fichas e fotos ilimitadas, planilha e a área do personal.</p>
+          <p className="mt-4 max-w-2xl rounded-[var(--radius-ficha)] border border-plate-yellow/60 bg-plate-yellow/15 px-4 py-3 text-[0.9375rem]">
+            <strong>Beta aberto:</strong> enquanto o app está em teste, todos os recursos estão liberados de graça. Os preços abaixo valem só depois do beta, com aviso antes.
+          </p>
+          <div className="mt-8">
+            <Pricing />
           </div>
         </section>
 

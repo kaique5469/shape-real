@@ -6,7 +6,7 @@ import { FichaDay } from "@/components/ficha";
 import { GoalPicker, LimitsPicker, RoutinePicker, SystemChooser, suggestFor, withSuggestion, type TrainingPrefs } from "@/components/preferences";
 import { Alert, Button, Dialog, Field, Panel, Segmented, Skeleton, Textarea } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
-import { OfflineError, aiProgram, useAI } from "@/lib/ai/client";
+import { OfflineError, aiAvailable, aiProgram, useAI } from "@/lib/ai/client";
 import { firstName } from "@/lib/domain/format";
 import { GOAL_LABEL, generateProgram } from "@/lib/domain/generator";
 import { uid } from "@/lib/domain/ids";
@@ -17,7 +17,7 @@ import type { Profile, Program } from "@/lib/domain/types";
 const clampDays = (d: number | undefined) => Math.min(6, Math.max(2, d ?? 3));
 
 /**
- * Cria uma ficha: base gerada (IA quando ligada, senão o motor do app), prévia e salvamento;
+ * Cria uma ficha: base gerada (IA quando ligada; senão o motor de regras, no próprio aparelho), prévia e salvamento;
  * ou ficha em branco para montar exercício por exercício.
  * Usado pelo aluno (para si) e pelo personal (para um aluno).
  */
@@ -58,6 +58,16 @@ export function ProgramGenerator({ owner, forName, onSaved }: { owner: Profile; 
     const { systemTouched: _touched, ...input } = prefs;
     void _touched;
     try {
+      // IA desligada: o motor de regras roda no aparelho, sem nenhuma chamada a /api/ai/* (e funciona sem sinal).
+      if (!(await aiAvailable(mode === "supabase"))) {
+        const local = generateProgram({ ...input, seed: Math.floor(Math.random() * 1e6) }, { ownerId: owner.id, createdBy: user!.id });
+        setPreview({ ...local, source: isCoach ? "personal" : "modelo" });
+        setNotice(null);
+        setQuota(false);
+        track("program_generated", { where: isCoach ? "coach" : "athlete", source: "local", system: prefs.system });
+        window.scrollTo({ top: 0 });
+        return;
+      }
       const r = await aiProgram({ ...input, notes: ai.enabled && notes.trim() ? notes.trim() : undefined, seed: Math.floor(Math.random() * 1e6) }, { ownerId: owner.id, createdBy: user!.id }, await accessToken());
       setPreview({ ...r.data, source: isCoach ? "personal" : r.source === "ia" ? "ia" : "modelo" });
       setNotice(r.notice?.trim() ? r.notice : null);

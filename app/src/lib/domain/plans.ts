@@ -14,7 +14,10 @@ export interface PlanDef {
   aiPerMonth: number;
   maxPrograms: number;
   maxPhotos: number;
+  /** Exportar planilha (CSV/Excel). */
   export: boolean;
+  /** Cópia de segurança em 1 arquivo (JSON) para restaurar em outro celular: grátis em todos os planos, independente de `export`. */
+  backup: boolean;
   maxStudents: number;
   features: string[];
 }
@@ -29,8 +32,9 @@ export const PLANS: Record<PlanId, PlanDef> = {
     maxPrograms: 2,
     maxPhotos: 6,
     export: false,
+    backup: true,
     maxStudents: 0,
-    features: ["Registro ilimitado de treinos e cargas", "2 fichas salvas", "3 gerações com IA por mês", "Gráficos de evolução", "6 fotos de evolução"],
+    features: ["Registro ilimitado de treinos e cargas", "2 fichas salvas", "Gráficos de evolução", "Cópia de segurança dos seus dados", "6 fotos de evolução"],
   },
   pro: {
     id: "pro",
@@ -42,8 +46,9 @@ export const PLANS: Record<PlanId, PlanDef> = {
     maxPrograms: 99,
     maxPhotos: 999,
     export: true,
+    backup: true,
     maxStudents: 0,
-    features: ["Fichas ilimitadas", "IA para fichas e dieta (uso justo)", "Análise da dieta por IA", "Fotos ilimitadas com comparação", "Exportar planilha (Excel)"],
+    features: ["Fichas ilimitadas, montadas por regras que você entende e edita", "Fotos ilimitadas com comparação", "Exportar planilha (Excel)", "Cópia de segurança dos seus dados"],
   },
   coach: {
     id: "coach",
@@ -55,10 +60,22 @@ export const PLANS: Record<PlanId, PlanDef> = {
     maxPrograms: 999,
     maxPhotos: 999,
     export: true,
+    backup: true,
     maxStudents: 20,
-    features: ["Até 20 alunos (R$ 2,99/aluno extra)", "Envie ficha e dieta pelo app", "Painel de aderência dos alunos", "IA para montar fichas em segundos", "Alunos usam recursos Pro sem pagar"],
+    features: ["Envie ficha e dieta pelo WhatsApp", "Painel de aderência dos alunos", "Ficha montada por regras que você entende e edita", "Alunos usam recursos Pro sem pagar", "Cópia de segurança dos seus dados"],
   },
 };
+
+/**
+ * Limite de alunos do personal. No modo local (beta sem login, dados no aparelho) não há limite, como
+ * prometem Conta e o FAQ: `max` é null e o painel nunca fica cheio. Alunos de exemplo nunca contam.
+ */
+export function studentQuota(students: readonly { profile: { sample?: boolean } }[], opts: { local: boolean; plan: PlanId }): { count: number; max: number | null; full: boolean } {
+  const count = students.filter((s) => !s.profile.sample).length;
+  if (opts.local) return { count, max: null, full: false };
+  const max = PLANS[opts.plan].maxStudents || 3;
+  return { count, max, full: count >= max };
+}
 
 export function brl(v: number): string {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });

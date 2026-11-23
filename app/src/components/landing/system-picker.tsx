@@ -56,8 +56,8 @@ export function SystemPicker() {
                 );
               })}
             </ol>
-            <LinkButton href="/entrar?modo=criar" className="mt-6" onClick={() => track("landing_cta_clicked", { where: "systems", system: s.id })}>
-              Gerar minha ficha {s.short} com IA
+            <LinkButton href="/entrar?modo=criar" className="mt-6" onClick={() => track("landing_cta_clicked", { where: "systems", porta: "solo", system: s.id })}>
+              Montar minha ficha {s.short}
             </LinkButton>
           </div>
           <ul className="ruled self-start rounded-[8px] border border-rule">

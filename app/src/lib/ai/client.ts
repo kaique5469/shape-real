@@ -91,12 +91,48 @@ export async function aiDietGenerate(
   return { data: r.diet, source: r.source, notice: r.notice, quota: r.quota };
 }
 
-interface AIStatus {
+export interface AIStatus {
   configured: boolean;
   access: "account" | "pass" | "open" | "off";
 }
 
+const AI_OFF: AIStatus = { configured: false, access: "off" };
+
+/**
+ * Vale a pena perguntar ao servidor se a IA está ligada? Só há caminho para a IA com conta na nuvem,
+ * com o código do link de teste (`/testar?k=`) ou com o modo aberto anunciado no build
+ * (NEXT_PUBLIC_AI_OPEN=1, par do DEMO_AI=1 sem TESTER_PASS). Fora isso a IA está desligada para esta pessoa
+ * e o app não faz nenhuma chamada a /api/ai/* (nem o status): tudo sai do motor de regras, no aparelho.
+ */
+export function shouldAskAIStatus(ctx: { signedIn: boolean; hasPass: boolean; openBuild: boolean }): boolean {
+  return ctx.signedIn || ctx.hasPass || ctx.openBuild;
+}
+
+/** Com a resposta do servidor: a IA real atende esta pessoa? */
+export function aiEnabledFor(status: AIStatus | null, ctx: { signedIn: boolean; hasPass: boolean }): boolean {
+  if (!status?.configured) return false;
+  return status.access === "open" || (status.access === "pass" && ctx.hasPass) || (status.access === "account" && ctx.signedIn);
+}
+
+const openBuild = () => process.env.NEXT_PUBLIC_AI_OPEN === "1";
+
 let statusPromise: Promise<AIStatus> | null = null;
+
+function loadStatus(signedIn: boolean): Promise<AIStatus> {
+  if (!shouldAskAIStatus({ signedIn, hasPass: Boolean(testerPass()), openBuild: openBuild() })) return Promise.resolve(AI_OFF);
+  statusPromise ??= fetch("/api/ai/status")
+    .then((r) => (r.ok ? (r.json() as Promise<AIStatus>) : AI_OFF))
+    .catch(() => AI_OFF);
+  return statusPromise;
+}
+
+/**
+ * Decide na hora de gerar (sem depender do estado de um hook): a IA atende agora?
+ * Sem caminho para a IA, responde `false` sem tocar na rede; sem sinal, também `false`.
+ */
+export async function aiAvailable(signedIn: boolean): Promise<boolean> {
+  return aiEnabledFor(await loadStatus(signedIn), { signedIn, hasPass: Boolean(testerPass()) });
+}
 
 /**
  * A IA real está disponível para este usuário? (decide os textos da interface:
@@ -105,16 +141,12 @@ let statusPromise: Promise<AIStatus> | null = null;
 export function useAI(signedIn: boolean): { enabled: boolean; loading: boolean } {
   const [status, setStatus] = useState<AIStatus | null>(null);
   useEffect(() => {
-    statusPromise ??= fetch("/api/ai/status")
-      .then((r) => (r.ok ? (r.json() as Promise<AIStatus>) : { configured: false, access: "off" as const }))
-      .catch(() => ({ configured: false, access: "off" as const }));
     let alive = true;
-    void statusPromise.then((s) => alive && setStatus(s));
+    void loadStatus(signedIn).then((s) => alive && setStatus(s));
     return () => {
       alive = false;
     };
-  }, []);
+  }, [signedIn]);
   if (!status) return { enabled: false, loading: true };
-  const enabled = status.configured && (status.access === "open" || (status.access === "pass" && Boolean(testerPass())) || (status.access === "account" && signedIn));
-  return { enabled, loading: false };
+  return { enabled: aiEnabledFor(status, { signedIn, hasPass: Boolean(testerPass()) }), loading: false };
 }

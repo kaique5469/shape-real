@@ -7,6 +7,8 @@ import { Dumbbell, Mail, Users } from "lucide-react";
 import { Logo } from "@/components/brand";
 import { Alert, Button, Field, Input, Segmented, cx } from "@/components/ui";
 import { DemoButton } from "@/components/landing/demo-button";
+import { ColarLink } from "@/components/colar-link";
+import { RestoreBackupButton } from "@/components/backup-restore";
 import { useApp } from "@/lib/app-context";
 import { track } from "@/lib/analytics";
 import type { Role } from "@/lib/domain/types";
@@ -92,8 +94,18 @@ function Entrar() {
           <Logo />
         </Link>
         <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center py-10">
-          <h1 className="plate-type text-[2rem] leading-tight">{mode === "criar" ? "Crie sua conta" : "Entrar"}</h1>
-          <p className="mt-2 text-steel">{mode === "criar" ? "Grátis, sem cartão. Leva menos de um minuto." : "Bom te ver de volta. Bora treinar."}</p>
+          {cloudAvailable ? (
+            <>
+              <h1 className="plate-type text-[2rem] leading-tight">{mode === "criar" ? "Crie sua conta" : "Entrar"}</h1>
+              <p className="mt-2 text-steel">{mode === "criar" ? "Grátis, sem cartão. Leva menos de um minuto." : "Bom te ver de volta. Bora treinar."}</p>
+            </>
+          ) : (
+            // Beta sem login: não há conta para criar, como promete a landing.
+            <>
+              <h1 className="plate-type text-[2rem] leading-tight">Comece agora</h1>
+              <p className="mt-2 text-steel">Sem cadastro: seus dados ficam neste celular. Leva menos de um minuto.</p>
+            </>
+          )}
 
           {cloudAvailable ? (
             <div className="mt-6">
@@ -152,7 +164,7 @@ function Entrar() {
                 </Field>
               </>
             ) : (
-              <Alert tone="info">Seus dados ficam salvos neste aparelho. Você pode exportar tudo em planilha a qualquer momento.</Alert>
+              <Alert tone="info">Seus dados ficam salvos neste aparelho. Faça uma cópia de segurança em Conta para levar a outro celular.</Alert>
             )}
 
             {error ? <Alert tone="error">{error}</Alert> : null}
@@ -180,6 +192,14 @@ function Entrar() {
               </p>
             ) : null}
           </form>
+
+          {/* Beta sem login: quem troca de celular restaura a cópia; quem abriu o app da tela de início cola o link do WhatsApp. */}
+          {!cloudAvailable ? (
+            <div className="mt-5 space-y-1">
+              <ColarLink />
+              <RestoreBackupButton origin="entrar" />
+            </div>
+          ) : null}
 
           <div className="mt-8 border-t border-rule pt-6">
             <p className="text-sm font-semibold">Quer só dar uma olhada?</p>

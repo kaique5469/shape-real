@@ -7,9 +7,9 @@ const SITE = process.env.NEXT_PUBLIC_SITE_URL || "https://app.shapereal.com.br";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE),
-  title: { default: "Shape Real — ficha de treino com IA, cargas e evolução", template: "%s · Shape Real" },
+  title: { default: "Shape Real — ficha de treino, cargas e evolução", template: "%s · Shape Real" },
   description:
-    "Monte sua ficha com IA no sistema que você gosta (ABC, Upper/Lower, PPL, 5×5), registre cada carga e acompanhe a evolução. Personal: envie ficha e dieta e acompanhe seus alunos.",
+    "Ficha montada por regras que você entende e edita, no sistema que você gosta (ABC, Upper/Lower, PPL, 5×5). Registre cada carga e acompanhe a evolução. Personal: envie ficha e dieta pelo WhatsApp e acompanhe seus alunos.",
   applicationName: "Shape Real",
   alternates: { canonical: "/" },
   openGraph: {
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     locale: "pt_BR",
     siteName: "Shape Real",
     title: "Shape Real — sua ficha de treino, agora com memória",
-    description: "Ficha com IA, registro de cargas, evolução, dieta e área do personal. Grátis para começar.",
+    description: "Ficha montada por regras que você entende e edita, registro de cargas, evolução, dieta e área do personal. Grátis no beta.",
   },
   twitter: { card: "summary_large_image" },
   robots: { index: true, follow: true },
