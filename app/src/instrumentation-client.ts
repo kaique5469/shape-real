@@ -30,6 +30,18 @@ function cleanBag(bag: Record<string, unknown> | undefined) {
   for (const key of Object.keys(bag)) if (/url|referrer|href/i.test(key)) bag[key] = cleanUrl(bag[key]);
 }
 
+/**
+ * Cliques nunca levam o destino do link: os links do WhatsApp (wa.me/<telefone>?text=...) carregam o telefone,
+ * o nome do aluno e a ficha inteira codificada (%23d%3D...), que cleanUrl não reconhece. A configuração já não
+ * captura href; isto é a segunda trava, caso o SDK mude.
+ */
+function stripLinkTargets(props: Record<string, unknown> | undefined) {
+  if (!props) return;
+  delete props.$external_click_url;
+  if (typeof props.$elements_chain === "string") props.$elements_chain = props.$elements_chain.replace(/(?:attr__)?href="[^"]*"/g, "");
+  if (Array.isArray(props.$elements)) for (const el of props.$elements) if (el && typeof el === "object") delete (el as Record<string, unknown>).attr__href;
+}
+
 if (token) {
   posthog.init(token, {
     // Passa pelo próprio domínio (ver rewrites em next.config.ts) para bloqueadores não derrubarem os eventos.
@@ -42,10 +54,13 @@ if (token) {
     disable_session_recording: true,
     // Cliques entram na análise, mas sem o texto nem os rótulos dos elementos (podem conter nomes de alunos).
     mask_all_text: true,
-    autocapture: { element_attribute_ignorelist: ["aria-label", "title", "placeholder", "alt", "value", "name"] },
+    // Nenhum atributo de elemento (inclusive href: links do WhatsApp levam telefone, mensagem e a ficha codificada).
+    mask_all_element_attributes: true,
+    autocapture: { element_attribute_ignorelist: ["href", "aria-label", "title", "placeholder", "alt", "value", "name"] },
     before_send: (event) => {
       if (!event) return event;
       const props = event.properties as Record<string, unknown> | undefined;
+      stripLinkTargets(props);
       cleanBag(props);
       cleanBag(props?.$set as Record<string, unknown> | undefined);
       cleanBag(props?.$set_once as Record<string, unknown> | undefined);
