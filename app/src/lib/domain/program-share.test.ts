@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { cloneProgram, focusOfDay, nextDayKey, programSetsPerGroup, programToText, techniqueText } from "./program-share";
+import { coachSignature, cloneProgram, crefLabel, crefLooksValid, focusOfDay, maskCref, nextDayKey, normalizeCref, programSetsPerGroup, programToText, signerFor, techniqueText } from "./program-share";
 import { maskPhone, waPhone } from "./format";
-import type { Program } from "./types";
+import type { Profile, Program } from "./types";
 
 const program: Program = {
   id: "p1",
@@ -37,8 +37,9 @@ describe("ficha em texto para WhatsApp", () => {
   const text = programToText(program, { studentName: "Ana Souza", coachName: "Carlos" });
   it("traz cabeçalho, validade e quem enviou", () => {
     expect(text.split("\n")[0]).toBe("*ABC Hipertrofia*");
-    expect(text).toContain("Aluno: Ana Souza · Personal: Carlos");
+    expect(text.split("\n")[1]).toBe("Aluno: Ana Souza");
     expect(text).toContain("Validade: 6 semanas");
+    expect(text).not.toContain("Personal:");
   });
   it("formata cada exercício com esquema, carga e descanso", () => {
     expect(text).toContain("1. Supino reto com barra — 4 × 6–8 · 80 kg · desc. 2:00");
@@ -63,9 +64,78 @@ describe("ficha em texto para WhatsApp", () => {
     // Só o primeiro marcado: continua "com o próximo".
     expect(techniqueText([{ technique: "bi_set" }, { technique: "normal" }], 0)).toBe("Bi-set com o próximo");
   });
-  it("termina com as orientações e não usa emoji", () => {
-    expect(text.trim().endsWith("Aqueça 5 min antes.")).toBe(true);
+  it("termina com as orientações e a assinatura do personal, sem emoji", () => {
+    expect(text.trim().endsWith("Aqueça 5 min antes.\n\nCarlos")).toBe(true);
     expect(/\p{Extended_Pictographic}/u.test(text)).toBe(false);
+    // Sem personal (quem treina sozinho), termina nas orientações.
+    expect(programToText(program).trim().endsWith("Aqueça 5 min antes.")).toBe(true);
+  });
+  it("com CREF, a assinatura é 'Nome · CREF …'", () => {
+    const signed = programToText(program, { studentName: "Ana Souza", coachName: "Camila Duarte", coachCref: "012345-G/SP" });
+    expect(signed.split("\n").at(-1)).toBe("Camila Duarte · CREF 012345-G/SP");
+    expect(signed.match(/CREF/g)).toHaveLength(1);
+  });
+});
+
+describe("nome e CREF do personal", () => {
+  it("máscara tolerante: monta 000000-G/UF enquanto digita", () => {
+    expect(maskCref("0123")).toBe("0123");
+    expect(maskCref("012345")).toBe("012345");
+    expect(maskCref("012345g")).toBe("012345-G");
+    expect(maskCref("012345gs")).toBe("012345-G/S");
+    expect(maskCref("012345gsp")).toBe("012345-G/SP");
+    expect(maskCref("012345-G/SP")).toBe("012345-G/SP");
+    expect(maskCref("012345 g sp")).toBe("012345-G/SP");
+    // Apagar o último caractere não deixa separador pendurado.
+    expect(maskCref("012345-G/")).toBe("012345-G");
+    expect(maskCref("012345-")).toBe("012345");
+  });
+  it("tira o 'CREF' colado na frente, mas não destrói o que foge do formato", () => {
+    expect(maskCref("CREF 012345-G/SP")).toBe("012345-G/SP");
+    expect(maskCref("cref: 012345gsp")).toBe("012345-G/SP");
+    expect(maskCref("CREF")).toBe("CREF");
+    expect(maskCref("1234567")).toBe("1234567");
+    expect(maskCref("CREF4/SP 012345-G")).toBe("CREF4/SP 012345-G");
+    expect(maskCref("x".repeat(40))).toHaveLength(24);
+  });
+  it("normaliza para guardar e avisa (sem bloquear) fora do formato", () => {
+    expect(normalizeCref(" 012345gsp ")).toBe("012345-G/SP");
+    expect(normalizeCref("")).toBeUndefined();
+    expect(normalizeCref("   ")).toBeUndefined();
+    expect(crefLooksValid("012345-G/SP")).toBe(true);
+    expect(crefLooksValid("012345-P/RJ")).toBe(true);
+    expect(crefLooksValid("12345-G/SP")).toBe(false);
+    expect(crefLooksValid("012345-G/XX")).toBe(false);
+    expect(crefLooksValid("012345-G")).toBe(false);
+    expect(crefLooksValid(undefined)).toBe(false);
+  });
+  it("assinatura única: 'Nome · CREF …' ou só o nome", () => {
+    expect(coachSignature({ name: "Camila Duarte", cref: "012345-G/SP" })).toBe("Camila Duarte · CREF 012345-G/SP");
+    expect(coachSignature({ name: " Camila Duarte ", cref: "  " })).toBe("Camila Duarte");
+    expect(coachSignature({ name: "Camila", cref: "CREF4/SP 012345-G" })).toBe("Camila · CREF4/SP 012345-G");
+    expect(coachSignature({ name: "", cref: "012345-G/SP" })).toBeUndefined();
+    expect(coachSignature(null)).toBeUndefined();
+  });
+  it("rótulo do CREF (o mesmo da assinatura e do Hoje): não dobra o 'CREF' digitado", () => {
+    expect(crefLabel("012345-G/SP")).toBe("CREF 012345-G/SP");
+    expect(crefLabel(" cref 012345-G/SP ")).toBe("cref 012345-G/SP");
+    expect(crefLabel("  ")).toBeNull();
+    expect(crefLabel(undefined)).toBeNull();
+  });
+  it("texto da ficha fecha com 'Nome · CREF …' quando o personal informou o CREF", () => {
+    const text = programToText(program, { coachName: "Camila Duarte", coachCref: "012345-G/SP" });
+    expect(text.trim().split("\n").at(-1)).toBe("Camila Duarte · CREF 012345-G/SP");
+  });
+  it("quem assina: o personal logado, ou no celular do aluno o personal que enviou", () => {
+    const coach = { role: "coach", name: "Camila Duarte", cref: "012345-G/SP" } as Profile;
+    expect(signerFor(coach)).toEqual({ name: "Camila Duarte", cref: "012345-G/SP" });
+    expect(signerFor({ ...coach, name: "Personal" })).toBeNull();
+    const aluno = { role: "athlete", name: "Ana", remoteCoach: { id: "c1", name: "Camila Duarte", cref: "012345-G/SP", studentRef: "s1" } } as Profile;
+    expect(signerFor(aluno, "c1")).toEqual({ name: "Camila Duarte", cref: "012345-G/SP" });
+    // Ficha montada pela própria pessoa: ninguém assina.
+    expect(signerFor(aluno, "outro")).toBeNull();
+    expect(signerFor({ ...aluno, remoteCoach: undefined }, "c1")).toBeNull();
+    expect(signerFor(null)).toBeNull();
   });
 });
 

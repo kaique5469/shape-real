@@ -2,20 +2,23 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, Check, Copy, MessageCircle, MoreHorizontal, Pencil, Plus, Printer, Replace, Search, Sparkles, Trash2, Wand2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, Copy, IdCard, MessageCircle, MoreHorizontal, Pencil, Plus, Printer, Replace, Search, Sparkles, Trash2, Wand2, X } from "lucide-react";
 import { shareNames } from "@/components/program/program-share";
-import { ActionSheet, Alert, Button, Dialog, Empty, Field, IconButton, Input, Panel, Skeleton, Textarea, cx, type SheetAction } from "@/components/ui";
+import { ActionSheet, Alert, Button, Dialog, Empty, Field, IconButton, Input, Panel, Select, Skeleton, Textarea, cx, type SheetAction } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
-import { OfflineError, aiDietAnalyze, aiDietGenerate, useAI, type DietAnalysis } from "@/lib/ai/client";
-import { dietToText, householdMeasure } from "@/lib/domain/diet-share";
+import { OfflineError, aiAvailable, aiDietAnalyze, aiDietGenerate, useAI, type DietAnalysis } from "@/lib/ai/client";
+import { COACH_IDENTITY_HINT, needsCoachIdentity } from "@/lib/data/demo";
+import { dietToText, householdMeasure, parseDietBody, type DietBodyInput } from "@/lib/domain/diet-share";
 import { normalize } from "@/lib/domain/exercises";
 import { allFoods, getFood, type Food } from "@/lib/domain/foods";
 import { firstName, waLink, waPhone } from "@/lib/domain/format";
 import { uid } from "@/lib/domain/ids";
-import { buildDietTemplate, dietTotals, itemFromFood, sumItems, targetsForProfile } from "@/lib/domain/nutrition";
+import { ACTIVITY_LABEL, analyzeDietText, buildDietTemplate, dietTotals, itemFromFood, sumItems, targetsForProfile } from "@/lib/domain/nutrition";
+import { coachSignature, signerFor } from "@/lib/domain/program-share";
+import { consentConfirmed } from "@/lib/domain/transfer";
 import { fmtDate } from "@/lib/hooks";
 import { reportError, track } from "@/lib/analytics";
-import type { DietItem, DietPlan, MacroTargets, Meal, Profile } from "@/lib/domain/types";
+import type { ActivityLevel, DietItem, DietPlan, MacroTargets, Meal, Profile } from "@/lib/domain/types";
 
 const MACROS: { key: keyof MacroTargets; label: string; short: string; unit: string; color: string }[] = [
   { key: "kcal", label: "Calorias", short: "kcal", unit: "kcal", color: "bg-iron" },
@@ -81,6 +84,10 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
   const computed = useMemo(() => targetsForProfile(owner), [owner]);
   const who = firstName(owner.name);
   const coach = mode === "coach";
+  // Assinatura "Nome · CREF …": o personal logado ou, no celular do aluno, o personal que mandou a dieta.
+  const signer = signerFor(user, coach ? user?.id : diet?.createdBy);
+  const signature = coachSignature(signer);
+  const textOpts = { ...shareNames(user, coach ? owner : null), coachName: signer?.name, coachCref: signer?.cref };
 
   useEffect(() => {
     let alive = true;
@@ -210,10 +217,23 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
     }
   }
 
+  /** Cardápio base calculado no aparelho, com as mesmas metas (IA desligada ou sem internet). */
+  function generateLocal(offline: boolean) {
+    if (!targets) return;
+    const local = buildDietTemplate(targets, { ownerId: owner.id, createdBy: user!.id });
+    setDiet({ ...local, id: diet?.id ?? local.id, name: diet?.name ?? blankDiet(targets).name, targets, notes: local.notes ?? diet?.notes });
+    setDirty(true);
+    setGenOpen(false);
+    setMsg({ tone: "info", text: offline && ai.enabled ? "Sem conexão agora: este cardápio base foi montado pelo app, sem a IA. Ajuste as porções e salve." : "Cardápio montado. Ajuste as porções e salve." });
+    track("diet_generated", { source: offline ? "offline" : "motor", where: mode });
+  }
+
   async function generate() {
     if (!targets) return;
     setGenBusy(true);
     try {
+      // IA desligada para esta pessoa: nada vai ao servidor (nem peso nem metas). O motor roda aqui mesmo.
+      if (!(await aiAvailable(dataMode === "supabase"))) return generateLocal(false);
       const r = await aiDietGenerate({ targets, goal: owner.goal, weightKg: owner.weightKg, preferences: ai.enabled && prefs.trim() ? prefs.trim() : undefined, ownerId: owner.id, createdBy: user!.id }, await accessToken());
       setDiet({ ...r.data, id: diet?.id ?? r.data.id, name: diet?.name ?? blankDiet(targets).name, targets, notes: r.data.notes ?? diet?.notes });
       setDirty(true);
@@ -223,14 +243,7 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
     } catch (e) {
       setGenOpen(false);
       // Sem internet: o cardápio base é calculado no aparelho, com as mesmas metas.
-      if (e instanceof OfflineError) {
-        const local = buildDietTemplate(targets, { ownerId: owner.id, createdBy: user!.id });
-        setDiet({ ...local, id: diet?.id ?? local.id, name: diet?.name ?? blankDiet(targets).name, targets, notes: local.notes ?? diet?.notes });
-        setDirty(true);
-        setMsg({ tone: "info", text: ai.enabled ? "Sem conexão agora: este cardápio base foi montado pelo app, sem a IA. Ajuste as porções e salve." : "Cardápio montado. Ajuste as porções e salve." });
-        track("diet_generated", { source: "offline", where: mode });
-        return;
-      }
+      if (e instanceof OfflineError) return generateLocal(true);
       reportError(e, "dieta:gerar");
       setMsg({ tone: "error", text: e instanceof Error ? e.message : "Não foi possível montar o cardápio. Tente de novo." });
     } finally {
@@ -250,7 +263,7 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
   async function copyText() {
     if (!diet) return;
     try {
-      await navigator.clipboard.writeText(dietToText(diet, shareNames(user, coach ? owner : null)));
+      await navigator.clipboard.writeText(dietToText(diet, textOpts));
       setCopied(true);
       track("diet_shared", { via: "copy" });
       setTimeout(() => setCopied(false), 2200);
@@ -279,7 +292,7 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
     ];
   };
 
-  const share = diet && hasItems ? dietToText(diet, shareNames(user, coach ? owner : null)) : "";
+  const share = diet && hasItems ? dietToText(diet, textOpts) : "";
 
   return (
     <div className="space-y-5">
@@ -349,22 +362,18 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
         </Panel>
       ) : (
         <Panel title="Metas diárias" className="no-print">
-          <p className="text-[0.9375rem] text-steel">
-            {coach ? (
-              `${who} ainda não tem sexo, idade, altura e peso no cadastro, então o app não calcula as metas sozinho. Defina manualmente ou complete o cadastro em “Editar dados do aluno”.`
-            ) : (
-              <>
-                Para o app calcular suas metas, informe sexo, ano de nascimento, altura e peso em{" "}
-                <Link href="/conta" className="font-semibold text-iron underline">
-                  Conta
-                </Link>
-                . Ou defina as metas manualmente.
-              </>
-            )}
-          </p>
-          <Button className="mt-3" variant="secondary" onClick={() => setTargetsOpen(true)}>
-            Definir metas manualmente
-          </Button>
+          {coach ? (
+            <>
+              <p className="text-[0.9375rem] text-steel">
+                {`${who} ainda não tem sexo, idade, altura e peso no cadastro, então o app não calcula as metas sozinho. Defina manualmente ou complete o cadastro em “Editar dados do aluno”.`}
+              </p>
+              <Button className="mt-3" variant="secondary" onClick={() => setTargetsOpen(true)}>
+                Definir metas manualmente
+              </Button>
+            </>
+          ) : (
+            <DietBodyForm owner={owner} onManual={() => setTargetsOpen(true)} />
+          )}
         </Panel>
       )}
 
@@ -465,6 +474,11 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
           ) : null}
 
           <Panel title={coach ? `Enviar para ${who}` : "Compartilhar"}>
+            {coach && needsCoachIdentity(user) ? (
+              <Link href="/conta" className="mb-2 flex min-h-11 items-center gap-2 text-sm font-semibold underline">
+                <IdCard className="size-4 shrink-0" aria-hidden /> {COACH_IDENTITY_HINT}
+              </Link>
+            ) : null}
             {dirty ? <p className="mb-3 text-sm text-steel">Salve as alterações para compartilhar a versão nova.</p> : !hasItems ? <p className="mb-3 text-sm text-steel">Adicione alimentos antes de enviar.</p> : null}
             <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
               <a
@@ -564,6 +578,7 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
         <div className="hidden print:block">
           <header className="mb-4 border-b-2 border-iron pb-2">
             <h1 className="plate-type text-2xl">{coach ? `Plano alimentar — ${owner.name}` : diet.name}</h1>
+            {signature ? <p className="text-sm font-semibold">{signature}</p> : null}
             <p className="num text-sm">
               Metas do dia: {int(diet.targets.kcal)} kcal · proteína {int(diet.targets.proteinG)} g · carboidrato {int(diet.targets.carbsG)} g · gordura {int(diet.targets.fatG)} g
             </p>
@@ -681,6 +696,122 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
         }}
       />
     </div>
+  );
+}
+
+/**
+ * Sem sexo, idade, altura e peso o app não calcula as metas: a pessoa informa aqui mesmo (o onboarding não pede
+ * mais). Na primeira vez, guardar esses dados de saúde depende do checkbox de autorização, que começa desmarcado.
+ */
+function DietBodyForm({ owner, onManual }: { owner: Profile; onManual: () => void }) {
+  const { mode: dataMode, returnTo, updateProfile } = useApp();
+  const formRef = useRef<HTMLFormElement>(null);
+  const [f, setF] = useState<DietBodyInput & { activity: ActivityLevel }>(() => ({
+    sex: owner.sex ?? "",
+    birthYear: owner.birthYear ? String(owner.birthYear) : "",
+    heightCm: owner.heightCm ? String(owner.heightCm) : "",
+    weightKg: owner.weightKg ? String(owner.weightKg).replace(".", ",") : "",
+    activity: owner.activity ?? "moderado",
+  }));
+  const [consent, setConsent] = useState(false);
+  const [err, setErr] = useState<{ field: keyof DietBodyInput | "consent" | "form"; text: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const needsConsent = !consentConfirmed(owner);
+  // Personal vendo o app como o aluno vê: quem marca é o personal, pelo aluno.
+  const byCoach = Boolean(returnTo);
+  const consentLabel = byCoach ? "O aluno autorizou registrar estes dados de saúde" : dataMode === "local" ? "Autorizo guardar meus dados de saúde neste celular" : "Autorizo guardar meus dados de saúde na minha conta";
+  const fieldErr = (k: keyof DietBodyInput) => (err?.field === k ? err.text : undefined);
+  const edit = (patch: Partial<typeof f>) => {
+    setF((x) => ({ ...x, ...patch }));
+    if (err && err.field !== "consent") setErr(null);
+  };
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const r = parseDietBody(f, { thisYear: new Date().getFullYear(), needsConsent, consent });
+    if (!r.ok) {
+      setErr({ field: r.field, text: r.field === "consent" && byCoach ? "Marque a autorização do aluno para salvar limitações e medidas." : r.error });
+      formRef.current?.querySelector<HTMLElement>(`[data-field="${r.field}"]`)?.focus();
+      return;
+    }
+    setSaving(true);
+    setErr(null);
+    try {
+      await updateProfile({ ...r.data, activity: f.activity, ...(needsConsent ? { consentHealthAt: new Date().toISOString(), consentSource: byCoach ? "personal" : "aluno" } : {}) });
+      track("diet_targets_edited", { where: "self", had_computed: false, via: "dados_corporais" });
+    } catch (e2) {
+      reportError(e2, "dieta:dados");
+      setErr({ field: "form", text: e2 instanceof Error && e2.message ? e2.message : "Não foi possível salvar. Tente de novo." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form ref={formRef} onSubmit={submit} noValidate className="space-y-4">
+      <p className="text-[0.9375rem] text-steel">Para o app calcular suas metas, informe sexo, ano de nascimento, altura e peso. Ou defina as metas manualmente.</p>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Field label="Sexo" error={fieldErr("sex")}>
+          <Select data-field="sex" value={f.sex} onChange={(e) => edit({ sex: e.target.value as DietBodyInput["sex"] })}>
+            <option value="">—</option>
+            <option value="F">Feminino</option>
+            <option value="M">Masculino</option>
+          </Select>
+        </Field>
+        <Field label="Ano de nascimento" error={fieldErr("birthYear")}>
+          <Input data-field="birthYear" inputMode="numeric" value={f.birthYear} onChange={(e) => edit({ birthYear: e.target.value.replace(/\D/g, "").slice(0, 4) })} placeholder="1994" />
+        </Field>
+        <Field label="Altura (cm)" error={fieldErr("heightCm")}>
+          <Input data-field="heightCm" inputMode="numeric" value={f.heightCm} onChange={(e) => edit({ heightCm: e.target.value.replace(/\D/g, "").slice(0, 3) })} placeholder="172" />
+        </Field>
+        <Field label="Peso (kg)" error={fieldErr("weightKg")}>
+          <Input data-field="weightKg" inputMode="decimal" value={f.weightKg} onChange={(e) => edit({ weightKg: e.target.value.replace(/[^\d.,]/g, "").slice(0, 6) })} placeholder="72,5" />
+        </Field>
+      </div>
+      <Field label="Nível de atividade">
+        <Select value={f.activity} onChange={(e) => edit({ activity: e.target.value as ActivityLevel })}>
+          {(Object.keys(ACTIVITY_LABEL) as ActivityLevel[]).map((a) => (
+            <option key={a} value={a}>
+              {ACTIVITY_LABEL[a]}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      {needsConsent ? (
+        <div>
+          <label className={cx("flex min-h-11 cursor-pointer items-start gap-3 rounded-[8px] border bg-paper p-3 text-[0.9375rem]", err?.field === "consent" ? "border-plate-red" : "border-rule")}>
+            <input
+              type="checkbox"
+              data-field="consent"
+              checked={consent}
+              onChange={(e) => {
+                setConsent(e.target.checked);
+                if (err?.field === "consent") setErr(null);
+              }}
+              aria-invalid={err?.field === "consent"}
+              aria-describedby={err?.field === "consent" ? "dieta-autorizacao-erro" : undefined}
+              className="mt-0.5 size-5 shrink-0 accent-[var(--color-iron)]"
+            />
+            <span>{consentLabel}</span>
+          </label>
+          {err?.field === "consent" ? (
+            <p id="dieta-autorizacao-erro" className="mt-1 text-sm text-plate-red-ink">
+              {err.text}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      {err?.field === "form" ? <Alert tone="error">{err.text}</Alert> : null}
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Button type="submit" loading={saving}>
+          Calcular minhas metas
+        </Button>
+        <Button type="button" variant="secondary" onClick={onManual}>
+          Definir metas manualmente
+        </Button>
+      </div>
+    </form>
   );
 }
 
@@ -993,7 +1124,7 @@ function CreateFood({ initialName, onCancel, onCreated }: { initialName: string;
 }
 
 function Analyzer({ owner, targets, coach, aiOn, onUse }: { owner: Profile; targets: MacroTargets; coach: boolean; aiOn: boolean; onUse: (meals: Meal[]) => void }) {
-  const { user, accessToken } = useApp();
+  const { user, accessToken, mode: dataMode } = useApp();
   const [open, setOpen] = useState(!coach);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1001,14 +1132,24 @@ function Analyzer({ owner, targets, coach, aiOn, onUse }: { owner: Profile; targ
   const [err, setErr] = useState<string | null>(null);
   const who = firstName(owner.name);
 
+  /** Análise pelo motor de regras, no aparelho: o texto da refeição e o peso não saem do celular. */
+  function runLocal(offline: boolean) {
+    const r = analyzeDietText(text, targets, owner.weightKg);
+    setRes({ ...r, source: "motor", notice: offline && aiOn ? "Sem conexão agora: a análise foi feita pela base de alimentos do app, sem a IA." : undefined });
+    track("diet_analyzed", { source: offline ? "offline" : "motor", score: r.score, where: coach ? "coach" : "self" });
+  }
+
   async function run() {
     setBusy(true);
     setErr(null);
     try {
+      // IA desligada: nenhuma chamada a /api/ai/* (mesma regra da geração da ficha no onboarding).
+      if (!(await aiAvailable(dataMode === "supabase"))) return runLocal(false);
       const r = await aiDietAnalyze({ text, targets, goal: owner.goal, weightKg: owner.weightKg, ownerId: owner.id, createdBy: user!.id }, await accessToken());
       setRes({ ...r.data, source: r.source, notice: r.notice, quota: r.quota });
       track("diet_analyzed", { source: r.source, score: r.data.score, where: coach ? "coach" : "self" });
     } catch (e) {
+      if (e instanceof OfflineError) return runLocal(true);
       setErr(e instanceof Error ? e.message : "Não foi possível analisar. Tente de novo.");
     } finally {
       setBusy(false);

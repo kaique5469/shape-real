@@ -3,19 +3,20 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, Copy, MoreHorizontal, MoveLeft, MoveRight, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, Copy, IdCard, MoreHorizontal, MoveLeft, MoveRight, Plus, Trash2 } from "lucide-react";
 import { ExercisePicker } from "@/components/exercise-picker";
 import { FichaDay } from "@/components/ficha";
 import { ProgramShare, shareNames } from "@/components/program/program-share";
 import { ActionSheet, Alert, Badge, Button, Dialog, Field, IconButton, Input, Panel, Select, Skeleton, Textarea, cx } from "@/components/ui";
 import { reportError, track } from "@/lib/analytics";
 import { useApp } from "@/lib/app-context";
+import { COACH_IDENTITY_HINT, needsCoachIdentity } from "@/lib/data/demo";
 import { GROUP_LABEL, getExercise, unitOf } from "@/lib/domain/exercises";
 import { firstName, fmtLoad, fmtRest, fmtScheme, programValidity } from "@/lib/domain/format";
 import { GOAL_LABEL, LEVEL_LABEL, TECHNIQUE_LABEL, buildPlanned, estimateDayMinutes, repScheme } from "@/lib/domain/generator";
 import { uid } from "@/lib/domain/ids";
 import { PLANS } from "@/lib/domain/plans";
-import { focusOfDay, nextDayKey, programSetsPerGroup, techniqueText } from "@/lib/domain/program-share";
+import { coachSignature, focusOfDay, nextDayKey, programSetsPerGroup, signerFor, techniqueText } from "@/lib/domain/program-share";
 import { getSystem } from "@/lib/domain/systems";
 import { fmtDate } from "@/lib/hooks";
 import type { Exercise, Goal, Level, PlannedExercise, Profile, Program, Technique, Unit, WorkoutDay } from "@/lib/domain/types";
@@ -172,6 +173,8 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
   const template = user?.role === "coach" && program.ownerId === user.id;
   const validity = programValidity(program.createdAt, program.durationWeeks);
   const names = shareNames(user, student);
+  // Assinatura "Nome · CREF …" da ficha impressa: o personal logado ou, no celular do aluno, o personal que enviou a ficha.
+  const signature = coachSignature(signerFor(user, program.createdBy));
 
   const change = (fn: (p: Program) => Program) => {
     setProgram((p) => (p ? fn(p) : p));
@@ -546,6 +549,11 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
       </Field>
 
       <Panel title={student ? `Enviar para ${student.name.split(" ")[0]}` : template ? "Compartilhar modelo" : "Compartilhar ficha"} className="no-print">
+        {needsCoachIdentity(user) ? (
+          <Link href="/conta" className="mb-2 flex min-h-11 items-center gap-2 text-sm font-semibold underline">
+            <IdCard className="size-4 shrink-0" aria-hidden /> {COACH_IDENTITY_HINT}
+          </Link>
+        ) : null}
         {dirty ? <p className="mb-3 text-sm text-steel">Salve as alterações para compartilhar a versão nova.</p> : empty ? <p className="mb-3 text-sm text-steel">Adicione exercícios antes de enviar.</p> : null}
         <ProgramShare program={program} student={student} canExport={PLANS[plan].export} onPrint={() => window.print()} disabled={dirty || empty} />
       </Panel>
@@ -554,8 +562,9 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
       <div className="hidden print:block">
         <header className="mb-4 border-b-2 border-iron pb-2">
           <h1 className="plate-type text-2xl">{program.name}</h1>
+          {signature ? <p className="text-sm font-semibold">{signature}</p> : null}
           <p className="text-sm">
-            {[names.studentName && `${names.studentLabel}: ${names.studentName}`, names.coachName && `Personal: ${names.coachName}`, `Emitida em ${fmtDate(new Date().toISOString(), { day: "2-digit", month: "2-digit", year: "numeric" })}`, program.durationWeeks && `Validade: ${program.durationWeeks} semanas`]
+            {[names.studentName && `${names.studentLabel}: ${names.studentName}`, `Emitida em ${fmtDate(new Date().toISOString(), { day: "2-digit", month: "2-digit", year: "numeric" })}`, program.durationWeeks && `Validade: ${program.durationWeeks} semanas`]
               .filter(Boolean)
               .join(" · ")}
           </p>

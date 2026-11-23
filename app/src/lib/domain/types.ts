@@ -13,6 +13,14 @@ export type PlanId = "free" | "pro" | "coach";
 
 export type Unit = "reps" | "seg" | "min";
 
+/**
+ * Quem registrou a autorização de dados de saúde (LGPD):
+ *  - "personal": o personal marcou "O aluno autorizou registrar estes dados de saúde" no cadastro;
+ *  - "aluno_link": o aluno tocou em "Salvar no meu celular" ao abrir a ficha enviada pelo personal;
+ *  - "aluno": a própria pessoa marcou a autorização (Dieta ou Conta).
+ */
+export type ConsentSource = "personal" | "aluno_link" | "aluno";
+
 export type SystemId =
   | "livre"
   | "fullbody"
@@ -137,7 +145,9 @@ export interface Profile {
    * Aluno que recebeu a ficha por link, no próprio celular: quem é o personal e qual é o id deste
    * aluno no aparelho dele (os treinos voltam para esse cadastro).
    */
-  remoteCoach?: { id: string; name: string; phone?: string; studentRef: string };
+  remoteCoach?: { id: string; name: string; phone?: string; cref?: string; studentRef: string };
+  /** CREF do personal, como ele informou (ex.: "012345-G/SP"). Opcional e não conferido pelo app. */
+  cref?: string;
   /** Plano que vale agora (inclui o período de teste e o personal pagante). */
   plan: PlanId;
   /** Plano contratado de fato; só existe em contas na nuvem. */
@@ -146,8 +156,13 @@ export interface Profile {
   trialUntil?: string;
   onboarded: boolean;
   createdAt: string;
-  /** LGPD: dados de saúde são sensíveis — consentimento explícito e datado. */
+  /**
+   * LGPD: dados de saúde são sensíveis — consentimento explícito e datado. Só é gravado por uma ação de
+   * alguém (checkbox ou o toque em "Salvar no meu celular"), nunca sozinho.
+   */
   consentHealthAt?: string;
+  /** Quem registrou `consentHealthAt`. Perfis antigos podem ter a data sem a origem. */
+  consentSource?: ConsentSource;
 }
 
 export interface PlannedExercise {
@@ -292,7 +307,7 @@ export interface DietPlan {
 
 /** Dados que o personal informa ao cadastrar um aluno sem conta. */
 export type StudentDraft = Pick<Profile, "name"> &
-  Partial<Pick<Profile, "phone" | "sex" | "birthYear" | "heightCm" | "weightKg" | "activity" | "goal" | "level" | "daysPerWeek" | "sessionMinutes" | "equipment" | "preferredSystem" | "limitations" | "coachNotes">>;
+  Partial<Pick<Profile, "phone" | "sex" | "birthYear" | "heightCm" | "weightKg" | "activity" | "goal" | "level" | "daysPerWeek" | "sessionMinutes" | "equipment" | "preferredSystem" | "limitations" | "coachNotes" | "consentHealthAt" | "consentSource">>;
 
 export interface Invite {
   code: string;
@@ -315,4 +330,8 @@ export interface StudentSummary {
   activeProgram: { id: string; name: string; createdAt: string; updatedAt: string; durationWeeks?: number; days: number } | null;
   latestWeightKg: number | null;
   weightDelta28d: number | null;
+  /** Treinos na semana corrente (segunda a domingo): o "N de M na semana" de /alunos, igual ao Hoje do aluno. */
+  sessionsWeek: number;
+  /** Meta de treinos por semana (dias da ficha ativa, senão os do cadastro); null sem meta. */
+  weeklyGoal: number | null;
 }

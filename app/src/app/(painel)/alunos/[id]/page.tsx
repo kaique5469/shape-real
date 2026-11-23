@@ -177,7 +177,7 @@ function Aluno({ id }: { id: string }) {
         </div>
       ) : null}
       {tab === "dieta" ? <DietView owner={student} mode="coach" /> : null}
-      {tab === "evolucao" ? <EvolutionView userId={id} editable byCoach /> : null}
+      {tab === "evolucao" ? <EvolutionView userId={id} editable byCoach student={student} onStudentChange={setData} /> : null}
       {tab === "historico" ? <HistoryView userId={id} editable={false} canExport /> : null}
       {tab === "relatorio" ? <ReportView subject={student} byCoach /> : null}
 

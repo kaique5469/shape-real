@@ -1,6 +1,7 @@
 import { getFood, type Food } from "./foods";
 import { dietTotals, sumItems } from "./nutrition";
-import type { DietItem, DietPlan, MacroTargets } from "./types";
+import { coachSignature } from "./cref";
+import type { DietItem, DietPlan, MacroTargets, Sex } from "./types";
 
 const int = (v: number) => Math.round(v).toLocaleString("pt-BR");
 
@@ -36,9 +37,10 @@ const macroLine = (t: MacroTargets) => `${int(t.kcal)} kcal · proteína ${int(t
 
 /**
  * Dieta em texto simples, no formato que funciona no WhatsApp (*negrito* com asteriscos, sem emoji):
- * metas, uma refeição por bloco com porções em gramas e medida caseira, totais e orientações.
+ * metas, uma refeição por bloco com porções em gramas e medida caseira, totais, orientações e a assinatura
+ * do personal ("Nome · CREF …").
  */
-export function dietToText(diet: DietPlan, opts: { studentName?: string; coachName?: string } = {}): string {
+export function dietToText(diet: DietPlan, opts: { studentName?: string; coachName?: string; coachCref?: string } = {}): string {
   const out: string[] = [`*${opts.studentName ? `Plano alimentar — ${opts.studentName}` : diet.name.trim() || "Plano alimentar"}*`];
   out.push(`Metas do dia: ${macroLine(diet.targets)}`);
 
@@ -52,6 +54,37 @@ export function dietToText(diet: DietPlan, opts: { studentName?: string; coachNa
 
   if (diet.meals.some((m) => m.items.length)) out.push("", `*Total do dia*: ${macroLine(dietTotals(diet))}`);
   if (diet.notes?.trim()) out.push("", "*Orientações*", diet.notes.trim());
-  if (opts.coachName) out.push("", `Enviado por ${opts.coachName}`);
+  const signature = coachSignature({ name: opts.coachName, cref: opts.coachCref });
+  if (signature) out.push("", signature);
   return out.join("\n");
+}
+
+// ---- dados para calcular as metas (tela Dieta) -------------------------------------
+export interface DietBodyInput {
+  sex: Sex | "";
+  birthYear: string;
+  heightCm: string;
+  weightKg: string;
+}
+
+export const DIET_CONSENT_ERROR = "Marque a autorização para guardar seus dados de saúde.";
+
+/**
+ * Confere sexo, ano de nascimento, altura e peso digitados em Dieta (os quatro calculam as metas).
+ * `needsConsent`: a pessoa ainda não autorizou guardar dados de saúde; sem o checkbox marcado, nada é salvo.
+ */
+export function parseDietBody(
+  f: DietBodyInput,
+  opts: { thisYear: number; needsConsent: boolean; consent: boolean },
+): { ok: true; data: { sex: Sex; birthYear: number; heightCm: number; weightKg: number } } | { ok: false; field: keyof DietBodyInput | "consent"; error: string } {
+  const missing = (["sex", "birthYear", "heightCm", "weightKg"] as const).find((k) => !String(f[k]).trim());
+  if (missing) return { ok: false, field: missing, error: "Para calcular as metas, preencha sexo, ano de nascimento, altura e peso." };
+  const birthYear = Number(f.birthYear);
+  const heightCm = Number(f.heightCm);
+  const weightKg = Number(f.weightKg.replace(",", "."));
+  if (!(birthYear >= opts.thisYear - 100 && birthYear <= opts.thisYear - 10)) return { ok: false, field: "birthYear", error: "Confira o ano de nascimento: use quatro dígitos, por exemplo 1994." };
+  if (!(heightCm >= 120 && heightCm <= 230)) return { ok: false, field: "heightCm", error: "Confira a altura: use centímetros, por exemplo 172." };
+  if (!(weightKg >= 30 && weightKg <= 300)) return { ok: false, field: "weightKg", error: "Confira o peso: use quilos, por exemplo 72,5." };
+  if (opts.needsConsent && !opts.consent) return { ok: false, field: "consent", error: DIET_CONSENT_ERROR };
+  return { ok: true, data: { sex: f.sex as Sex, birthYear, heightCm, weightKg } };
 }

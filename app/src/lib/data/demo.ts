@@ -157,10 +157,15 @@ function profile(p: Partial<Profile> & { id: string; name: string; role: Profile
     plan: "free",
     onboarded: true,
     createdAt: new Date(Date.now() - 60 * 86_400_000).toISOString(),
-    consentHealthAt: new Date().toISOString(),
     ...p,
   };
 }
+
+/**
+ * Alunos de exemplo têm peso, medidas e limitações sintéticos: a autorização vem marcada como se o personal
+ * (ou a própria pessoa, na demonstração solo) tivesse registrado, para os exemplos funcionarem como um cadastro real.
+ */
+const exampleConsent = (coachId?: string): Pick<Profile, "consentHealthAt" | "consentSource"> => ({ consentHealthAt: new Date().toISOString(), consentSource: coachId ? "personal" : "aluno" });
 
 async function seedAthlete(
   repo: LocalRepository,
@@ -181,6 +186,7 @@ async function seedAthlete(
     sessionMinutes: 60,
     equipment: "academia",
     preferredSystem: opts.system,
+    ...exampleConsent(opts.coachId),
     ...opts.extra,
   });
   await repo.saveProfile(p);
@@ -235,6 +241,20 @@ export async function seedDemo(repo: LocalRepository, role: "athlete" | "coach")
  * três alunos de exemplo (marcados como exemplo e removíveis) para ver o painel vivo.
  */
 export const TESTER_COACH_ID = "teste-personal";
+
+/** Convite para o personal de exemplo (/testar e demonstração) assinar o que envia. */
+export const COACH_IDENTITY_HINT = "Coloque seu nome e CREF em Conta";
+
+/**
+ * Mostra o convite de nome e CREF: personal ainda com o nome provisório "Personal" (o perfil do /testar nasce
+ * assim) ou perfil de exemplo sem CREF. Um personal de verdade que só não informou o CREF não é cobrado.
+ */
+export function needsCoachIdentity(p: Pick<Profile, "id" | "role" | "name" | "cref"> | null | undefined): boolean {
+  if (!p || p.role !== "coach") return false;
+  const name = p.name.trim();
+  if (!name || name === "Personal") return true;
+  return (p.id === TESTER_COACH_ID || p.id === DEMO_COACH_ID) && !p.cref?.trim();
+}
 
 export async function seedTester(repo: LocalRepository): Promise<string> {
   if (await repo.getProfile(TESTER_COACH_ID)) return TESTER_COACH_ID;

@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Alert, Button, Dialog, Field, Input, Select, Textarea } from "@/components/ui";
+import { Alert, Button, Dialog, Field, Input, Select, Textarea, cx } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
 import { GOAL_LABEL, LEVEL_LABEL } from "@/lib/domain/generator";
 import { maskPhone } from "@/lib/domain/format";
 import { ACTIVITY_LABEL } from "@/lib/domain/nutrition";
+import { consentConfirmed, consentFromCheckbox, consentMetric, hasHealthData } from "@/lib/domain/transfer";
 import { reportError, track } from "@/lib/analytics";
 import type { ActivityLevel, Equipment, Goal, Level, Profile, Sex, StudentDraft } from "@/lib/domain/types";
 
@@ -26,6 +27,8 @@ interface FormState {
   weightKg: string;
   activity: ActivityLevel | "";
   coachNotes: string;
+  /** "O aluno autorizou registrar estes dados de saúde" (começa desmarcado em cadastro novo). */
+  consent: boolean;
 }
 
 function initial(s?: Profile | null): FormState {
@@ -44,8 +47,12 @@ function initial(s?: Profile | null): FormState {
     weightKg: s?.weightKg ? String(s.weightKg).replace(".", ",") : "",
     activity: s?.activity ?? "",
     coachNotes: s?.coachNotes ?? "",
+    // Data carimbada sozinha por versões anteriores (sem origem) não conta: o checkbox começa desmarcado.
+    consent: consentConfirmed(s),
   };
 }
+
+const CONSENT_ERROR = "Marque a autorização do aluno para salvar limitações e medidas.";
 
 const num = (v: string) => {
   const n = Number(v.replace(",", "."));
@@ -83,6 +90,14 @@ export function StudentForm({ open, onClose, student, onSaved }: { open: boolean
     setF((p) => ({ ...p, [k]: v }));
     if (errors[k]) setErrors((e) => ({ ...e, [k]: undefined }));
   };
+  /** Campo de saúde: apagar todos tira o aviso da autorização (sem dados de saúde, ela não é exigida). */
+  const setHealth = (k: "limitations" | "heightCm" | "weightKg", v: string) => {
+    set(k, v);
+    if (errors.consent) {
+      const next = { ...f, [k]: v };
+      if (!hasHealthData({ limitations: next.limitations, weightKg: num(next.weightKg), heightCm: num(next.heightCm) })) setErrors((e) => ({ ...e, consent: undefined }));
+    }
+  };
 
   function validate(): StudentDraft | null {
     const e: Partial<Record<keyof FormState, string>> = {};
@@ -97,6 +112,8 @@ export function StudentForm({ open, onClose, student, onSaved }: { open: boolean
     if (h !== undefined && (h < 120 || h > 230)) e.heightCm = "Altura em centímetros. Ex.: 172.";
     const w = num(f.weightKg);
     if (w !== undefined && (w < 30 || w > 300)) e.weightKg = "Peso em quilos. Ex.: 72,5.";
+    // Dados de saúde só com a autorização do aluno registrada; o resto do cadastro não depende dela.
+    if (!f.consent && hasHealthData({ limitations: f.limitations, weightKg: w, heightCm: h })) e.consent = CONSENT_ERROR;
     setErrors(e);
     const firstBad = (Object.keys(e) as (keyof FormState)[])[0];
     if (firstBad) {
@@ -121,6 +138,7 @@ export function StudentForm({ open, onClose, student, onSaved }: { open: boolean
       weightKg: w,
       activity: f.activity || undefined,
       coachNotes: f.coachNotes.trim() || undefined,
+      ...consentFromCheckbox(student, f.consent, "personal", new Date().toISOString()),
     };
   }
 
@@ -131,14 +149,16 @@ export function StudentForm({ open, onClose, student, onSaved }: { open: boolean
     setSaving(true);
     setErr(null);
     try {
+      const consent = consentMetric(draft, Boolean(draft.consentHealthAt));
       if (student) {
         const saved = await repo.saveProfile({ ...student, ...draft });
-        track("student_edited", { has_phone: Boolean(draft.phone), has_body: Boolean(draft.weightKg && draft.heightCm), has_limitations: Boolean(draft.limitations) });
+        // Nada que diga se o aluno tem lesão, peso ou altura: só a situação da autorização.
+        track("student_edited", { has_phone: Boolean(draft.phone), consent });
         shownFor.current = null;
         onSaved(saved, false);
       } else {
         const created = await repo.createStudent(user.id, draft);
-        track("student_created", { has_phone: Boolean(draft.phone), has_body: Boolean(draft.weightKg && draft.heightCm) });
+        track("student_created", { has_phone: Boolean(draft.phone), consent });
         shownFor.current = null;
         onSaved(created, true);
       }
@@ -209,14 +229,33 @@ export function StudentForm({ open, onClose, student, onSaved }: { open: boolean
               </Select>
             </Field>
           </div>
-          <Field label="Dor, lesão ou limitação" hint="Ex.: condromalácia no joelho direito, hérnia lombar. A ficha gerada evita o que carrega a região.">
-            <Textarea value={f.limitations} onChange={(e) => set("limitations", e.target.value)} rows={2} className="min-h-20" placeholder="Deixe em branco se não tiver" />
-          </Field>
         </fieldset>
 
-        <fieldset>
-          <legend className="col-head mb-1">Medidas</legend>
-          <p className="mb-3 text-sm text-steel">Opcional. Com sexo, idade, altura e peso o app calcula as metas de calorias e proteína.</p>
+        <fieldset className="space-y-4">
+          <legend className="col-head mb-3">Limitações e medidas</legend>
+          <div>
+            <label className={cx("flex min-h-11 cursor-pointer items-start gap-3 rounded-[8px] border bg-paper p-3 text-[0.9375rem] font-semibold", errors.consent ? "border-plate-red" : "border-rule")}>
+              <input
+                type="checkbox"
+                data-field="consent"
+                checked={f.consent}
+                onChange={(e) => set("consent", e.target.checked)}
+                aria-invalid={Boolean(errors.consent)}
+                aria-describedby={errors.consent ? "aluno-autorizacao-erro" : undefined}
+                className="mt-0.5 size-5 shrink-0 accent-[var(--color-iron)]"
+              />
+              <span>O aluno autorizou registrar estes dados de saúde</span>
+            </label>
+            {errors.consent ? (
+              <p id="aluno-autorizacao-erro" className="mt-1 text-sm text-plate-red-ink">
+                {errors.consent}
+              </p>
+            ) : null}
+          </div>
+          <Field label="Dor, lesão ou limitação" hint="Ex.: condromalácia no joelho direito, hérnia lombar. A ficha gerada evita o que carrega a região.">
+            <Textarea value={f.limitations} onChange={(e) => setHealth("limitations", e.target.value)} rows={2} className="min-h-20" placeholder="Deixe em branco se não tiver" />
+          </Field>
+          <p className="text-sm text-steel">Medidas são opcionais. Com sexo, idade, altura e peso o app calcula as metas de calorias e proteína.</p>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <Field label="Sexo">
               <Select value={f.sex} onChange={(e) => set("sex", e.target.value as Sex | "")}>
@@ -229,10 +268,10 @@ export function StudentForm({ open, onClose, student, onSaved }: { open: boolean
               <Input data-field="birthYear" value={f.birthYear} onChange={(e) => set("birthYear", e.target.value.replace(/\D/g, "").slice(0, 4))} inputMode="numeric" placeholder="1994" />
             </Field>
             <Field label="Altura (cm)" error={errors.heightCm}>
-              <Input data-field="heightCm" value={f.heightCm} onChange={(e) => set("heightCm", e.target.value.replace(/\D/g, "").slice(0, 3))} inputMode="numeric" placeholder="172" />
+              <Input data-field="heightCm" value={f.heightCm} onChange={(e) => setHealth("heightCm", e.target.value.replace(/\D/g, "").slice(0, 3))} inputMode="numeric" placeholder="172" />
             </Field>
             <Field label="Peso (kg)" error={errors.weightKg}>
-              <Input data-field="weightKg" value={f.weightKg} onChange={(e) => set("weightKg", e.target.value.replace(/[^\d.,]/g, "").slice(0, 6))} inputMode="decimal" placeholder="72,5" />
+              <Input data-field="weightKg" value={f.weightKg} onChange={(e) => setHealth("weightKg", e.target.value.replace(/[^\d.,]/g, "").slice(0, 6))} inputMode="decimal" placeholder="72,5" />
             </Field>
             <Field label="Rotina fora do treino" className="col-span-2 sm:col-span-4">
               <Select value={f.activity} onChange={(e) => set("activity", e.target.value as ActivityLevel | "")}>

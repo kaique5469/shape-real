@@ -11,6 +11,7 @@ import { GROUP_LABEL } from "@/lib/domain/exercises";
 import { bestSet, e1rmSeries, setsPerGroup, trackedExercises, weeklyVolume } from "@/lib/domain/progression";
 import { todayISO, uid } from "@/lib/domain/ids";
 import { PLANS } from "@/lib/domain/plans";
+import { consentConfirmed, consentFromCheckbox } from "@/lib/domain/transfer";
 import { track } from "@/lib/analytics";
 import type { BodyMetric, MuscleGroup, PhotoPose, Profile, ProgressPhoto } from "@/lib/domain/types";
 import { compressImage } from "./photo-tools";
@@ -20,9 +21,27 @@ type Tab = "cargas" | "corpo" | "fotos" | "volume" | "resumo";
 
 /**
  * Evolução de cargas, medidas, fotos e volume.
- * `byCoach`: o personal registra a avaliação e as fotos pelo aluno (o consentimento é o do aluno).
+ * `byCoach`: o personal registra a avaliação e as fotos pelo aluno. Vale a autorização registrada no perfil do aluno
+ * (`student`); sem ela, o personal marca "O aluno autorizou registrar estes dados de saúde" antes de salvar.
  */
-export function EvolutionView({ userId, editable, byCoach = false, subject }: { userId: string; editable: boolean; byCoach?: boolean; /** Quem treina: com ele a aba "Resumo" (relatório do período) aparece. */ subject?: Profile }) {
+export function EvolutionView({
+  userId,
+  editable,
+  byCoach = false,
+  subject,
+  student,
+  onStudentChange,
+}: {
+  userId: string;
+  editable: boolean;
+  byCoach?: boolean;
+  /** Quem treina: com ele a aba "Resumo" (relatório do período) aparece. */
+  subject?: Profile;
+  /** Perfil do aluno (modo personal): de onde vem a autorização de dados de saúde. */
+  student?: Profile | null;
+  /** O perfil do aluno mudou (autorização registrada pelo personal). */
+  onStudentChange?: (p: Profile) => void;
+}) {
   const { repo } = useApp();
   const [tab, setTab] = useState<Tab>("cargas");
   const { data, loading, error, reload } = useLoad(async () => {
@@ -54,8 +73,8 @@ export function EvolutionView({ userId, editable, byCoach = false, subject }: { 
       {loading && !data ? <Skeleton className="h-80" /> : error ? <Alert tone="error">{error}</Alert> : data ? (
         <>
           {tab === "cargas" && <Loads sessions={data.sessions} />}
-          {tab === "corpo" && <Body userId={userId} metrics={data.metrics} editable={editable} byCoach={byCoach} onChange={reload} />}
-          {tab === "fotos" && <Photos userId={userId} editable={editable} byCoach={byCoach} />}
+          {tab === "corpo" && <Body userId={userId} metrics={data.metrics} editable={editable} byCoach={byCoach} student={student} onStudentChange={onStudentChange} onChange={reload} />}
+          {tab === "fotos" && <Photos userId={userId} editable={editable} byCoach={byCoach} student={student} onStudentChange={onStudentChange} />}
           {tab === "volume" && <Volume sessions={data.sessions} />}
           {tab === "resumo" && subject ? <ReportView subject={subject} byCoach={false} /> : null}
         </>
@@ -148,16 +167,71 @@ const BODY_LIMITS: Partial<Record<keyof BodyMetric, [number, number]>> = {
   thighCm: [25, 110],
 };
 
-function Body({ userId, metrics, editable, byCoach, onChange }: { userId: string; metrics: BodyMetric[]; editable: boolean; byCoach: boolean; onChange: () => void }) {
+const COACH_CONSENT_LABEL = "O aluno autorizou registrar estes dados de saúde";
+const COACH_CONSENT_ERROR = "Marque a autorização do aluno para salvar medidas e fotos.";
+
+/**
+ * De quem é a autorização e como o personal a registra. Pessoa no próprio app: vale a dela (Conta). Personal: vale a do
+ * perfil do aluno; sem ela, e se o aluno é gerido por ele, o checkbox aparece e a autorização é gravada no perfil do
+ * aluno junto com a primeira medida ou foto (origem "personal"). Aluno com conta própria só autoriza no app dele.
+ */
+function useHealthConsent(userId: string, byCoach: boolean, student: Profile | null | undefined, onStudentChange?: (p: Profile) => void) {
+  const { repo, user } = useApp();
+  const [checked, setChecked] = useState(false);
+  const confirmed = consentConfirmed(byCoach ? student : user);
+  const canAsk = byCoach && !confirmed && Boolean(student) && student?.managedBy === user?.id;
+  /** Antes de gravar: garante a autorização (ou devolve o erro a mostrar). */
+  async function ensure(): Promise<string | null> {
+    if (confirmed) return null;
+    if (!canAsk) return "Sem autorização para guardar dados de saúde.";
+    if (!checked) return COACH_CONSENT_ERROR;
+    const profile = await repo.getProfile(userId);
+    if (!profile) return "Aluno não encontrado.";
+    const saved = await repo.saveProfile({ ...profile, ...consentFromCheckbox(profile, true, "personal", new Date().toISOString()) });
+    onStudentChange?.(saved);
+    return null;
+  }
+  return { confirmed, canAsk, checked, setChecked, ensure, allowed: confirmed || canAsk };
+}
+
+function CoachConsentCheck({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex min-h-11 items-start gap-3 rounded-[8px] border border-rule p-3 text-sm">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="mt-0.5 size-5 shrink-0 accent-[var(--color-iron)]" />
+      <span>{COACH_CONSENT_LABEL}</span>
+    </label>
+  );
+}
+
+function StudentConsentNeeded({ what }: { what: string }) {
+  return <Alert tone="info">Para {what}, o aluno precisa autorizar o uso de dados de saúde em Conta, no app dele.</Alert>;
+}
+
+function Body({
+  userId,
+  metrics,
+  editable,
+  byCoach,
+  student,
+  onStudentChange,
+  onChange,
+}: {
+  userId: string;
+  metrics: BodyMetric[];
+  editable: boolean;
+  byCoach: boolean;
+  student?: Profile | null;
+  onStudentChange?: (p: Profile) => void;
+  onChange: () => void;
+}) {
   const { repo, user, updateProfile } = useApp();
+  const consent = useHealthConsent(userId, byCoach, student, onStudentChange);
   const [form, setForm] = useState<Record<string, string>>({ date: todayISO() });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [toDelete, setToDelete] = useState<BodyMetric | null>(null);
   const weight = metrics.filter((m) => m.weightKg).map((m) => ({ date: m.date, value: m.weightKg! }));
-  // Avaliação feita pelo personal: os dados foram informados pelo aluno a ele.
-  const consented = byCoach || Boolean(user?.consentHealthAt);
   const sorted = useMemo(() => [...metrics].sort((a, b) => b.date.localeCompare(a.date)), [metrics]);
 
   /** Diferença para a avaliação anterior que tem o mesmo campo. */
@@ -190,8 +264,11 @@ function Body({ userId, metrics, editable, byCoach, onChange }: { userId: string
     }
     if (!any) return setErr("Preencha pelo menos uma medida.");
     if (form.note?.trim()) metric.note = form.note.trim();
+    if (!consent.confirmed && !consent.checked) return setErr(COACH_CONSENT_ERROR);
     setSaving(true);
     try {
+      const blocked = await consent.ensure();
+      if (blocked) return setErr(blocked);
       await repo.saveMetric(metric);
       const newest = !sorted[0] || metric.date >= sorted[0].date;
       if (metric.weightKg && newest) {
@@ -227,7 +304,7 @@ function Body({ userId, metrics, editable, byCoach, onChange }: { userId: string
       ) : null}
 
       {editable ? (
-        consented ? (
+        consent.allowed ? (
           <Panel title={byCoach ? "Registrar avaliação" : "Registrar medidas"}>
             <form onSubmit={save} className="space-y-4">
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -243,6 +320,7 @@ function Body({ userId, metrics, editable, byCoach, onChange }: { userId: string
               <Field label="Observação" hint="Opcional. Ex.: avaliação em jejum, fita na altura do umbigo.">
                 <Input value={form.note ?? ""} onChange={(e) => setForm({ ...form, note: e.target.value })} maxLength={160} />
               </Field>
+              {consent.canAsk ? <CoachConsentCheck checked={consent.checked} onChange={consent.setChecked} /> : null}
               {err ? <Alert tone="error">{err}</Alert> : null}
               {saved ? <Alert tone="done">{byCoach ? "Avaliação registrada." : "Medidas registradas."}</Alert> : null}
               <Button type="submit" loading={saving}>
@@ -250,6 +328,8 @@ function Body({ userId, metrics, editable, byCoach, onChange }: { userId: string
               </Button>
             </form>
           </Panel>
+        ) : byCoach ? (
+          <StudentConsentNeeded what="registrar peso e medidas" />
         ) : (
           <Alert tone="info">
             Para registrar peso e medidas, autorize o uso de dados de saúde em{" "}
@@ -339,8 +419,9 @@ function Body({ userId, metrics, editable, byCoach, onChange }: { userId: string
   );
 }
 
-function Photos({ userId, editable, byCoach }: { userId: string; editable: boolean; byCoach: boolean }) {
+function Photos({ userId, editable, byCoach, student, onStudentChange }: { userId: string; editable: boolean; byCoach: boolean; student?: Profile | null; onStudentChange?: (p: Profile) => void }) {
   const { repo, user, plan, isTester } = useApp();
+  const consent = useHealthConsent(userId, byCoach, student, onStudentChange);
   const { data, loading, error, reload } = useLoad(() => repo.listPhotos(userId), [userId, repo]);
   const [pose, setPose] = useState<PhotoPose>("frente");
   const [date, setDate] = useState(todayISO());
@@ -351,7 +432,6 @@ function Photos({ userId, editable, byCoach }: { userId: string; editable: boole
   const [dropping, setDropping] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const limit = PLANS[plan].maxPhotos;
-  const consented = byCoach || Boolean(user?.consentHealthAt);
 
   const byPose = (data ?? []).filter((p) => p.pose === pose);
   const a = byPose.find((p) => p.id === cmp?.[0]) ?? byPose[0];
@@ -366,6 +446,8 @@ function Photos({ userId, editable, byCoach }: { userId: string; editable: boole
     }
     setBusy(true);
     try {
+      const blocked = await consent.ensure();
+      if (blocked) return setErr(blocked);
       // Campo de data apagado ou no futuro: vale hoje (sem isso a foto ficaria com "data inválida").
       const when = /^\d{4}-\d{2}-\d{2}$/.test(date) && date <= todayISO() ? date : todayISO();
       await repo.addPhoto(userId, await compressImage(file), { date: when, pose });
@@ -386,14 +468,28 @@ function Photos({ userId, editable, byCoach }: { userId: string; editable: boole
     <div className="space-y-4">
       <Segmented label="Pose" value={pose} onChange={setPose} size="sm" options={(["frente", "lado", "costas"] as PhotoPose[]).map((p) => ({ value: p, label: p[0]!.toUpperCase() + p.slice(1) }))} />
       {editable ? (
-        consented ? (
+        consent.allowed ? (
           <Panel>
+            {consent.canAsk ? (
+              <div className="mb-3">
+                <CoachConsentCheck checked={consent.checked} onChange={consent.setChecked} />
+              </div>
+            ) : null}
             <div className="flex flex-wrap items-end gap-3">
               <Field label="Data da foto">
                 <Input type="date" value={date} max={todayISO()} onChange={(e) => setDate(e.target.value)} />
               </Field>
               <input ref={fileRef} type="file" accept="image/*" className="sr-only" id="foto" onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
-              <Button onClick={() => fileRef.current?.click()} loading={busy} icon={<Camera className="size-4" />}>
+              <Button
+                onClick={() => {
+                  // Sem a autorização marcada, nem abre a câmera: o aviso aparece na hora.
+                  if (!consent.confirmed && !consent.checked) return setErr(COACH_CONSENT_ERROR);
+                  setErr(null);
+                  fileRef.current?.click();
+                }}
+                loading={busy}
+                icon={<Camera className="size-4" />}
+              >
                 Adicionar foto de {pose}
               </Button>
             </div>
@@ -404,6 +500,8 @@ function Photos({ userId, editable, byCoach }: { userId: string; editable: boole
               </Alert>
             ) : null}
           </Panel>
+        ) : byCoach ? (
+          <StudentConsentNeeded what="guardar fotos de evolução" />
         ) : (
           <Alert tone="info">
             Autorize o uso de dados de saúde em{" "}

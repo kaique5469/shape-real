@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { aiBlocked, authorizeAI, structuredCall } from "@/lib/ai/server";
-import { analyzeDiet, buildDietTemplate, parseDietText, sumItems } from "@/lib/domain/nutrition";
+import { analyzeDietText, buildDietTemplate, sumItems } from "@/lib/domain/nutrition";
 import { uid } from "@/lib/domain/ids";
 import type { DietItem, Meal } from "@/lib/domain/types";
 
@@ -106,22 +106,13 @@ export async function POST(req: Request) {
         });
       }
     }
-    const { meals, unknown } = parseDietText(b.text);
-    const fb = analyzeDiet(meals, b.targets, b.weightKg);
-    const count = meals.reduce((n, m) => n + m.items.length, 0);
+    // Mesmo motor que o aparelho usa com a IA desligada (analyzeDietText).
+    const local = analyzeDietText(b.text, b.targets, b.weightKg);
     return NextResponse.json({
       source: "motor",
       notice: auth.useAI ? (aiBlocked() ? "" : "A IA não respondeu a tempo, então a análise foi feita pela base de alimentos do Shape Real.") : auth.notice,
       quota: !auth.useAI && auth.status === 402,
-      meals,
-      totals: fb.totals,
-      score: fb.score,
-      summary: meals.length
-        ? `${count === 1 ? "1 alimento lido" : `${count} alimentos lidos`} em ${meals.length === 1 ? "1 refeição" : `${meals.length} refeições`}: ${fb.totals.kcal} kcal e ${Math.round(fb.totals.proteinG)} g de proteína (valores aproximados).`
-        : "Não reconheci os alimentos. Escreva a quantidade e o nome, por exemplo: “2 ovos, 1 pão francês”.",
-      highlights: fb.highlights,
-      adjustments: fb.adjustments,
-      unknown,
+      ...local,
     });
   }
 

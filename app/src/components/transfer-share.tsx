@@ -7,6 +7,7 @@ import { reportError, track } from "@/lib/analytics";
 import { useApp } from "@/lib/app-context";
 import { firstName, waLink, waPhone } from "@/lib/domain/format";
 import { buildFichaPacket, buildTreinosPacket, MAX_SESSIONS_PER_LINK, treinosMessage } from "@/lib/domain/transfer";
+import { coachSignature } from "@/lib/domain/cref";
 import type { Profile, Session } from "@/lib/domain/types";
 import { packData } from "@/lib/share-link";
 import { lastSentAt, markSessionsSent, sentSessionIds } from "@/lib/transfer-client";
@@ -58,7 +59,8 @@ export function SendToStudent({ student, className, variant = "secondary" }: { s
       const usableDiet = diet && diet.meals.some((m) => m.items.length) ? diet : null;
       const packet = buildFichaPacket({ coach: user, student, program, diet: usableDiet, customExercises: exercises, customFoods: foods });
       const link = `${origin()}/abrir#d=${await packData(packet)}`;
-      const coachName = user.name && user.name !== "Personal" ? firstName(user.name) : "seu personal";
+      // Assinatura única do personal ("Nome · CREF …"), a mesma da ficha impressa, da dieta e do relatório.
+      const coachName = (user.name.trim() && user.name !== "Personal" ? coachSignature({ name: user.name, cref: user.cref }) : undefined) ?? "seu personal";
       const what = program && usableDiet ? "sua ficha e sua dieta" : program ? "sua ficha" : "sua dieta";
       const text = `Oi, ${first}! ${what[0]!.toUpperCase()}${what.slice(1)} ${program && usableDiet ? "estão" : "está"} no Shape Real. Abra este link no seu celular para treinar, registrar as cargas e me mandar cada treino (não precisa cadastro):\n${link}\n\n— ${coachName}`;
       if (alive) setState({ link, text, programName: program?.name ?? null, dietName: usableDiet?.name ?? null });
@@ -151,7 +153,8 @@ export function SendToCoach({
   sessions: Session[];
   label?: string;
   className?: string;
-  variant?: "primary" | "secondary" | "record";
+  /** "ghost": ação secundária com cara de link (ex.: "Enviar de novo" no fim do treino, depois do envio). */
+  variant?: "primary" | "secondary" | "record" | "ghost";
   size?: "sm" | "md" | "lg";
   onSent?: () => void;
 }) {

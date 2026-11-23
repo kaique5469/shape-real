@@ -11,9 +11,11 @@ import { track } from "@/lib/analytics";
 import type { Profile, Program } from "@/lib/domain/types";
 
 /** Quem assina e quem recebe a ficha compartilhada. */
-export function shareNames(user: Profile | null, student?: Profile | null): { studentName?: string; studentLabel: string; coachName?: string } {
+export function shareNames(user: Profile | null, student?: Profile | null): { studentName?: string; studentLabel: string; coachName?: string; coachCref?: string } {
   const coach = user && user.role === "coach" && user.name.trim() && user.name !== "Personal" ? user.name : undefined;
-  return { studentName: student?.name, studentLabel: student?.sex === "F" ? "Aluna" : "Aluno", coachName: coach };
+  // O CREF só acompanha o nome: sem quem assine, a ficha não leva assinatura (programToText usa coachSignature).
+  const coachCref = coach ? user?.cref?.trim() || undefined : undefined;
+  return { studentName: student?.name, studentLabel: student?.sex === "F" ? "Aluna" : "Aluno", coachName: coach, coachCref };
 }
 
 export const fileSlug = (name: string) =>

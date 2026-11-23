@@ -61,7 +61,9 @@ export type EventName =
   | "backup_restored"
   | "backup_shared"
   | "link_dead_end_shown"
-  | "coach_list_viewed";
+  | "coach_list_viewed"
+  | "coach_cref_set"
+  | "student_coach_whatsapp_clicked";
 
 const enabled = Boolean(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN ?? process.env.NEXT_PUBLIC_POSTHOG_KEY);
 

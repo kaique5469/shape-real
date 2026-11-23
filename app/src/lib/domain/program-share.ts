@@ -1,8 +1,13 @@
+import { coachSignature } from "./cref";
 import { getExercise } from "./exercises";
 import { fmtLoad, fmtRest, fmtScheme } from "./format";
 import { TECHNIQUE_LABEL } from "./generator";
 import { uid } from "./ids";
 import type { MuscleGroup, PlannedExercise, Program, WorkoutDay } from "./types";
+
+// ---- nome e CREF do personal ------------------------------------------------------
+// Ficam em ./cref (sem dependências) para que telas leves possam assinar sem trazer o gerador de fichas.
+export { CREF_MAX, coachSignature, crefLabel, crefLooksValid, maskCref, normalizeCref, signerFor } from "./cref";
 
 /**
  * Texto da técnica de um exercício dentro do dia. Em bi-set, tri-set e supersérie o rótulo depende da
@@ -29,11 +34,11 @@ export function techniqueText(list: Pick<PlannedExercise, "technique">[], i: num
 /**
  * Ficha em texto simples, no formato que funciona no WhatsApp (*negrito* com asteriscos, sem emoji).
  * Uma linha por exercício: "1. Supino reto com barra — 4 × 6–8 · 80 kg · desc. 2:00".
+ * Fecha com a assinatura do personal ("Nome · CREF …"), quando há quem assine.
  */
-export function programToText(program: Program, opts: { studentName?: string; studentLabel?: string; coachName?: string } = {}): string {
+export function programToText(program: Program, opts: { studentName?: string; studentLabel?: string; coachName?: string; coachCref?: string } = {}): string {
   const out: string[] = [`*${program.name.trim()}*`];
-  const who = [opts.studentName && `${opts.studentLabel ?? "Aluno"}: ${opts.studentName}`, opts.coachName && `Personal: ${opts.coachName}`].filter(Boolean);
-  if (who.length) out.push(who.join(" · "));
+  if (opts.studentName) out.push(`${opts.studentLabel ?? "Aluno"}: ${opts.studentName}`);
   if (program.durationWeeks) out.push(`Validade: ${program.durationWeeks} semanas`);
 
   // Treino sem exercícios (ficha ainda em montagem) não vai para o aluno.
@@ -51,6 +56,8 @@ export function programToText(program: Program, opts: { studentName?: string; st
   }
 
   if (program.notes?.trim()) out.push("", "*Orientações*", program.notes.trim());
+  const signature = coachSignature({ name: opts.coachName, cref: opts.coachCref });
+  if (signature) out.push("", signature);
   return out.join("\n");
 }
 

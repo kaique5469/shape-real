@@ -542,6 +542,24 @@ interface BaseItem {
 }
 const it = (id: string, g: number, role: Role, max: number): BaseItem => ({ id, g, role, max });
 
+/** Análise completa pelo motor de regras (a mesma no servidor e no aparelho, com a IA desligada ou sem internet). */
+export interface DietTextAnalysis extends DietFeedback {
+  meals: Meal[];
+  summary: string;
+  unknown: string[];
+}
+
+/** Lê o texto "como no WhatsApp" e analisa contra as metas, sem rede e sem IA. */
+export function analyzeDietText(text: string, targets: MacroTargets, weightKg?: number): DietTextAnalysis {
+  const { meals, unknown } = parseDietText(text);
+  const fb = analyzeDiet(meals, targets, weightKg);
+  const count = meals.reduce((n, m) => n + m.items.length, 0);
+  const summary = meals.length
+    ? `${count === 1 ? "1 alimento lido" : `${count} alimentos lidos`} em ${meals.length === 1 ? "1 refeição" : `${meals.length} refeições`}: ${fb.totals.kcal} kcal e ${Math.round(fb.totals.proteinG)} g de proteína (valores aproximados).`
+    : "Não reconheci os alimentos. Escreva a quantidade e o nome, por exemplo: “2 ovos, 1 pão francês”.";
+  return { meals, totals: fb.totals, score: fb.score, summary, highlights: fb.highlights, adjustments: fb.adjustments, unknown };
+}
+
 /**
  * Monta um cardápio-base com comida do dia a dia que fecha proteína, carboidrato e gordura da meta.
  * Fontes de proteína, de carboidrato e de gordura escalam separadamente, com teto por porção;

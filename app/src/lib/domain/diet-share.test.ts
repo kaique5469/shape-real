@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dietToText, householdMeasure } from "./diet-share";
+import { DIET_CONSENT_ERROR, dietToText, householdMeasure, parseDietBody } from "./diet-share";
 import { getFood } from "./foods";
 import { itemFromFood } from "./nutrition";
 import type { DietPlan } from "./types";
@@ -56,7 +56,32 @@ describe("dieta em texto para WhatsApp", () => {
     expect(text).not.toContain("*Ceia*");
     expect(text).toContain("*Total do dia*:");
     expect(text).toContain("Beba 2,5 L de água por dia.");
-    expect(text.trim().endsWith("Enviado por Carlos")).toBe(true);
+    expect(text.trim().endsWith("Beba 2,5 L de água por dia.\n\nCarlos")).toBe(true);
     expect(/\p{Extended_Pictographic}/u.test(text)).toBe(false);
+  });
+  it("com CREF, assina 'Nome · CREF …'; sem personal, não assina", () => {
+    expect(dietToText(diet, { coachName: "Camila Duarte", coachCref: "012345-G/SP" }).split("\n").at(-1)).toBe("Camila Duarte · CREF 012345-G/SP");
+    expect(dietToText(diet).trim().endsWith("Beba 2,5 L de água por dia.")).toBe(true);
+  });
+});
+
+describe("dados para as metas em Dieta", () => {
+  const ok = { sex: "F" as const, birthYear: "1994", heightCm: "165", weightKg: "62,5" };
+  const opts = { thisYear: 2026, needsConsent: true, consent: true };
+  it("com os quatro dados e a autorização marcada, salva", () => {
+    expect(parseDietBody(ok, opts)).toEqual({ ok: true, data: { sex: "F", birthYear: 1994, heightCm: 165, weightKg: 62.5 } });
+  });
+  it("primeira vez sem marcar a autorização: não salva", () => {
+    expect(parseDietBody(ok, { ...opts, consent: false })).toEqual({ ok: false, field: "consent", error: DIET_CONSENT_ERROR });
+  });
+  it("quem já autorizou não precisa marcar de novo", () => {
+    expect(parseDietBody(ok, { ...opts, needsConsent: false, consent: false }).ok).toBe(true);
+  });
+  it("pede os quatro dados e confere as faixas", () => {
+    expect(parseDietBody({ ...ok, sex: "" }, opts)).toMatchObject({ ok: false, field: "sex" });
+    expect(parseDietBody({ ...ok, weightKg: " " }, opts)).toMatchObject({ ok: false, field: "weightKg" });
+    expect(parseDietBody({ ...ok, birthYear: "94" }, opts)).toMatchObject({ ok: false, field: "birthYear" });
+    expect(parseDietBody({ ...ok, heightCm: "1,65" }, opts)).toMatchObject({ ok: false, field: "heightCm" });
+    expect(parseDietBody({ ...ok, weightKg: "625" }, opts)).toMatchObject({ ok: false, field: "weightKg" });
   });
 });

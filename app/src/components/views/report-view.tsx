@@ -1,11 +1,14 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Check, Copy, MessageCircle, Printer, Trophy } from "lucide-react";
+import { Check, Copy, IdCard, MessageCircle, Printer, Trophy } from "lucide-react";
 import { shareNames } from "@/components/program/program-share";
 import { Alert, Button, Empty, Field, Segmented, Skeleton, Textarea, cx } from "@/components/ui";
 import { reportError, track } from "@/lib/analytics";
 import { useApp } from "@/lib/app-context";
+import { COACH_IDENTITY_HINT, needsCoachIdentity } from "@/lib/data/demo";
+import { coachSignature, signerFor } from "@/lib/domain/program-share";
 import { firstName, waLink, waPhone } from "@/lib/domain/format";
 import { todayISO } from "@/lib/domain/ids";
 import { buildReport, fmtDuration, nameList, reportToText, type EvolutionReport, type ReportDays } from "@/lib/domain/report";
@@ -69,7 +72,9 @@ export function ReportView({ subject, byCoach }: { subject: Profile; byCoach: bo
 
   const first = firstName(subject.name);
   const names = shareNames(user, byCoach ? subject : null);
-  const text = reportToText(report, { coachName: names.coachName, message, self: !byCoach });
+  // Assinatura única "Nome · CREF …" no cabeçalho, no recado e no texto do WhatsApp (só o personal assina).
+  const signature = coachSignature(signerFor(user));
+  const text = reportToText(report, { coachName: signature, message, self: !byCoach });
   const shared = (via: "whatsapp" | "copy" | "print") => track("report_shared", { via, days, by_coach: byCoach, has_message: Boolean(message.trim()), with_photos: Boolean(pair && withPhotos && via === "print") });
 
   async function copy() {
@@ -120,7 +125,7 @@ export function ReportView({ subject, byCoach }: { subject: Profile; byCoach: bo
 
       {report.hasData ? (
         <>
-          <Sheet report={report} subject={subject} names={names} byCoach={byCoach} message={message} pair={pair && withPhotos ? pair : null} />
+          <Sheet report={report} subject={subject} names={names} signature={signature} byCoach={byCoach} message={message} pair={pair && withPhotos ? pair : null} />
 
           <div className="no-print space-y-3">
             {pair ? (
@@ -130,6 +135,11 @@ export function ReportView({ subject, byCoach }: { subject: Profile; byCoach: bo
               </label>
             ) : null}
             {err ? <Alert tone="error">{err}</Alert> : null}
+            {byCoach && needsCoachIdentity(user) ? (
+              <Link href="/conta" className="flex min-h-11 items-center gap-2 text-sm font-semibold underline">
+                <IdCard className="size-4 shrink-0" aria-hidden /> {COACH_IDENTITY_HINT}
+              </Link>
+            ) : null}
             <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
               <a
                 href={waLink(text, byCoach ? subject.phone : undefined)}
@@ -182,6 +192,7 @@ function Sheet({
   report: r,
   subject,
   names,
+  signature,
   byCoach,
   message,
   pair,
@@ -189,6 +200,7 @@ function Sheet({
   report: EvolutionReport;
   subject: Profile;
   names: ReturnType<typeof shareNames>;
+  signature?: string;
   byCoach: boolean;
   message: string;
   pair: { before: ProgressPhoto; after: ProgressPhoto } | null;
@@ -199,7 +211,7 @@ function Sheet({
     [byCoach ? names.studentLabel : "Nome", subject.name],
     ["Período", `${short(r.from)} a ${long(r.to)} · ${r.days} dias`],
   ];
-  if (names.coachName) facts.push(["Personal", names.coachName]);
+  if (signature) facts.push(["Personal", signature]);
 
   const summary: [string, string][] = [];
   summary.push(["Treinos feitos", r.planned ? `${r.sessions} de ${r.planned} combinados` : String(r.sessions)]);
@@ -389,7 +401,7 @@ function Sheet({
         <section className="break-inside-avoid border-t border-rule px-4 py-5 sm:px-6" aria-label="Recado">
           <h3 className="col-head text-steel">Recado</h3>
           <p className="mt-2 max-w-[65ch] whitespace-pre-wrap text-[0.9375rem]">{message.trim()}</p>
-          {names.coachName ? <p className="mt-3 text-[0.9375rem] font-semibold">{names.coachName}</p> : null}
+          {signature ? <p className="mt-3 text-[0.9375rem] font-semibold">{signature}</p> : null}
         </section>
       ) : null}
 
