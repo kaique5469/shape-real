@@ -24,6 +24,8 @@
   --color-pencil: #858c96;
   --color-rule: #d9dcd5;
   --color-rule-strong: #b8bcb4;
+  /* Valor sugerido (série ainda sem ✓): mais claro que o confirmado, mas com 5,1:1 sobre o papel (AA). */
+  --color-suggest: #676e78;
 
   --color-plate-red: #d3241c;
   --color-plate-red-ink: #a8160f;

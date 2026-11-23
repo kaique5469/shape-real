@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { EXERCISES, getExercise, registerCustomExercises, searchExercises } from "./exercises";
+import { EXERCISES, getExercise, registerCustomExercises, searchExercises, unitOf } from "./exercises";
 import { EMPHASIS_SLOTS, SYSTEMS, getSystem, suggestSystem } from "./systems";
 import {
   TECHNIQUE_LABEL,
@@ -15,13 +15,33 @@ import {
   repScheme,
   type GenerateInput,
 } from "./generator";
-import { detectPRs, e1rmSeries, loadIncrement, suggestNext } from "./progression";
+import {
+  compareWithLastSameDay,
+  completedSets,
+  detectPRs,
+  e1rm,
+  e1rmSeries,
+  firstOfWeek,
+  firstRecordSet,
+  fmtMark,
+  lastPerformance,
+  lastPerformanceWithDate,
+  loadIncrement,
+  priorSets,
+  recentPerformances,
+  recordFlags,
+  recordSetOf,
+  setRecord,
+  suggestFromHistory,
+  suggestNext,
+  type SuggestionKind,
+} from "./progression";
 import { PROGRAM_JSON_SCHEMA, PROGRAM_SYSTEM, programFromAI, programInputSchema, programUserPrompt } from "@/lib/ai/program";
-import type { Equipment, Exercise, ExerciseLog, Goal, Level, MuscleGroup, PlannedExercise, Program, Session, SystemId, WorkoutDay } from "./types";
+import type { Equipment, Exercise, ExerciseLog, Goal, Level, MuscleGroup, PlannedExercise, Program, Session, SetLog, SystemId, WorkoutDay } from "./types";
 
 /**
  * Contrato do motor de fichas: cada regra que um personal cobraria numa ficha gerada sem IA,
- * conferida em muitas seeds, sistemas, níveis e equipamentos.
+ * conferida em muitas seeds, sistemas, níveis e equipamentos. As seções 5 a 13 ficam em generator.test.ts.
  */
 
 const owner = { ownerId: "u1", createdBy: "u1" };
@@ -597,555 +617,6 @@ describe("4. faixa pesada e esquemas", () => {
   });
 });
 
-// ───────────────────────── 5. Tempo ─────────────────────────
-
-describe("5. ajuste ao tempo", () => {
-  it("a sessão informada é teto: 30, 45 e 60 min em todos os sistemas, objetivos e níveis", () => {
-    sweep({ goals: GOALS, minutes: [30, 45, 60], seeds: SEEDS.slice(0, 4) }, (p, input) => {
-      for (const d of p.days) {
-        expect(estimateDayMinutes(d), where(input, d)).toBeLessThanOrEqual(input.sessionMinutes);
-        expect(d.exercises.length, where(input, d)).toBeGreaterThanOrEqual(3);
-      }
-    });
-    sweep({ equipments: ["home", "peso_corporal"], goals: ["hipertrofia", "emagrecimento"], minutes: [30, 45], seeds: SEEDS.slice(0, 3) }, (p, input) => {
-      for (const d of p.days) expect(estimateDayMinutes(d), where(input, d)).toBeLessThanOrEqual(input.sessionMinutes);
-    });
-  });
-
-  it("corta séries e exercícios redundantes antes de apagar um grupo do foco", () => {
-    sweep({ goals: ["hipertrofia", "forca", "emagrecimento"], minutes: [45], seeds: SEEDS.slice(0, 6) }, (p, input) => {
-      const full = generateProgram({ ...input, sessionMinutes: 120 }, owner);
-      p.days.forEach((d, i) => {
-        const wide = full.days[i]!;
-        for (const g of d.focus) {
-          if (!wide.exercises.some((e) => ex(e).group === g)) continue;
-          expect(d.exercises.some((e) => ex(e).group === g), `${g} sumiu de ${where(input, d)}`).toBe(true);
-        }
-        expect(d.exercises.length, where(input, d)).toBeGreaterThanOrEqual(4);
-      });
-    });
-  });
-
-  it("ABC em 30 min: A mantém peito, ombros e tríceps; B mantém bíceps", () => {
-    for (const level of LEVELS)
-      for (const seed of SEEDS) {
-        const p = gen({ level, sessionMinutes: 30, seed });
-        const groups = (d: WorkoutDay) => new Set(d.exercises.map((e) => ex(e).group));
-        expect([...groups(p.days[0]!)].sort(), `${level} ${seed}`).toEqual(["ombros", "peito", "triceps"]);
-        expect(groups(p.days[1]!).has("biceps") && groups(p.days[1]!).has("costas"), `${level} ${seed}`).toBe(true);
-        expect(groups(p.days[2]!).has("quadriceps") && groups(p.days[2]!).has("posteriores") && groups(p.days[2]!).has("gluteos"), `${level} ${seed}`).toBe(true);
-      }
-  });
-
-  it("o levantamento principal nunca é cortado", () => {
-    sweep({ goals: ["hipertrofia", "forca"], levels: ["intermediario", "avancado"], seeds: SEEDS.slice(0, 6) }, (p, input) => {
-      const short = generateProgram({ ...input, sessionMinutes: 30 }, owner);
-      const sys = getSystem(input.system);
-      p.days.forEach((d, i) => {
-        const mains = sys.templates[i]!.slots.filter((s) => s.main).length;
-        // Os principais são os multiarticulares mais pesados do dia na versão de 60 min.
-        const heavy = [...strength(d)].filter((e) => ex(e).compound).sort((a, b) => a.repsMin - b.repsMin || b.restSec - a.restSec).slice(0, mains);
-        for (const e of heavy) expect(idsOf(short.days[i]!), `${e.exerciseId} em ${where(input, short.days[i])}`).toContain(e.exerciseId);
-      });
-    });
-  });
-
-  it("pedir 90 min rende mais trabalho do que 60", () => {
-    const work = (p: Program) => all(p).reduce((acc, e) => acc + ((e.unit ?? "reps") === "min" ? e.repsMax / 2 : e.sets), 0);
-    sweep({ levels: ["intermediario", "avancado"], goals: ["hipertrofia", "emagrecimento"], seeds: SEEDS.slice(0, 6) }, (p, input) => {
-      const long = generateProgram({ ...input, sessionMinutes: 90 }, owner);
-      expect(work(long), where(input)).toBeGreaterThan(work(p));
-      long.days.forEach((d, i) => {
-        expect(estimateDayMinutes(d), where(input, d)).toBeLessThanOrEqual(90);
-        expect(d.exercises.length, where(input, d)).toBeGreaterThanOrEqual(p.days[i]!.exercises.length);
-      });
-    });
-    // Iniciante não ganha volume só porque tem tempo: nunca menos, e sem 4ª série.
-    sweep({ levels: ["iniciante"], goals: ["hipertrofia"], seeds: SEEDS.slice(0, 4) }, (p, input) => {
-      const long = generateProgram({ ...input, sessionMinutes: 90 }, owner);
-      expect(work(long), where(input)).toBeGreaterThanOrEqual(work(p));
-    });
-  });
-
-  it("os encaixes opcionais entram na posição certa quando sobra tempo", () => {
-    const short = gen({ sessionMinutes: 45, seed: 5 });
-    const long = gen({ sessionMinutes: 90, seed: 5 });
-    expect(long.days[0]!.exercises.length).toBeGreaterThan(short.days[0]!.exercises.length);
-    // ABC A com 90 min: o 3º supino entra logo depois do inclinado, antes do crucifixo.
-    const chest = long.days[0]!.exercises.filter((e) => ex(e).group === "peito");
-    expect(chest.length).toBe(4);
-    expect(chest.slice(0, 3).every((e) => ex(e).compound)).toBe(true);
-    expect(ex(chest[3]!).compound).toBe(false);
-  });
-
-  it("até 60 min os acessórios descansam 60–90 s em todos os dias; a ficha fica uniforme", () => {
-    sweep({ levels: ["intermediario", "avancado"], goals: ["hipertrofia"], minutes: [60] }, (p, input) => {
-      const sys = getSystem(input.system);
-      p.days.forEach((d, i) => {
-        const mains = sys.templates[i]!.slots.filter((s) => s.main).length;
-        const accessories = strength(d).filter((e) => e.restSec < 120 || !ex(e).compound);
-        expect(strength(d).length - accessories.length, where(input, d)).toBeLessThanOrEqual(mains);
-        for (const e of accessories) expect(e.restSec, `${e.exerciseId} em ${where(input, d)}`).toBeLessThanOrEqual(ex(e).compound ? 90 : 60);
-        // Sem séries desencontradas: isolados com 3 séries (2 se o tempo apertou).
-        for (const e of strength(d).filter((x) => !ex(x).compound)) expect(e.sets, e.exerciseId).toBeLessThanOrEqual(3);
-      });
-    });
-  });
-
-  it("a estimativa conta aquecimento, séries de aproximação e exercício unilateral", () => {
-    const scheme = { sets: 3, repsMin: 10, repsMax: 12, restSec: 60 };
-    expect(estimateSeconds({ ...scheme, exerciseId: "afundo" })).toBeGreaterThan(estimateSeconds({ ...scheme, exerciseId: "leg_press" }));
-    expect(estimateSeconds({ ...scheme, exerciseId: "afundo" }) - estimateSeconds({ ...scheme, exerciseId: "leg_press" })).toBe(3 * 11 * 3);
-    expect(estimateSeconds({ sets: 1, repsMin: 20, repsMax: 20, restSec: 0, exerciseId: "esteira_caminhada" })).toBe(1200);
-    const day = (exercises: PlannedExercise[]): WorkoutDay => ({ key: "A", title: "A", focus: ["peito"], exercises });
-    const light = buildPlanned(getExercise("supino_maquina")!, scheme);
-    const heavy = buildPlanned(getExercise("supino_reto_barra")!, { sets: 4, repsMin: 6, repsMax: 8, restSec: 150 });
-    expect(estimateDayMinutes(day([]))).toBe(0);
-    expect(estimateDayMinutes(day([light])) * 60).toBeGreaterThanOrEqual(estimateSeconds(light) + 150);
-    // Primeiro exercício pesado: 2 min a mais de séries de aproximação.
-    expect(Math.round((estimateSeconds(heavy) + 300) / 60)).toBe(estimateDayMinutes(day([heavy])));
-    // Só aeróbio: sem aquecimento somado.
-    expect(estimateDayMinutes(day([buildPlanned(getExercise("esteira_caminhada")!, { sets: 1, repsMin: 20, repsMax: 20, restSec: 0 })]))).toBe(20);
-  });
-
-  it("fitDayToTime ajusta um dia pronto sem perder o principal nem a prioridade", () => {
-    const p = gen({ sessionMinutes: 120, emphasis: ["gluteos"], seed: 3 });
-    const legs = p.days[2]!;
-    const fitted = fitDayToTime(legs, 40, ["gluteos"]);
-    expect(estimateDayMinutes(fitted)).toBeLessThanOrEqual(40);
-    expect(fitted.exercises[0]!.exerciseId).toBe(legs.exercises[0]!.exerciseId);
-    expect(fitted.exercises.filter((e) => ex(e).group === "gluteos").length).toBe(legs.exercises.filter((e) => ex(e).group === "gluteos").length);
-    // Não altera o dia original.
-    expect(legs.exercises.length).toBeGreaterThan(fitted.exercises.length);
-    expect(fitDayToTime(legs, 300)).toEqual(legs);
-  });
-});
-
-// ───────────────────────── 6. Prioridade do aluno ─────────────────────────
-
-describe("6. prioridade (ênfase)", () => {
-  it("glúteos: 2+ exercícios diretos em todo dia de inferiores, mesmo com 45 min, com o multiarticular até o 2º exercício", () => {
-    sweep({ goals: ["hipertrofia", "emagrecimento", "saude"], minutes: [45, 60], seeds: SEEDS.slice(0, 6), extra: { emphasis: ["gluteos"] } }, (p, input) => {
-      const sys = getSystem(input.system);
-      p.days.forEach((d, i) => {
-        const tpl = sys.templates[i]!;
-        const lowerDay = tpl.focus.every((g) => LOWER.includes(g));
-        if (!lowerDay && !tpl.focus.includes("gluteos")) return;
-        const glutes = d.exercises.filter((e) => ex(e).group === "gluteos");
-        expect(glutes.length, where(input, d)).toBeGreaterThanOrEqual(2);
-        expect(glutes.some((e) => ex(e).compound) && glutes.some((e) => !ex(e).compound), where(input, d)).toBe(true);
-        expect(d.exercises.findIndex((e) => ex(e).group === "gluteos" && ex(e).compound), where(input, d)).toBeLessThanOrEqual(1);
-      });
-    });
-  });
-
-  it("glúteos em casa e sem equipamento também rendem 2+ exercícios diretos nos dias de pernas", () => {
-    sweep({ systems: ["fullbody", "ab", "abc", "upper_lower", "abc_inferiores"], equipments: ["home", "peso_corporal"], minutes: [45], seeds: SEEDS.slice(0, 5), extra: { emphasis: ["gluteos"] } }, (p, input) => {
-      const sys = getSystem(input.system);
-      p.days.forEach((d, i) => {
-        if (!sys.templates[i]!.focus.every((g) => LOWER.includes(g))) return;
-        expect(d.exercises.filter((e) => ex(e).group === "gluteos").length, where(input, d)).toBeGreaterThanOrEqual(2);
-      });
-    });
-  });
-
-  it("qualquer grupo priorizado ganha exercício direto e ele sobrevive ao corte de tempo", () => {
-    const groups: MuscleGroup[] = ["peito", "costas", "ombros", "biceps", "triceps", "quadriceps", "posteriores", "gluteos", "panturrilhas", "adutores", "abdomen"];
-    for (const system of ["abc", "upper_lower", "fullbody", "abcde", "ppl6"] as SystemId[])
-      for (const g of groups)
-        for (const seed of SEEDS.slice(0, 5)) {
-          const input = { system, seed, daysPerWeek: getSystem(system).fits[0]! };
-          const plain = gen(input);
-          const with60 = gen({ ...input, emphasis: [g] });
-          const with45 = gen({ ...input, emphasis: [g], sessionMinutes: 45 });
-          expect(count(with60, g), `${system} ${g} ${seed}`).toBeGreaterThan(count(plain, g));
-          expect(count(with45, g), `${system} ${g} ${seed} (45 min)`).toBeGreaterThanOrEqual(Math.max(count(plain, g), 1));
-          expect(count(with45, g), `${system} ${g} ${seed} (45 min)`).toBeGreaterThanOrEqual(count(gen({ ...input, sessionMinutes: 45 }), g));
-        }
-  });
-
-  it("três prioridades de uma vez continuam cabendo no tempo", () => {
-    sweep({ minutes: [45, 60], seeds: SEEDS.slice(0, 4), extra: { emphasis: ["gluteos", "posteriores", "ombros"] } }, (p, input) => {
-      for (const d of p.days) {
-        expect(estimateDayMinutes(d), where(input, d)).toBeLessThanOrEqual(input.sessionMinutes);
-        expect(new Set(idsOf(d)).size).toBe(d.exercises.length);
-      }
-    });
-  });
-});
-
-// ───────────────────────── 7. Divisões ─────────────────────────
-
-describe("7. divisões e frequência de inferiores", () => {
-  it("as duas divisões novas ficam no fim da lista; a landing continua em SYSTEMS[2] = ABC", () => {
-    expect(SYSTEMS[2]!.id).toBe("abc");
-    expect(SYSTEMS.slice(-2).map((s) => s.id)).toEqual(["abc_inferiores", "abcd_inferiores"]);
-    expect(SYSTEMS.some((s) => s.id === "livre")).toBe(false);
-    for (const s of SYSTEMS) {
-      expect(s.templates.length, s.id).toBe(s.days);
-      expect(new Set(s.templates.map((t) => t.key)).size, s.id).toBe(s.days);
-      for (const t of s.templates) {
-        expect(t.slots.filter((x) => !x.optional).length, `${s.id}/${t.key}`).toBeGreaterThanOrEqual(4);
-        // Todo abdômen é encaixe isolado de core (nenhum exercício de abdômen é multiarticular).
-        for (const slot of t.slots.filter((x) => x.group === "abdomen")) expect(slot.compound, `${s.id}/${t.key}`).toBe(false);
-      }
-    }
-  });
-
-  it("abc_inferiores e abcd_inferiores treinam pernas e glúteos 2x, com 2+ exercícios diretos de glúteo por dia", () => {
-    sweep({ systems: ["abc_inferiores", "abcd_inferiores"], goals: ["hipertrofia", "emagrecimento"], seeds: MANY_SEEDS.slice(0, 20) }, (p, input) => {
-      const lower = p.days.filter((d) => d.focus.every((g) => LOWER.includes(g)));
-      expect(lower.length).toBe(2);
-      for (const d of lower) {
-        expect(d.exercises.filter((e) => ex(e).group === "gluteos").length, where(input, d)).toBeGreaterThanOrEqual(2);
-        expect(d.exercises.filter((e) => LOWER.includes(ex(e).group)).length, where(input, d)).toBe(d.exercises.filter((e) => ex(e).group !== "cardio").length);
-      }
-      // Um coice e uma abdução, não dois coices.
-      for (const d of lower) expect(idsOf(d).filter((id) => ["gluteo_cabo", "gluteo_maquina", "gluteo_4_apoios_caneleira", "gluteo_smith"].includes(id)).length, where(input, d)).toBeLessThanOrEqual(1);
-    });
-  });
-
-  it("Full Body tem glúteo direto nos três dias e inferiores em todos", () => {
-    sweep({ systems: ["fullbody"], goals: GOALS }, (p, input) => {
-      for (const d of p.days) {
-        expect(d.exercises.some((e) => ex(e).group === "gluteos"), where(input, d)).toBe(true);
-        expect(d.exercises.filter((e) => LOWER.includes(ex(e).group)).length, where(input, d)).toBeGreaterThanOrEqual(3);
-      }
-    });
-  });
-
-  it("AB começa pelos inferiores (3x por semana dá pernas 2x)", () => {
-    expect(getSystem("ab").templates[0]!.focus).toEqual(["quadriceps", "posteriores", "gluteos"]);
-  });
-});
-
-// ───────────────────────── 8. Sugestão de sistema ─────────────────────────
-
-describe("8. suggestSystem", () => {
-  it("mantém as sugestões padrão sem opções", () => {
-    expect(suggestSystem(2, "iniciante")).toBe("fullbody");
-    expect(suggestSystem(2, "avancado")).toBe("ab");
-    expect(suggestSystem(3, "iniciante")).toBe("fullbody");
-    expect(suggestSystem(3, "intermediario")).toBe("abc");
-    expect(suggestSystem(4, "intermediario")).toBe("upper_lower");
-    expect(suggestSystem(4, "avancado")).toBe("abcd");
-    expect(suggestSystem(5, "avancado")).toBe("abcde");
-    expect(suggestSystem(6, "intermediario")).toBe("ppl6");
-  });
-
-  it("prioridade em inferiores pede divisão com pernas 2x", () => {
-    expect(suggestSystem(3, "intermediario", { emphasis: ["gluteos"] })).toBe("abc_inferiores");
-    expect(suggestSystem(4, "avancado", { emphasis: ["gluteos", "posteriores"] })).toBe("abcd_inferiores");
-    expect(suggestSystem(3, "iniciante", { emphasis: ["gluteos"] })).toBe("fullbody");
-    expect(suggestSystem(4, "iniciante", { emphasis: ["quadriceps"] })).toBe("upper_lower");
-    // Prioridade mista (superior + inferior) não muda a sugestão.
-    expect(suggestSystem(3, "intermediario", { emphasis: ["gluteos", "ombros"] })).toBe("abc");
-    expect(suggestSystem(3, "intermediario", { emphasis: ["peito"] })).toBe("abc");
-  });
-
-  it("força sugere o 5×5 (só em academia) e sem equipamento sugere corpo inteiro", () => {
-    expect(suggestSystem(3, "intermediario", { goal: "forca" })).toBe("forca_5x5");
-    expect(suggestSystem(3, "iniciante", { goal: "forca", equipment: "academia" })).toBe("forca_5x5");
-    expect(suggestSystem(3, "intermediario", { goal: "forca", equipment: "home" })).toBe("fullbody");
-    expect(suggestSystem(4, "intermediario", { goal: "forca" })).toBe("upper_lower");
-    expect(suggestSystem(6, "avancado", { goal: "forca" })).toBe("ppl6");
-    expect(suggestSystem(3, "avancado", { equipment: "peso_corporal" })).toBe("fullbody");
-    expect(suggestSystem(5, "avancado", { equipment: "peso_corporal", goal: "forca", emphasis: ["gluteos"] })).toBe("upper_lower");
-  });
-
-  it("sempre devolve um sistema que o motor sabe gerar", () => {
-    for (let days = 1; days <= 7; days++)
-      for (const level of LEVELS)
-        for (const goal of GOALS)
-          for (const equipment of EQUIPMENTS)
-            for (const emphasis of [[], ["gluteos"], ["peito"]] as MuscleGroup[][]) {
-              const id = suggestSystem(days, level, { goal, equipment, emphasis });
-              expect(ALL, `${days} ${level} ${goal} ${equipment}`).toContain(id);
-            }
-  });
-});
-
-// ───────────────────────── 9. Aeróbio ─────────────────────────
-
-describe("9. aeróbio de fechamento", () => {
-  const cardioOf = (d: WorkoutDay) => d.exercises.filter((e) => ex(e).group === "cardio");
-
-  it("emagrecimento, condicionamento e saúde fecham com 10–20 min quando sobra tempo", () => {
-    sweep({ goals: ["emagrecimento", "condicionamento", "saude"], equipments: EQUIPMENTS, minutes: [90], seeds: SEEDS.slice(0, 5) }, (p, input) => {
-      for (const d of p.days) {
-        const cardio = cardioOf(d);
-        expect(cardio.length, where(input, d)).toBe(1);
-        const c = cardio[0]!;
-        expect(d.exercises[d.exercises.length - 1], where(input, d)).toBe(c);
-        expect([c.unit, c.sets, c.restSec]).toEqual(["min", 1, 0]);
-        expect(c.repsMin).toBe(c.repsMax);
-        expect(c.repsMax).toBeGreaterThanOrEqual(10);
-        expect(c.repsMax).toBeLessThanOrEqual(20);
-        expect(c.repsMax % 5).toBe(0);
-        expect(estimateDayMinutes(d), where(input, d)).toBeLessThanOrEqual(90);
-        if (input.equipment === "academia") expect(ex(c).implement, c.exerciseId).toBe("maquina");
-        if (input.level === "iniciante") expect(["hiit_esteira", "hiit_bike", "esteira_corrida", "corrida_rua", "pular_corda"]).not.toContain(c.exerciseId);
-      }
-    });
-  });
-
-  it("hipertrofia e força não recebem aeróbio; sem tempo sobrando, ninguém recebe", () => {
-    sweep({ goals: ["hipertrofia", "forca"], minutes: [60, 90], seeds: SEEDS.slice(0, 4) }, (p, input) => {
-      for (const d of p.days) expect(cardioOf(d).length, where(input, d)).toBe(0);
-    });
-    sweep({ goals: ["emagrecimento"], minutes: [30], seeds: SEEDS.slice(0, 4), levels: ["intermediario"] }, (p, input) => {
-      for (const d of p.days) expect(cardioOf(d).length, where(input, d)).toBe(0);
-    });
-  });
-
-  it("com dor no joelho o aeróbio não é de impacto", () => {
-    sweep({ goals: ["emagrecimento", "condicionamento"], minutes: [90], seeds: SEEDS.slice(0, 6), extra: { limitations: "condromalácia patelar" } }, (p, input) => {
-      for (const d of p.days) for (const c of cardioOf(d)) expect(["esteira_corrida", "hiit_esteira", "escada_simulador", "pular_corda", "corrida_rua"], where(input, d)).not.toContain(c.exerciseId);
-    });
-  });
-});
-
-// ───────────────────────── 10. Limitações ─────────────────────────
-
-describe("10. limitações", () => {
-  it("reconhece as formas comuns de escrever e não dispara em palavras parecidas", () => {
-    const labels = (t: string) => analyzeLimitations(t).labels;
-    expect(labels("dor no joelho")).toEqual(["joelho"]);
-    expect(labels("condromalacia")).toEqual(["joelho"]);
-    expect(labels("Condromalácia patelar grau 2")).toEqual(["joelho"]);
-    expect(labels("rompi o ligamento cruzado")).toEqual(["joelho"]);
-    expect(labels("LCA operado")).toEqual(["joelho"]);
-    expect(labels("dor nas costas")).toEqual(["lombar"]);
-    expect(labels("minhas costas doem")).toEqual(["lombar"]);
-    expect(labels("ciático")).toEqual(["lombar"]);
-    expect(labels("protrusão discal")).toEqual(["lombar"]);
-    expect(labels("hérnia de disco lombar")).toEqual(["lombar"]);
-    expect(labels("escoliose")).toEqual(["lombar"]);
-    expect(labels("tendinite no ombro")).toEqual(["ombro"]);
-    expect(labels("tendinopatia do supraespinhal")).toEqual(["ombro"]);
-    expect(labels("bursite")).toEqual(["ombro"]);
-    expect(labels("bursite no quadril")).toEqual(["quadril"]);
-    expect(labels("bursite trocantérica")).toEqual(["quadril"]);
-    expect(labels("artrose de quadril")).toEqual(["quadril", "idade ou artrose"]);
-    expect(labels("idoso com artrose")).toEqual(["idade ou artrose"]);
-    expect(labels("dor no punho")).toEqual(["punho"]);
-    expect(labels("tendinite no punho")).toEqual(["punho"]);
-    expect(labels("epicondilite")).toEqual(["cotovelo"]);
-    expect(labels("cervical")).toEqual(["cervical"]);
-    expect(labels("entorse de tornozelo")).toEqual(["tornozelo ou pé"]);
-    expect(labels("hipertensão controlada")).toEqual(["pressão ou coração"]);
-    expect(labels("gestante de 20 semanas")).toEqual(["gestação"]);
-    // "lca" dentro de "calcanhar" não tira os agachamentos; "tendinite patelar" não aciona cotovelo.
-    expect(avoidedByLimitations("dor no calcanhar").has("agachamento_livre")).toBe(false);
-    expect(labels("tendinite patelar")).toEqual(["joelho"]);
-    expect(avoidedByLimitations("tendinite patelar").has("triceps_testa")).toBe(false);
-    expect(avoidedByLimitations("bursite no quadril").has("desenvolvimento_barra")).toBe(false);
-    expect(avoidedByLimitations("bursite no quadril").has("cadeira_abdutora")).toBe(true);
-    expect(avoidedByLimitations("condromalácia").has("cadeira_extensora")).toBe(true);
-    expect(avoidedByLimitations("dor no joelho").has("cadeira_extensora")).toBe(false);
-  });
-
-  it("frase negada ou sem limitação não tira nada nem gera aviso", () => {
-    for (const t of ["sem dor no joelho, liberado pelo fisio", "não tenho limitações", "Nenhuma", "nada", "", "  ", "Não tenho nenhuma lesão."]) {
-      const plan = analyzeLimitations(t);
-      expect(plan.avoid.size, t).toBe(0);
-      expect(plan.unrecognized, t).toBe(false);
-    }
-    expect(gen({ limitations: "nenhuma" }).notes).not.toContain("Limitações");
-    // Negou uma coisa e informou outra.
-    expect(analyzeLimitations("sem dor no ombro, mas tenho hérnia de disco").labels).toEqual(["lombar"]);
-  });
-
-  it("todo id evitado existe na biblioteca", () => {
-    const everything = "joelho condromalácia lombar ombro bursite punho cotovelo quadril cervical tornozelo idoso hipertensão gestante";
-    const avoid = avoidedByLimitations(everything);
-    expect(avoid.size).toBeGreaterThan(80);
-    for (const id of avoid) expect(getExercise(id), id).toBeDefined();
-  });
-
-  it("limitação que o motor não reconhece vira aviso na ficha", () => {
-    const p = gen({ limitations: "labirintite" });
-    expect(p.notes).toContain("não reconheci a limitação informada (“labirintite”)");
-    expect(analyzeLimitations("labirintite").unrecognized).toBe(true);
-    expect(gen({ limitations: "dor no joelho" }).notes).toContain("Limitações consideradas: joelho.");
-    expect(gen().notes).not.toContain("Limitações");
-  });
-
-  const CASES: [string, MuscleGroup[], number][] = [
-    ["dor no joelho", ["quadriceps", "posteriores", "gluteos"], 8],
-    ["condromalácia patelar", ["quadriceps", "posteriores", "gluteos"], 8],
-    ["hérnia de disco lombar", ["quadriceps", "posteriores", "gluteos", "costas"], 8],
-    ["tendinite no ombro", ["peito", "ombros"], 8],
-    ["dor no punho", [], 0],
-    ["epicondilite no cotovelo", [], 0],
-    ["artrose de quadril", ["quadriceps", "posteriores", "gluteos"], 10],
-    ["dor na cervical", [], 0],
-    ["idoso com artrose", ["peito", "costas", "ombros", "quadriceps", "posteriores", "gluteos", "biceps", "triceps"], 10],
-    ["hipertensão", ["peito", "costas", "quadriceps"], 10],
-    ["gestante", ["peito", "costas", "quadriceps"], 10],
-  ];
-
-  it.each(CASES)("“%s”: nada do que foi evitado aparece, o dia continua completo e sem série pesada na região", (text, groups, minReps) => {
-    const avoid = avoidedByLimitations(text);
-    expect(avoid.size).toBeGreaterThan(0);
-    sweep({ systems: ["fullbody", "abc", "forca_5x5", "upper_lower", "abc_inferiores", "abcde"], goals: ["hipertrofia", "forca", "saude"], equipments: ["academia", "home"], seeds: SEEDS.slice(0, 4), extra: { limitations: text } }, (p, input) => {
-      expect(p.notes, where(input)).toContain("Limitações consideradas");
-      for (const d of p.days) {
-        expect(d.exercises.length, where(input, d)).toBeGreaterThanOrEqual(4);
-        expect(estimateDayMinutes(d), where(input, d)).toBeLessThanOrEqual(60);
-        for (const e of d.exercises) expect(avoid.has(e.exerciseId), `${e.exerciseId} em ${where(input, d)}`).toBe(false);
-        for (const e of strength(d)) if (groups.includes(ex(e).group)) expect(e.repsMin, `${e.exerciseId} em ${where(input, d)}`).toBeGreaterThanOrEqual(minReps);
-      }
-    });
-  });
-
-  it("hérnia de disco: sem dobradiça com carga, sem flexão de tronco, core só de estabilização", () => {
-    sweep({ systems: ["fullbody", "abc", "upper_lower", "abcd"], goals: ["hipertrofia", "saude"], levels: LEVELS, extra: { limitations: "hérnia de disco lombar" } }, (p, input) => {
-      for (const e of all(p)) {
-        expect(ex(e).pattern === "quadril" && ex(e).group === "posteriores", `${e.exerciseId} em ${where(input)}`).toBe(false);
-        if (ex(e).group === "abdomen") expect(["prancha", "prancha_lateral", "dead_bug", "pallof", "prancha_toque_ombro", "mountain_climber"], e.exerciseId).toContain(e.exerciseId);
-      }
-      // O dia de pernas continua com posteriores (flexoras) e glúteo.
-      const legs = p.days.filter((d) => d.focus.includes("posteriores"));
-      for (const d of legs) expect(d.exercises.some((e) => ex(e).group === "posteriores" || ex(e).group === "gluteos"), where(input, d)).toBe(true);
-    });
-    const p = gen({ limitations: "hérnia de disco lombar", seed: 4 });
-    const leg = all(p).find((e) => e.exerciseId === "leg_press" || e.exerciseId === "hack" || e.exerciseId === "leg_press_horizontal")!;
-    expect(leg.notes).toContain("lombar do encosto");
-  });
-
-  it("joelho: leg press vira o principal de pernas, com 8+ repetições e orientação de amplitude", () => {
-    for (const seed of SEEDS) {
-      const legs = gen({ limitations: "dor no joelho", seed }).days[2]!;
-      const first = legs.exercises[0]!;
-      expect(["leg_press", "leg_press_horizontal"]).toContain(first.exerciseId);
-      expect(first.repsMin).toBeGreaterThanOrEqual(8);
-      expect(first.sets).toBeLessThanOrEqual(3);
-      expect(first.notes).toContain("Amplitude sem dor");
-      expect(legs.exercises.length).toBeGreaterThanOrEqual(6);
-    }
-  });
-
-  it("5×5 com limitação que tira um básico (ou condição geral) vira Full Body com aviso", () => {
-    for (const text of ["dor no joelho", "hérnia de disco", "tendinite no ombro", "idoso com artrose", "gestante"]) {
-      const p = gen({ system: "forca_5x5", goal: "forca", limitations: text });
-      expect(p.system, text).toBe("fullbody");
-      expect(p.notes, text).toContain("Full Body mais seguro");
-      expect(all(p).some((e) => e.repsMax <= 5), text).toBe(false);
-    }
-    // Punho e cotovelo não tiram nenhum básico: continua 5×5.
-    expect(gen({ system: "forca_5x5", goal: "forca", limitations: "dor no punho" }).system).toBe("forca_5x5");
-  });
-
-  it("idoso em Full Body de saúde: nada de terra, agachamento livre ou barra fixa, e tudo com 10+ repetições", () => {
-    sweep({ systems: ["fullbody"], goals: ["saude", "forca"], levels: LEVELS, extra: { limitations: "idoso com artrose" } }, (p, input) => {
-      for (const d of p.days) for (const e of strength(d)) {
-        expect(["levantamento_terra", "agachamento_livre", "barra_fixa", "remada_curvada_barra", "desenvolvimento_barra"], where(input, d)).not.toContain(e.exerciseId);
-        expect(e.repsMin, `${e.exerciseId} em ${where(input, d)}`).toBeGreaterThanOrEqual(10);
-        expect(e.sets, e.exerciseId).toBeLessThanOrEqual(3);
-      }
-    });
-  });
-});
-
-// ───────────────────────── 11. Determinismo ─────────────────────────
-
-describe("11. determinismo", () => {
-  it("mesma seed, mesma ficha", () => {
-    sweep({ goals: ["hipertrofia", "emagrecimento"], equipments: EQUIPMENTS, minutes: [45, 90], seeds: SEEDS.slice(0, 3), extra: { emphasis: ["gluteos"], limitations: "dor no ombro" } }, (p, input) => {
-      expect(signature(generateProgram(input, owner)), where(input)).toBe(signature(p));
-    });
-    expect(signature(gen())).toBe(signature(gen({ seed: 1 })));
-  });
-
-  it("seeds diferentes variam a ficha, sem sair das escolhas de personal", () => {
-    for (const system of ["abc", "fullbody", "upper_lower"] as SystemId[]) {
-      const variants = new Set(MANY_SEEDS.map((seed) => signature(gen({ system, seed }))));
-      expect(variants.size, system).toBeGreaterThan(20);
-    }
-  });
-
-  it("a nota de cada candidato é sorteada uma vez: os básicos dominam, as variações aparecem", () => {
-    const tally = (pick: (p: Program) => string) => {
-      const out = new Map<string, number>();
-      for (const seed of Array.from({ length: 300 }, (_, i) => i + 1)) out.set(pick(gen({ seed })), (out.get(pick(gen({ seed }))) ?? 0) + 1);
-      return out;
-    };
-    // 2º de quadríceps no ABC: leg press 45° na maioria, hack e leg horizontal dividem o resto.
-    const second = tally((p) => p.days[2]!.exercises[1]!.exerciseId);
-    expect([...second.keys()].sort()).toEqual(["hack", "leg_press", "leg_press_horizontal"]);
-    expect(second.get("leg_press")!).toBeGreaterThan(150);
-    expect(second.get("hack")!).toBeGreaterThan(10);
-    // Principal de peito: supino reto com barra quase sempre, Smith e máquina às vezes.
-    const bench = tally((p) => p.days[0]!.exercises[0]!.exerciseId);
-    expect(bench.get("supino_reto_barra")!).toBeGreaterThan(180);
-    expect(bench.size).toBeGreaterThanOrEqual(2);
-    // Panturrilha: em pé domina, sentado aparece (antes o sorteio favorecia a ordem do catálogo).
-    const calf = tally((p) => p.days[2]!.exercises.find((e) => ex(e).group === "panturrilhas")?.exerciseId ?? "-");
-    expect(calf.get("panturrilha_em_pe")!).toBeGreaterThan(calf.get("panturrilha_sentado")!);
-    expect(calf.get("panturrilha_sentado")!).toBeGreaterThan(15);
-  });
-});
-
-// ───────────────────────── 12. Técnicas ─────────────────────────
-
-describe("12. drop-set", () => {
-  it("só para avançado em hipertrofia, um por dia, em isolado com carga (nunca core ou peso corporal)", () => {
-    // Fora o 5×5, que não tem isolado com carga para receber a técnica.
-    sweep({ systems: ALL.filter((id) => id !== "forca_5x5"), levels: ["avancado"], goals: ["hipertrofia"], equipments: EQUIPMENTS, minutes: [60, 90], seeds: SEEDS.slice(0, 6) }, (p, input) => {
-      for (const d of p.days) {
-        const drops = d.exercises.filter((e) => e.technique === "drop_set");
-        expect(drops.length, where(input, d)).toBeLessThanOrEqual(1);
-        for (const e of drops) {
-          const x = ex(e);
-          expect(x.compound, e.exerciseId).toBe(false);
-          expect(x.pattern, e.exerciseId).toBe("isolado");
-          expect(["maquina", "cabo", "halter"], e.exerciseId).toContain(x.implement);
-          expect(["abdomen", "antebraco", "lombar", "cardio"], e.exerciseId).not.toContain(x.group);
-        }
-      }
-      if (input.equipment === "academia") expect(all(p).some((e) => e.technique === "drop_set"), where(input)).toBe(true);
-    });
-    sweep({ levels: ["iniciante", "intermediario"], goals: GOALS, seeds: SEEDS.slice(0, 3) }, (p) => {
-      expect(all(p).every((e) => e.technique === "normal")).toBe(true);
-    });
-    sweep({ levels: ["avancado"], goals: ["forca", "emagrecimento"], seeds: SEEDS.slice(0, 3) }, (p) => {
-      expect(all(p).every((e) => e.technique === "normal")).toBe(true);
-    });
-  });
-});
-
-// ───────────────────────── 13. Observações ─────────────────────────
-
-describe("13. observações da ficha", () => {
-  it("a ficha orienta o aquecimento", () => {
-    sweep({ goals: GOALS, equipments: EQUIPMENTS, seeds: [1] }, (p, input) => {
-      expect(p.notes, where(input)).toMatch(/[Aa]quecimento/);
-      expect(p.notes!.length).toBeLessThan(600);
-    });
-    expect(gen().notes).toContain("séries de aproximação");
-    expect(gen({ equipment: "peso_corporal" }).notes).not.toContain("Carga inicial");
-  });
-
-  it("exercício unilateral leva “Repetições por lado.” (ou “Tempo por lado.”)", () => {
-    sweep({ goals: ["hipertrofia", "saude"], equipments: EQUIPMENTS, seeds: SEEDS.slice(0, 4) }, (p, input) => {
-      for (const e of all(p)) {
-        if (!ex(e).unilateral) expect(e.notes ?? "", e.exerciseId).not.toContain("por lado");
-        else expect(e.notes, `${e.exerciseId} em ${where(input)}`).toContain(e.unit === "seg" ? "Tempo por lado." : "Repetições por lado.");
-      }
-    });
-    expect(buildPlanned(getExercise("agachamento_bulgaro")!, { sets: 3, repsMin: 8, repsMax: 12, restSec: 90 }).notes).toBe("Repetições por lado.");
-    expect(buildPlanned(getExercise("prancha_lateral")!, { sets: 3, repsMin: 30, repsMax: 45, restSec: 45 })).toMatchObject({ notes: "Tempo por lado.", unit: "seg" });
-    expect(buildPlanned(getExercise("leg_press")!, { sets: 3, repsMin: 8, repsMax: 12, restSec: 90 }).notes).toBeUndefined();
-  });
-
-  it("nome, sistema e origem da ficha", () => {
-    const p = gen({ system: "abc_inferiores", goal: "emagrecimento" });
-    expect(p).toMatchObject({ name: "ABC Glúteos · Emagrecimento", system: "abc_inferiores", source: "modelo", active: true, ownerId: "u1" });
-    expect(p.days.map((d) => d.key)).toEqual(["A", "B", "C"]);
-  });
-});
-
 // ───────────────────────── Progressão ─────────────────────────
 
 const log = (sets: [number | null, number][], id = "supino_reto_barra", planned?: ExerciseLog["planned"]): ExerciseLog => ({
@@ -1333,6 +804,440 @@ describe("progressão: recordes", () => {
     expect(e1rmSeries([s], "supino_reto_barra")).toEqual([{ date: "2026-02-01", value: 76 }]);
     // Só séries longas: ainda mostra o ponto.
     expect(e1rmSeries([session("a", at(1), [log([[40, 20]])])], "supino_reto_barra")).toHaveLength(1);
+  });
+});
+
+// ───────────────────────── Sugestão de carga: por que esse peso ─────────────────────────
+
+const iso = (d: string) => `${d}T12:00:00Z`;
+const DAY_MS = 86_400_000;
+const lat = { sets: 3, repsMin: 10, repsMax: 12 };
+
+describe("progressão: lastPerformance com data", () => {
+  const a = session("a", iso("2026-03-01"), [log([[40, 10]])]);
+  const b = session("b", iso("2026-03-08"), [log([[42.5, 8]]), log([[20, 12]], "elevacao_lateral")]);
+  const c = session("c", iso("2026-03-15"), [log([[20, 12]], "elevacao_lateral")]);
+  // Exercício presente mas sem série feita não conta.
+  const d = session("d", iso("2026-03-20"), [{ ...log([[45, 8]]), sets: [{ loadKg: 45, reps: 8, done: false }] }]);
+  const all = [a, c, d, b];
+
+  it("devolve o registro e a data do treino; lastPerformance continua devolvendo só o registro", () => {
+    expect(lastPerformanceWithDate(all, "supino_reto_barra")).toEqual({ log: b.exercises[0], startedAt: b.startedAt });
+    expect(lastPerformance(all, "supino_reto_barra")).toBe(b.exercises[0]);
+    expect(lastPerformanceWithDate(all, "supino_reto_barra", b.startedAt)?.startedAt).toBe(a.startedAt);
+    expect(lastPerformanceWithDate(all, "agachamento_livre")).toBeNull();
+    expect(lastPerformance(all, "agachamento_livre")).toBeNull();
+  });
+
+  it("recentPerformances: do mais recente ao mais antigo, com limite e data de corte", () => {
+    expect(recentPerformances(all, "supino_reto_barra").map((p) => p.startedAt)).toEqual([b.startedAt, a.startedAt]);
+    expect(recentPerformances(all, "elevacao_lateral", 1).map((p) => p.startedAt)).toEqual([c.startedAt]);
+    expect(recentPerformances(all, "elevacao_lateral", 5, c.startedAt).map((p) => p.startedAt)).toEqual([b.startedAt]);
+  });
+});
+
+describe("progressão: guarda contra digitação", () => {
+  it("[14, 140, 14]: ignora a série digitada errada e sugere 14 kg com o aviso", () => {
+    const s = suggestNext(log([[14, 12], [140, 12], [14, 12]], "elevacao_lateral"), lat, "elevacao_lateral");
+    expect(s).toEqual({ kind: "manter", loadKg: 14, text: "Uma série parecia digitada errada (140 kg) e foi ignorada." });
+    // Mesmo quando as séries que sobram fechariam o topo: depois de um erro, não sobe às cegas.
+    expect(suggestNext(log([[14, 12], [140, 12], [14, 12], [14, 12]], "elevacao_lateral"), lat, "elevacao_lateral")).toMatchObject({ kind: "manter", loadKg: 14 });
+    const two = suggestNext(log([[14, 12], [140, 12], [14, 12], [145, 12], [14, 12]], "elevacao_lateral"), lat, "elevacao_lateral");
+    expect(two).toMatchObject({ kind: "manter", loadKg: 14 });
+    expect(two.text).toBe("2 séries pareciam digitadas erradas (145 kg) e foram ignoradas.");
+  });
+
+  it("pirâmide 50/55/60 e aquecimento continuam valendo; com menos de 3 séries a guarda não age", () => {
+    const pyramid = suggestNext(log([[50, 12], [55, 10], [60, 6]]), range, "supino_reto_barra");
+    expect(pyramid).toMatchObject({ kind: "manter", loadKg: 60 });
+    expect(pyramid.text).toContain("Cargas variadas");
+    expect(suggestNext(log([[40, 12], [60, 12], [60, 12], [60, 12]]), range, "supino_reto_barra")).toMatchObject({ kind: "aumentar", loadKg: 62.5 });
+    expect(suggestNext(log([[14, 12], [140, 12]], "elevacao_lateral"), lat, "elevacao_lateral").text).not.toContain("digitada");
+    // Peso corporal com uma série de peso extra: mediana 0, nada é ignorado.
+    expect(suggestNext(log([[0, 12], [0, 12], [10, 8]], "barra_fixa"), range, "barra_fixa").text).not.toContain("digitada");
+  });
+
+  it("série mais leve (erro para baixo ou aquecimento) nunca derruba as séries reais", () => {
+    // 4/40/40: digitou 4 no lugar de 40. Antes, as duas séries de 40 eram "ignoradas" e a sugestão virava 4 kg.
+    const low = suggestNext(log([[4, 10], [40, 10], [40, 10]]), range, "supino_reto_barra");
+    expect(low).toMatchObject({ kind: "manter", loadKg: 40 });
+    expect(low.text).not.toContain("digitad");
+    // Aquecimento marcado 15/50/50 na remada.
+    const warm = suggestNext(log([[15, 12], [50, 10], [50, 10]], "remada_baixa"), range, "remada_baixa");
+    expect(warm).toMatchObject({ kind: "manter", loadKg: 50 });
+    expect(warm.text).not.toContain("digitad");
+    // Metade ou mais acima de 1,5× a mediana não é "erro": nada é ignorado.
+    expect(suggestNext(log([[14, 12], [140, 12], [140, 12], [14, 12]], "elevacao_lateral"), lat, "elevacao_lateral").text).not.toContain("digitad");
+  });
+
+  it("treino anterior com uma série leve não contamina a trava de 2× do treino seguinte", () => {
+    const s = suggestNext(log([[40, 10], [40, 10], [40, 10]]), range, "supino_reto_barra", { earlier: [log([[4, 10], [40, 10], [40, 10]])] });
+    expect(s).toEqual({ kind: "manter", loadKg: 40, text: "Manter 40 kg: faltaram 6 reps para fechar 3×12." });
+    expect(s.text).not.toContain("Confira");
+  });
+
+  it("mudança de faixa com o último treino suspeito: estima a partir do treino anterior, nunca do número errado", () => {
+    const old = { sets: 3, repsMin: 3, repsMax: 5 };
+    const typo = log([[400, 10], [400, 10], [400, 10]], "supino_reto_barra", old);
+    const s = suggestNext(typo, range, "supino_reto_barra", { earlier: [log([[40, 5], [40, 5], [40, 5]], "supino_reto_barra", old)] });
+    expect(s.kind).toBe("primeira");
+    expect(s.text).toContain("faixa de repetições mudou");
+    // 40 × 5 → 1RM ≈ 46,7 kg → para 12 reps, ~95% de 33 kg, no degrau da barra.
+    expect(s.loadKg).toBe(30);
+    // Sem treino anterior para comparar, a estimativa continua saindo do último registro.
+    expect(suggestNext(log([[100, 5], [100, 5], [100, 5]], "supino_reto_barra", old), range, "supino_reto_barra").loadKg!).toBeGreaterThan(60);
+  });
+
+  it("topo inteiro mais de 2× acima da melhor carga dos 3 treinos anteriores: mantém a carga anterior e pede para conferir", () => {
+    const earlier = [log([[20, 10], [20, 10], [20, 9]]), log([[20, 9], [20, 9], [20, 8]]), log([[17.5, 12], [17.5, 12], [17.5, 12]])];
+    const s = suggestNext(log([[41, 10], [41, 10], [41, 9]]), range, "supino_reto_barra", { earlier });
+    expect(s).toEqual({ kind: "manter", loadKg: 20, text: "Última vez: 41 kg? Confira se foi isso mesmo." });
+    // A carga anterior é a do treino imediatamente antes, mesmo que um mais antigo tenha sido maior.
+    expect(suggestNext(log([[41, 10], [41, 10]]), range, "supino_reto_barra", { earlier: [log([[17.5, 10]]), log([[20, 10]])] }).loadKg).toBe(17.5);
+    // Só os 3 treinos anteriores contam: um 4º, antigo e pesado, não esconde o erro.
+    expect(suggestNext(log([[41, 10], [41, 10]]), range, "supino_reto_barra", { earlier: [...earlier, log([[100, 5]])] }).kind).toBe("manter");
+    expect(suggestNext(log([[41, 10], [41, 10]]), range, "supino_reto_barra", { earlier: [...earlier, log([[100, 5]])] }).text).toContain("Confira");
+    // Até 2× é progressão normal; sem treinos anteriores, não há com o que comparar.
+    expect(suggestNext(log([[40, 12], [40, 12], [40, 12]]), range, "supino_reto_barra", { earlier })).toMatchObject({ kind: "aumentar", loadKg: 42.5 });
+    expect(suggestNext(log([[41, 10], [41, 10], [41, 9]]), range, "supino_reto_barra", { earlier: [] }).text).not.toContain("Confira");
+  });
+});
+
+describe("progressão: retorno após pausa", () => {
+  const now = new Date(iso("2026-03-19"));
+  const ago = (days: number) => new Date(now.getTime() - days * DAY_MS).toISOString();
+
+  it("18 dias sem o exercício: ~90% da carga no degrau real do implemento, com o texto de retorno", () => {
+    const s = suggestNext(log([[40, 10], [40, 10], [40, 9]], "supino_reto_halter"), range, "supino_reto_halter", { lastAt: ago(18), now });
+    expect(s).toEqual({ kind: "retorno", loadKg: 36, text: "Faz 18 dias sem este exercício: volte com 36 kg e reencontre o ritmo." });
+    // Barra: 36 não existe, desce para 35.
+    expect(suggestNext(log([[40, 10], [40, 10], [40, 9]]), range, "supino_reto_barra", { lastAt: ago(18), now }).loadKg).toBe(35);
+    // Agachamento a 75 kg: 67,5 existe (passo de 2,5 abaixo de 70).
+    expect(suggestNext(log([[75, 8], [75, 8], [75, 8]], "agachamento_livre"), { sets: 3, repsMin: 6, repsMax: 8 }, "agachamento_livre", { lastAt: ago(30), now }).loadKg).toBe(67.5);
+  });
+
+  it("vale a partir de 14 dias, mesmo quando teria subido; com 13 dias segue a progressão", () => {
+    const top = log([[40, 12], [40, 12], [40, 12]]);
+    expect(suggestNext(top, range, "supino_reto_barra", { lastAt: ago(13), now })).toMatchObject({ kind: "aumentar", loadKg: 42.5 });
+    expect(suggestNext(top, range, "supino_reto_barra", { lastAt: ago(14), now })).toMatchObject({ kind: "retorno", loadKg: 35 });
+    // Sem a data (chamada antiga), nunca é retorno.
+    expect(suggestNext(top, range, "supino_reto_barra")).toMatchObject({ kind: "aumentar" });
+    expect(suggestNext(top, range, "supino_reto_barra", { lastAt: "data inválida", now }).kind).toBe("aumentar");
+  });
+
+  it("suggestFromHistory monta tudo a partir do histórico", () => {
+    const history = [session("a", ago(40), [log([[37.5, 10], [37.5, 10]])]), session("b", ago(18), [log([[40, 10], [40, 10], [40, 9]])])];
+    expect(suggestFromHistory(history, range, "supino_reto_barra", now)).toMatchObject({ kind: "retorno", loadKg: 35 });
+    expect(suggestFromHistory(history, range, "supino_reto_barra", now).text).toBe("Faz 18 dias sem este exercício: volte com 35 kg e reencontre o ritmo.");
+    expect(suggestFromHistory(history, range, "supino_reto_barra", new Date(ago(10)))).toMatchObject({ kind: "manter", loadKg: 40 });
+    expect(suggestFromHistory([], range, "supino_reto_barra", now)).toMatchObject({ kind: "primeira", loadKg: null });
+    // Erro de digitação de um treino inteiro, visto pelo histórico.
+    const typo = [session("a", ago(9), [log([[20, 10], [20, 10]])]), session("b", ago(2), [log([[200, 10], [200, 10]])])];
+    expect(suggestFromHistory(typo, range, "supino_reto_barra", now)).toMatchObject({ kind: "manter", loadKg: 20 });
+  });
+
+  it("precedência: mudança de faixa > retorno > guarda de digitação > progressão dupla", () => {
+    const old = { sets: 5, repsMin: 5, repsMax: 5 };
+    const changed = suggestNext(log([[100, 5], [100, 5], [100, 5], [100, 5], [100, 5]], "supino_reto_barra", old), { sets: 3, repsMin: 10, repsMax: 15 }, "supino_reto_barra", { lastAt: ago(30), now });
+    expect(changed.kind).toBe("primeira");
+    expect(changed.text).toContain("faixa de repetições mudou");
+    // Retorno ganha da guarda, mas parte da carga confiável (sem a série 140 e sem o topo suspeito).
+    expect(suggestNext(log([[14, 12], [140, 12], [14, 12]], "elevacao_lateral"), lat, "elevacao_lateral", { lastAt: ago(20), now })).toMatchObject({ kind: "retorno", loadKg: 12 });
+    const suspicious = suggestNext(log([[41, 10], [41, 10]]), range, "supino_reto_barra", { lastAt: ago(20), now, earlier: [log([[20, 10]])] });
+    expect(suspicious).toMatchObject({ kind: "retorno", loadKg: 17.5 });
+    // Guarda ganha da progressão dupla.
+    expect(suggestNext(log([[41, 12], [41, 12], [41, 12]]), range, "supino_reto_barra", { lastAt: ago(3), now, earlier: [log([[20, 12]])] }).kind).toBe("manter");
+  });
+
+  it("graviton volta com mais ajuda; peso corporal volta sem forçar; peso extra e cargas pequenas", () => {
+    expect(suggestNext(log([[30, 12], [30, 12], [30, 12]], "barra_fixa_assistida"), range, "barra_fixa_assistida", { lastAt: ago(20), now })).toEqual({
+      kind: "retorno",
+      loadKg: 35,
+      text: "Faz 20 dias sem este exercício: volte com 35 kg de ajuda e reencontre o ritmo.",
+    });
+    expect(suggestNext(log([[null, 12], [null, 12], [null, 12]], "flexao"), range, "flexao", { lastAt: ago(20), now })).toEqual({
+      kind: "retorno",
+      loadKg: null,
+      text: "Faz 20 dias sem este exercício: volte sem forçar e reencontre o ritmo.",
+    });
+    expect(suggestNext(log([[10, 10], [10, 10], [10, 10]], "barra_fixa"), range, "barra_fixa", { lastAt: ago(20), now }).text).toBe("Faz 20 dias sem este exercício: volte com 7,5 kg de peso extra e reencontre o ritmo.");
+    // A menor placa: não há para onde descer, volta com a mesma.
+    expect(suggestNext(log([[2.5, 10], [2.5, 10], [2.5, 10]], "elevacao_lateral_cabo"), range, "elevacao_lateral_cabo", { lastAt: ago(20), now }).loadKg).toBe(2.5);
+    // Máquina sem carga registrada continua pedindo o registro; exercício por tempo não muda.
+    expect(suggestNext(log([[0, 12], [0, 12], [0, 12]], "cadeira_extensora"), range, "cadeira_extensora", { lastAt: ago(20), now }).kind).toBe("primeira");
+    expect(suggestNext(log([[null, 45]], "prancha"), { sets: 3, repsMin: 30, repsMax: 45, unit: "seg" }, "prancha", { lastAt: ago(20), now }).kind).not.toBe("retorno");
+  });
+});
+
+describe("progressão: salto grande sem gangorra e plural", () => {
+  it("elevação lateral 16 kg com 9-8-7 numa faixa 10-12 mantém 16 kg; com 6-6-5 reduz", () => {
+    const keep = suggestNext(log([[16, 9], [16, 8], [16, 7]], "elevacao_lateral"), lat, "elevacao_lateral");
+    expect(keep).toEqual({ kind: "manter", loadKg: 16, text: "Salto grande (14 → 16 kg): abaixo de 10 reps no início é normal. Mantenha 16 kg." });
+    expect(suggestNext(log([[16, 6], [16, 6], [16, 5]], "elevacao_lateral"), lat, "elevacao_lateral")).toMatchObject({ kind: "reduzir", loadKg: 14 });
+    // 1ª série 3 reps abaixo do mínimo: reduz.
+    expect(suggestNext(log([[16, 7], [16, 7], [16, 7]], "elevacao_lateral"), lat, "elevacao_lateral").kind).toBe("reduzir");
+  });
+
+  it("acaba com a gangorra 14 → 16 → 14 → 16", () => {
+    const up = suggestNext(log([[14, 12], [14, 12], [14, 12]], "elevacao_lateral"), lat, "elevacao_lateral");
+    expect(up).toMatchObject({ kind: "aumentar", loadKg: 16 });
+    expect(suggestNext(log([[16, 9], [16, 8], [16, 7]], "elevacao_lateral"), lat, "elevacao_lateral").loadKg).toBe(16);
+    expect(suggestNext(log([[16, 10], [16, 9], [16, 8]], "elevacao_lateral"), lat, "elevacao_lateral")).toMatchObject({ kind: "manter", loadKg: 16 });
+  });
+
+  it("não vale no 5×5, nos exercícios principais nem com degrau de até 10%", () => {
+    // 5×5 (séries fixas) com degrau grande: continua reduzindo.
+    expect(suggestNext(log([[16, 4], [16, 4], [16, 3], [16, 3], [16, 3]], "elevacao_lateral"), { sets: 5, repsMin: 5, repsMax: 5 }, "elevacao_lateral").kind).toBe("reduzir");
+    expect(suggestNext(log([[20, 3], [20, 3], [20, 3], [20, 3], [20, 3]], "agachamento_livre"), { sets: 5, repsMin: 5, repsMax: 5 }, "agachamento_livre").kind).toBe("reduzir");
+    // Principal (supino com barra a 20 kg, degrau de 12,5%): regra antiga.
+    expect(suggestNext(log([[20, 6], [20, 6], [20, 5]]), range, "supino_reto_barra")).toMatchObject({ kind: "reduzir", loadKg: 17.5 });
+    // Halter a 20 kg: degrau de 2 kg = 10%, não é salto grande.
+    expect(suggestNext(log([[20, 9], [20, 8], [20, 7]], "elevacao_lateral"), lat, "elevacao_lateral")).toMatchObject({ kind: "reduzir", loadKg: 18 });
+  });
+
+  it("faltou 1 rep no singular, faltaram N reps no plural", () => {
+    expect(suggestNext(log([[40, 12], [40, 12], [40, 11]]), range, "supino_reto_barra").text).toBe("Manter 40 kg: faltou 1 rep para fechar 3×12.");
+    expect(suggestNext(log([[40, 12], [40, 11], [40, 10]]), range, "supino_reto_barra").text).toBe("Manter 40 kg: faltaram 3 reps para fechar 3×12.");
+  });
+
+  it("séries puladas não viram reps que faltaram", () => {
+    const four = { sets: 4, repsMin: 6, repsMax: 8 };
+    expect(suggestNext(log([[40, 6], [40, 9]]), four, "supino_reto_barra")).toMatchObject({ kind: "manter", loadKg: 40, text: "Manter 40 kg: da última vez saíram 2 de 4 séries." });
+    // Todas feitas, mas abaixo do topo: continua contando as reps.
+    expect(suggestNext(log([[40, 8], [40, 8], [40, 7], [40, 7]]), four, "supino_reto_barra").text).toBe("Manter 40 kg: faltaram 2 reps para fechar 4×8.");
+  });
+
+  it("rascunho salvo antes da mudança continua válido", () => {
+    // Forma gravada em sr:draft:* antes deste lote: os mesmos campos, sem "retorno".
+    const saved = JSON.parse('{"kind":"manter","loadKg":40,"text":"Manter 40 kg: faltaram 9 reps para fechar 3×12."}') as { kind: SuggestionKind };
+    const kinds: SuggestionKind[] = ["aumentar", "manter", "reduzir", "primeira", "reps", "retorno"];
+    expect(kinds).toContain(saved.kind);
+  });
+});
+
+// ───────────────────────── Recorde ao vivo ─────────────────────────
+
+/** detectPRs como era antes da extração de setRecord (oráculo do teste de equivalência). */
+function legacyDetectPRs(session: Session, history: Session[]): string[] {
+  const ASSISTED = new Set(["barra_fixa_assistida"]);
+  const prs = new Set<string>();
+  const before = history.filter((h) => h.id !== session.id && h.startedAt < session.startedAt);
+  for (const log of session.exercises) {
+    if (prs.has(log.exerciseId) || unitOf(log.exerciseId, log.unit) === "min") continue;
+    const prev = before.flatMap((h) => h.exercises.filter((e) => e.exerciseId === log.exerciseId).flatMap(completedSets));
+    if (!prev.length) continue;
+    const sets = completedSets(log);
+    const load = (s: SetLog) => s.loadKg ?? 0;
+    const reps = (s: SetLog) => s.reps ?? 0;
+    if (ASSISTED.has(log.exerciseId)) {
+      const floor = log.planned?.repsMin ?? 1;
+      const prevHelp = prev.filter((s) => load(s) > 0 && reps(s) >= floor).map(load);
+      if (prevHelp.length && sets.some((s) => load(s) > 0 && reps(s) >= floor && load(s) < Math.min(...prevHelp))) prs.add(log.exerciseId);
+      continue;
+    }
+    const prevMaxLoad = Math.max(...prev.map(load));
+    const prevBest = Math.max(...prev.map((s) => e1rm(load(s), reps(s))));
+    const prevRepsAt = (kg: number) => Math.max(0, ...prev.filter((s) => load(s) >= kg).map(reps));
+    const record = sets.some((s) => {
+      const kg = load(s);
+      if (prevMaxLoad >= 20 && kg > prevMaxLoad * 2) return false;
+      if (prevMaxLoad === 0) return kg === 0 && reps(s) > prevRepsAt(0);
+      if (kg <= 0) return false;
+      return e1rm(kg, reps(s)) > prevBest || kg > prevMaxLoad || (kg === prevMaxLoad && reps(s) > prevRepsAt(kg));
+    });
+    if (record) prs.add(log.exerciseId);
+  }
+  return [...prs];
+}
+
+describe("recorde ao vivo: setRecord", () => {
+  const at = (n: number) => `2026-02-${String(n).padStart(2, "0")}T10:00:00Z`;
+  const hist = (sets: [number | null, number][], id = "supino_reto_barra") => priorSets([session("a", at(1), [log(sets, id)])], id, { id: "b", startedAt: at(8) });
+  const set = (loadKg: number | null, reps: number, done = true): SetLog => ({ loadKg, reps, done });
+  const target = (id = "supino_reto_barra", planned?: ExerciseLog["planned"]) => ({ exerciseId: id, planned });
+
+  it("compara com o histórico e com as séries já feitas nesta sessão", () => {
+    const prior = hist([[60, 8]]);
+    expect(setRecord(set(62.5, 8), target(), prior)).toBe(true);
+    // A mesma marca de novo, na mesma sessão, já não é recorde.
+    expect(setRecord(set(62.5, 8), target(), prior, [set(62.5, 8)])).toBe(false);
+    expect(setRecord(set(62.5, 9), target(), prior, [set(62.5, 8)])).toBe(true);
+    // Série não concluída no meio das anteriores não conta.
+    expect(setRecord(set(62.5, 8), target(), prior, [set(62.5, 8, false)])).toBe(true);
+    expect(setRecord(set(60, 8), target(), prior)).toBe(false);
+    expect(setRecord(set(62.5, 0), target(), prior)).toBe(false);
+    // Sem histórico, não há recorde.
+    expect(setRecord(set(100, 8), target(), [])).toBe(false);
+  });
+
+  it("trava de 2× só contra o histórico: o erro de digitação na sessão não esconde o recorde seguinte", () => {
+    const prior = hist([[60, 8]]);
+    expect(setRecord(set(600, 8), target(), prior)).toBe(false);
+    expect(setRecord(set(62.5, 8), target(), prior, [set(600, 8)])).toBe(true);
+  });
+
+  it("peso corporal, isometria, graviton e aeróbio", () => {
+    expect(setRecord(set(null, 13), target("barra_fixa"), hist([[null, 12]], "barra_fixa"))).toBe(true);
+    // Série com peso extra no meio não muda a regra de quem nunca usou carga.
+    expect(setRecord(set(null, 13), target("barra_fixa"), hist([[null, 12]], "barra_fixa"), [set(10, 15)])).toBe(true);
+    expect(setRecord(set(null, 13), target("barra_fixa"), hist([[null, 12]], "barra_fixa"), [set(null, 13)])).toBe(false);
+    expect(setRecord(set(null, 60), target("prancha"), hist([[null, 45]], "prancha"))).toBe(true);
+    expect(setRecord(set(30, 8), target("barra_fixa_assistida"), hist([[40, 8]], "barra_fixa_assistida"))).toBe(true);
+    expect(setRecord(set(30, 8), target("barra_fixa_assistida"), hist([[40, 8]], "barra_fixa_assistida"), [set(30, 8)])).toBe(false);
+    expect(setRecord(set(25, 8), target("barra_fixa_assistida"), hist([[40, 8]], "barra_fixa_assistida"), [set(30, 8)])).toBe(true);
+    // Menos ajuda com poucas reps (abaixo do mínimo da faixa) não vale.
+    expect(setRecord(set(30, 3), target("barra_fixa_assistida", { sets: 3, repsMin: 6, repsMax: 10 }), hist([[40, 8]], "barra_fixa_assistida"))).toBe(false);
+    expect(setRecord(set(null, 30), target("esteira_caminhada"), hist([[null, 20]], "esteira_caminhada"))).toBe(false);
+  });
+
+  it("recordFlags e firstRecordSet: estado derivado, desmarcar ou corrigir reps desfaz", () => {
+    const history = [session("a", at(1), [log([[60, 8]])])];
+    const now = { id: "b", startedAt: at(8) };
+    const live = log([[62.5, 8], [62.5, 8], [65, 6]]);
+    expect(recordFlags(live, priorSets(history, "supino_reto_barra", now))).toEqual([true, false, true]);
+    expect(firstRecordSet(live, history, now)).toBe(0);
+    const unmarked = { ...live, sets: live.sets.map((s, i) => (i === 0 ? { ...s, done: false } : s)) };
+    expect(firstRecordSet(unmarked, history, now)).toBe(1);
+    const fixed = { ...live, sets: [set(57.5, 8), set(60, 8), set(60, 7)] };
+    expect(firstRecordSet(fixed, history, now)).toBe(-1);
+  });
+
+  it("ao vivo concorda com detectPRs no fim, e detectPRs é o mesmo de antes (equivalência em casos sorteados)", () => {
+    // mulberry32: sorteio determinístico.
+    let seed = 7;
+    const rnd = () => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const pick = <T,>(xs: T[]): T => xs[Math.floor(rnd() * xs.length)]!;
+    const ids = ["supino_reto_barra", "barra_fixa", "barra_fixa_assistida", "prancha", "esteira_caminhada", "elevacao_lateral"];
+    const loads = [null, 0, 0, 5, 10, 20, 25, 30, 40, 60, 62.5, 65, 70, 140, 600];
+    const randomLog = (id: string): ExerciseLog => ({
+      uid: String(rnd()),
+      exerciseId: id,
+      name: id,
+      planned: rnd() < 0.5 ? { sets: 3, repsMin: pick([1, 5, 8]), repsMax: 12 } : undefined,
+      sets: Array.from({ length: 1 + Math.floor(rnd() * 5) }, () => ({ loadKg: pick(loads), reps: Math.floor(rnd() * 16), done: rnd() < 0.85 })),
+    });
+    const randomSession = (id: string, day: number) => session(id, at(day), Array.from({ length: 1 + Math.floor(rnd() * 3) }, () => randomLog(pick(ids))));
+    let records = 0;
+    for (let k = 0; k < 6000; k++) {
+      const past = Array.from({ length: Math.floor(rnd() * 4) }, (_, i) => randomSession(`h${i}`, 1 + Math.floor(rnd() * 20)));
+      const now = randomSession("now", 10);
+      const history = [...past, now];
+      const prs = detectPRs(now, history);
+      expect(prs, JSON.stringify({ past, now })).toEqual(legacyDetectPRs(now, history));
+      for (const l of now.exercises) {
+        const live = firstRecordSet(l, history, now) >= 0;
+        if (live) expect(prs).toContain(l.exerciseId);
+        if (live) records++;
+      }
+      for (const id of prs) expect(now.exercises.some((l) => l.exerciseId === id && firstRecordSet(l, history, now) >= 0)).toBe(true);
+    }
+    // O sorteio precisa exercitar recordes de verdade.
+    expect(records).toBeGreaterThan(400);
+  });
+});
+
+describe("recorde ao vivo: série que bateu a marca", () => {
+  const at = (n: number) => `2026-02-${String(n).padStart(2, "0")}T10:00:00Z`;
+
+  it("o resumo mostra a série do recorde, não a mais pesada; a última série recorde é a melhor marca", () => {
+    const history = [session("a", at(1), [log([[70, 5], [60, 10]])])];
+    const now = session("b", at(8), [log([[62.5, 10], [65, 3]])]);
+    expect(recordSetOf(now, history, "supino_reto_barra")?.set).toMatchObject({ loadKg: 62.5, reps: 10 });
+    const chain = session("c", at(8), [log([[72.5, 5], [72.5, 6], [60, 8]])]);
+    expect(recordSetOf(chain, history, "supino_reto_barra")?.set).toMatchObject({ loadKg: 72.5, reps: 6 });
+    expect(recordSetOf(session("d", at(8), [log([[60, 8]])]), history, "supino_reto_barra")).toBeNull();
+  });
+
+  it("fmtMark: nunca '0 kg × 15' no peso corporal", () => {
+    expect(fmtMark({ loadKg: 42.5, reps: 8 }, "supino_reto_barra")).toBe("42,5 kg × 8");
+    expect(fmtMark({ loadKg: 0, reps: 15 }, "barra_fixa")).toBe("15 reps");
+    expect(fmtMark({ loadKg: null, reps: 1 }, "barra_fixa")).toBe("1 rep");
+    expect(fmtMark({ loadKg: null, reps: 60 }, "prancha")).toBe("60 s");
+    expect(fmtMark({ loadKg: 10, reps: 60 }, "prancha")).toBe("10 kg · 60 s");
+    expect(fmtMark({ loadKg: 30, reps: 8 }, "barra_fixa_assistida")).toBe("30 kg de ajuda × 8");
+    expect(fmtMark({ loadKg: null, reps: 20 }, "esteira_caminhada")).toBe("20 min");
+    // Unidade do registro manda (exercício personalizado contado em segundos).
+    expect(fmtMark({ loadKg: null, reps: 40 }, "custom_x", "seg")).toBe("40 s");
+  });
+});
+
+// ───────────────────────── Fim de treino: desde o último Treino B ─────────────────────────
+
+describe("fim de treino: compareWithLastSameDay", () => {
+  const at = (n: number) => `2026-04-${String(n).padStart(2, "0")}T10:00:00Z`;
+  const named = (name: string, sets: [number | null, number][], id: string, planned?: ExerciseLog["planned"]): ExerciseLog => ({ ...log(sets, id, planned), name });
+  const day = (id: string, n: number, dayKey: string | undefined, logs: ExerciseLog[], programId: string | null = "p1"): Session => ({ ...session(id, at(n), logs), programId, dayKey });
+
+  it("primeira vez naquele dia: variante própria, sem linhas", () => {
+    const now = day("now", 10, "B", [named("Agachamento", [[60, 10]], "agachamento_livre")]);
+    // Outro dia da mesma ficha e o mesmo dia de outra ficha não contam.
+    const history = [day("a", 3, "A", [named("Agachamento", [[50, 10]], "agachamento_livre")]), day("b", 4, "B", [named("Agachamento", [[50, 10]], "agachamento_livre")], "p0"), now];
+    expect(compareWithLastSameDay(now, history)).toEqual({ variant: "first", dayLabel: "Treino B", lines: [], firstText: "Primeiro Treino B registrado. Na próxima, a gente compara." });
+    // Treino livre: nada a mostrar.
+    expect(compareWithLastSameDay(day("free", 10, undefined, [], null), history)).toEqual({ variant: "none", dayLabel: null, lines: [] });
+  });
+
+  it("carga, reps com a mesma carga e tempo", () => {
+    const prev = day("a", 3, "B", [named("Agachamento", [[60, 8], [60, 8]], "agachamento_livre"), named("Supino reto", [[40, 10], [40, 10], [40, 9]], "supino_reto_barra"), named("Prancha", [[null, 45], [null, 40]], "prancha")]);
+    const now = day("b", 10, "B", [named("Agachamento", [[62.5, 8], [62.5, 6]], "agachamento_livre"), named("Supino reto", [[40, 11], [40, 10], [40, 9]], "supino_reto_barra"), named("Prancha", [[null, 60], [null, 45]], "prancha")]);
+    expect(compareWithLastSameDay(now, [prev, now]).lines).toEqual(["Agachamento: 60 → 62,5 kg", "Supino reto: +1 rep com 40 kg", "Prancha: 45 → 60 s"]);
+    expect(compareWithLastSameDay(now, [prev, now]).variant).toBe("compare");
+  });
+
+  it("peso corporal e graviton (menos ajuda conta como melhora)", () => {
+    const prev = day("a", 3, "B", [named("Barra fixa", [[null, 8], [null, 7]], "barra_fixa"), named("Graviton", [[30, 8], [30, 8]], "barra_fixa_assistida"), named("Flexão", [[null, 10]], "flexao")]);
+    const now = day("b", 10, "B", [named("Barra fixa", [[null, 10], [null, 7]], "barra_fixa"), named("Graviton", [[25, 8], [25, 7]], "barra_fixa_assistida"), named("Flexão", [[5, 8]], "flexao")]);
+    expect(compareWithLastSameDay(now, [prev, now]).lines).toEqual(["Graviton: 30 → 25 kg de ajuda", "Flexão: +5 kg extra", "Barra fixa: 8 → 10 reps"]);
+    // Mais ajuda não é melhora; mesma ajuda com mais reps é.
+    const more = day("c", 10, "B", [named("Graviton", [[35, 10], [35, 10]], "barra_fixa_assistida")]);
+    expect(compareWithLastSameDay(more, [prev, more]).lines).toEqual([]);
+    const reps = day("d", 10, "B", [named("Graviton", [[30, 9], [30, 8]], "barra_fixa_assistida")]);
+    expect(compareWithLastSameDay(reps, [prev, reps]).lines).toEqual(["Graviton: +1 rep com 30 kg de ajuda"]);
+  });
+
+  it("exercício trocado: compara com o último registro dele em qualquer treino", () => {
+    const a = day("a", 2, "A", [named("Supino com halteres", [[20, 10]], "supino_reto_halter")]);
+    const b = day("b", 3, "B", [named("Supino reto", [[40, 10]], "supino_reto_barra"), named("Remada", [[40, 10]], "remada_baixa")]);
+    const now = day("c", 10, "B", [named("Supino com halteres", [[22, 10]], "supino_reto_halter"), named("Remada", [[45, 10]], "remada_baixa"), named("Crucifixo", [[14, 12]], "crucifixo_halter")]);
+    expect(compareWithLastSameDay(now, [a, b, now]).lines).toEqual(["Supino com halteres: 20 → 22 kg", "Remada: 40 → 45 kg"]);
+  });
+
+  it("nenhum avanço: bloco vazio, nunca 'piorou'; aeróbio e erro de digitação não entram", () => {
+    const prev = day("a", 3, "B", [named("Supino reto", [[40, 10], [40, 10]], "supino_reto_barra"), named("Esteira", [[null, 20]], "esteira_caminhada"), named("Leg press", [[100, 10], [100, 10]], "leg_press")]);
+    const now = day("b", 10, "B", [named("Supino reto", [[37.5, 10], [40, 9]], "supino_reto_barra"), named("Esteira", [[null, 40]], "esteira_caminhada"), named("Leg press", [[1000, 10], [1000, 10]], "leg_press")]);
+    expect(compareWithLastSameDay(now, [prev, now])).toEqual({ variant: "compare", dayLabel: "Treino B", lines: [] });
+  });
+
+  it("série mais leve no treino de hoje não esconde o avanço das séries reais", () => {
+    const prev = day("a", 3, "B", [named("Supino reto", [[40, 10], [40, 10], [40, 10]], "supino_reto_barra")]);
+    const now = day("b", 10, "B", [named("Supino reto", [[4, 10], [42.5, 10], [42.5, 10]], "supino_reto_barra")]);
+    expect(compareWithLastSameDay(now, [prev, now]).lines).toEqual(["Supino reto: 40 → 42,5 kg"]);
+  });
+
+  it("usa o treino B mais recente, no máximo 3 linhas, carga antes de reps", () => {
+    const old = day("a", 1, "B", [named("A1", [[10, 10]], "rosca_direta_barra")]);
+    const prev = day("b", 3, "B", [named("A1", [[20, 10]], "rosca_direta_barra"), named("A2", [[30, 10]], "puxada_frente"), named("A3", [[40, 10]], "remada_baixa"), named("A4", [[50, 10]], "leg_press"), named("A5", [[20, 10]], "cadeira_extensora")]);
+    const now = day("c", 10, "B", [named("A1", [[20, 12]], "rosca_direta_barra"), named("A2", [[35, 10]], "puxada_frente"), named("A3", [[45, 10]], "remada_baixa"), named("A4", [[60, 10]], "leg_press"), named("A5", [[25, 10]], "cadeira_extensora")]);
+    const later = day("d", 20, "B", [named("A1", [[5, 5]], "rosca_direta_barra")]);
+    const out = compareWithLastSameDay(now, [old, later, prev, now]);
+    expect(out.lines).toEqual(["A2: 30 → 35 kg", "A3: 40 → 45 kg", "A4: 50 → 60 kg"]);
+    expect(compareWithLastSameDay(now, [old, prev, now], 5).lines).toEqual(["A2: 30 → 35 kg", "A3: 40 → 45 kg", "A4: 50 → 60 kg", "A5: 20 → 25 kg", "A1: +2 reps com 20 kg"]);
+  });
+});
+
+describe("fim de treino: 1º treino da semana", () => {
+  it("'Semana N seguida' só no 1º treino da semana (segunda a domingo)", () => {
+    const mon = { id: "mon", startedAt: "2026-03-16T12:00:00Z" };
+    const wed = { id: "wed", startedAt: "2026-03-18T12:00:00Z" };
+    const lastSun = { id: "sun", startedAt: "2026-03-15T12:00:00Z" };
+    expect(firstOfWeek(mon, [lastSun, mon, wed])).toBe(true);
+    expect(firstOfWeek(wed, [lastSun, mon, wed])).toBe(false);
+    expect(firstOfWeek(wed, [lastSun, wed])).toBe(true);
   });
 });
 
