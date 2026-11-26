@@ -358,3 +358,116 @@ estimada logo abaixo de um 1RM válido (duas marcas de 12 reps).
 **Acabamento.** Selects Descanso, Contagem e Técnica do editor em 16 px (sem `text-sm`, R13 da U8). Logo de /receber
 e /abrir com 44 px de altura. Cartão do relatório no resumo do aluno: "exercícios que melhoraram". Em `leitura_metas`
 a dieta não mostra "Cardápio de Rafael · versão de …" (contradizia "sem cardápio por refeição").
+
+## 2026-11-26 — Questionário inicial: entradas 1 a 27 da spec da anamnese (§17)
+
+Registradas pela fundação (F0) de uma vez, com a numeração da spec (`spec.md §17`), para a spec e as trilhas citarem
+"entrada N". A data de cada uma é a da decisão. Onde o código mudou depois da spec (rodada 1 de UX), a entrada diz o
+que vale agora.
+
+1. **2026-11-23 — "Questionário inicial" na interface; `anamnese` no código.** Motivo: a Res. CFM 2.416/2024 chama
+   de ato médico a anamnese da história clínica.
+2. **2026-11-23 — PAR-Q literal do Anexo I (7 perguntas) e termo opcional por caixa de confirmação.** Motivo: texto
+   conferido na Alesp; a lei condiciona a matrícula, não o envio; nome digitado não traz ganho no beta.
+3. **2026-11-23 — Alertas em 4 níveis; vermelho trava o gerador assistido até a liberação; laranja abre porta com
+   "Seguir mesmo assim"; PAR-Q 5 ou 6 isolado não abre porta.** Motivo: diretriz do ACSM e calibragem contra excesso
+   de encaminhamento. Confirmada pelo dono (entrada 19, pergunta 1).
+4. **2026-11-23 — `intensityCap` no lugar de `cautious`; vale para a ficha inteira e é desligável no gerador.** Motivo:
+   `conservative` só age no 5×5; o motor não tem fases.
+5. **2026-11-23 — Mescla por campo: treino e medidas mantêm o personal; sexo e ano usam o aluno; nas limitações, o app
+   junta e tira só os termos que ele mesmo pôs (`limitacoesDoQuestionario`); autorização original mantida.**
+6. **2026-11-23 — Texto livre não entra em Limitações; parte de cima das costas fora do motor.** Motivo: a regex de
+   lombar do gerador casa "coluna" e "dor … costas".
+7. **2026-11-23 — Respostas voltam comprimidas, sem cifra, com aviso explícito; cifra no próximo lote, depois de teste
+   em aparelhos.** Confirmada pelo dono e pelo tech lead em 26/11: o link de respostas é comprimido como o da ficha, e o
+   texto de autorização avisa que quem tiver o link consegue ler as respostas.
+8. **2026-11-23 — "Montar dieta" condicionado ao jeito de trabalhar; passo clínico de nutricionista sempre acima.**
+   Motivo: Lei 8.234/1991. Confirmada pelo dono (entrada 19, pergunta 2): para quem encaminha ao nutricionista ou tem
+   parceiro, some só o PASSO; a aba Dieta continua.
+9. **2026-11-23 — Novo `ConsentSource: "aluno_questionario"`; `CONSENT_TEXT_ID = "c1"`.** No preenchimento junto, a
+   origem é `"personal"`.
+10. **2026-11-23 — Primeiro lote só com condutas FATO; alertas de precaução podem ser HIPÓTESE e são rotulados.**
+11. **2026-11-23 — Preencher junto em `/questionario?aluno=` (rota estática, offline); sem rede, o fim do junto também
+    fica em `/questionario`.**
+12. **2026-11-23 — A divisão da ficha não é perguntada no jeito de trabalhar: padrão aprendido (Entrega 2) e "Divisão
+    preferida" em Conta.**
+13. **2026-11-23 — Base legal das respostas de saúde: consentimento (art. 11, I), mesmo com o art. 11, II, "f"
+    disponível.** HIPÓTESE jurídica.
+14. **2026-11-23 — PostHog em memória em `/questionario` com `#d=` e sem perfil de personal; IP descartado nessa
+    página.** Motivo: o aluno do link não aceitou os termos do app; o personal no junto mantém o `distinct_id`. O
+    `href` e os atributos de elemento já não saem (`instrumentation-client.ts`, commit `71741e0` e rodada 1): o track D
+    só acrescenta o que falta (`ph-no-capture` nas telas do questionário, persistência em memória, IP).
+15. **2026-11-23 — Cadastro rápido grava só nome e telefone.** Motivo: os padrões de treino gravados criariam
+    diferenças falsas na mescla.
+16. **2026-11-23 — Edição do aluno não grava padrões; Limitações com `maxLength` de 1.000.** Motivo: a edição gravava
+    hipertrofia, iniciante, 3 dias, 60 min e academia sem ninguém escolher; teto do link da ficha.
+17. **2026-11-23, adaptada em 26/11 — Envio da ficha: link como ação principal no editor e texto como secundário.** O
+    `program.sharedAt` da spec NÃO existe: vale a entrada "Um registro só do envio da ficha" (23/11, acima). O toque
+    grava `sr:sent:{aluno}:ficha` e o passo `enviar_ficha` lê esse registro (`PassosInput.envioFicha`, a
+    `FichaDelivery` de `useFichaDelivery`). `saveProgram`/`saveDiet(…, { keepUpdatedAt })` já estão na interface, no
+    modo local e na nuvem desde a rodada 1. `useFichaLink` mora em `src/lib/use-ficha-link.ts` (reexportado por
+    `transfer-share.tsx`) e o painel do editor (`SendFichaLink`) já tem "Enviar link no WhatsApp" como ação principal
+    e "Mandar como texto" como secundária.
+18. **2026-11-23, substituída em 26/11 pela entrada 20 — Duas entregas e chave `questionario`.** As duas entregas
+    continuam. A chave não fica mais restrita ao `/testar` e ao convite: vem ligada para todos (entrada 20).
+19. **2026-11-23 — Aprovação do dono (passo F-1).** Resposta do dono ao resumo: "Veja tudo isso bote na ordem… só o
+    que for válido você executa". Não há gate pendente. Respostas às perguntas da §19:
+    1. Trava em "Gerar ficha com estas respostas" só no alerta VERMELHO, até o personal registrar a liberação; laranja
+       abre a porta "Seguir mesmo assim"; "sim" isolado no PAR-Q 5 ou 6 só lembra o termo; montar a ficha do zero
+       continua possível.
+    2. Para quem encaminha ao nutricionista ou tem parceiro, some só o PASSO "Montar dieta"; a aba Dieta continua (com
+       gatilho clínico, o aviso fixo na aba).
+    3. Menores de 18 entram na Entrega 1: responsável obrigatório para enviar dados de saúde (sem ele, só "Enviar sem
+       dados de saúde"), lembrete legal A-MENOR e, abaixo de 12 anos, faixa pedindo que o responsável preencha.
+    4. Perguntas próprias do personal: não nesta entrega (Entrega 2).
+    5. Revisão clínica: entrada 20.
+20. **2026-11-26 — Revisão clínica da §16.1: RECOMENDADA, não bloqueia.** Decisão do dono e do tech lead. A revisão
+    por um profissional de educação física com CREF e por um médico do esporte continua recomendada, mas não segura a
+    Entrega 1. A chave `questionario` (`src/lib/flags.ts`) vem LIGADA PARA TODOS (`QUESTIONARIO_PADRAO = "todos"`) e
+    existe para desligar rápido: `NEXT_PUBLIC_QUESTIONARIO=convite` no build volta ao `/testar` e ao convite
+    (`/entrar?beta=questionario`); `=desligada` desliga para todos. Mitigação: textos de alerta só com fonte (PAR-Q
+    literal do Anexo I da Lei SP 16.724/2018 e triagem do ACSM), e o resumo diz que não substitui a avaliação
+    presencial. Quando a revisão acontecer, nomes, registros profissionais e data entram aqui.
+21. **2026-11-23 — Medição do aluno do link por legítimo interesse (art. 7º, IX), só contagens e categorias, com aviso
+    no rodapé e IP descartado.** HIPÓTESE jurídica.
+22. **2026-11-23 — Calibragem: "pressão alta" e "artrose" como token só quando pedem; A-CIRURGIA azul; "sem treino
+    regular" fora dos alertas; assoalho na gestante sem token de pós-parto.** Motivo: regras de população do gerador e
+    fadiga de alerta.
+23. **2026-11-23 — Respostas casam por `studentRef`; sem ref, pelo nome completo e com confirmação.**
+24. **2026-11-23 — `readAnamnese` como única porta de leitura; versão nova ou dado danificado viram trava;
+    restauração mantém a anamnese mais nova e une liberações.** Motivo: a restauração gravava o perfil como veio.
+25. **2026-11-23 — Reavaliação "só a saúde" pergunta ano e sexo e herda as respostas de treino; idade ou sexo
+    desconhecido mostram as perguntas de segurança.** Entrega 2.
+26. **2026-11-23 — Eventos sem derivado de saúde: nada de `dorMais`, `modulos_n` pelo pedido, `dieta` e
+    `nutricionista` fora de `next_step_clicked`.**
+27. **2026-11-23 — WhatsApp aberto no toque, com o link montado antes; a regra "nunca `<a href>`" cai.** Motivo:
+    Safari do iPhone; `href` já protegido (`71741e0`).
+
+## 2026-11-26 — Fundação do questionário: o que mudou em relação à spec
+
+**Medição com tipo fechado.** Os 12 eventos do questionário e o `link_dead_end_shown` entram em `StrictEventProps`
+(como os da UX de 23/11), com as chaves em `EVENT_PROPS`; um teste de tipo garante que as duas listas batem. Por isso
+as funções de `anamnese-events.ts` devolvem o tipo fechado de cada evento (não `TrackProps`), e as chaves novas de
+eventos antigos têm tipo próprio (`ProgramGeneratedExtra`, `FichaLinkExtra`, `StudentCreatedExtra`). `evNextStep`
+aceita também `"lembrar"` (a ação "Lembrar {aluno}"), que a spec lista como valor de `passo` mas não é um `StepId`.
+
+**"Enviado sem saúde" também não sai por ausência.** No modo junto sem a autorização da boas-vindas, as partes `parq`,
+`saude` e `dor` não existem: `evPartDone` devolve null para elas no junto, `secoesDoPedido` (base de `indice`) não
+depende de `semSaude`, e `anamnese_sent.incompleto` não conta as partes de saúde deixadas de fora por falta de
+autorização. Motivo: a spec §11.3 põe "enviado sem saúde" entre os derivados proibidos.
+
+**Envio da ficha.** `PassosInput.activeProgram` perde `sharedAt` e o passo `enviar_ficha` lê `envioFicha:
+FichaDelivery | null` (entrada 17). `Program.sugerido` entra tipado; o teste da assinatura da ficha passou a usar esse
+formato no lugar do `sugerido: true` provisório. O `useFichaLink` da rodada 1 não foi recriado: a assinatura real é
+`useFichaLink(student, enabled, opts?: { where?, version? })`, com `estado.programa`/`estado.dieta` como objetos,
+`entrega`, `toque` e `aoEnviar(via)` devolvendo o toque.
+
+**Itens da Entrega 2 nos esqueletos.** Ficam com a assinatura e retorno neutro, marcados "[E2] Não implementar na
+Entrega 1": `diffAnswers`, `herdarDaAnterior`, `reconfirmarLiberacao`, `cuidadosNaFicha`, `proximaReavaliacao`,
+`learnedSuggestion`, `aceitarSugestao`, `dispensarSugestao` e `evWorkStyleSuggestion`. Os tipos de dados da Entrega 2
+(partes extras, reavaliação, perguntas próprias, letra maior, validade da liberação) ficam completos: são o formato do
+link e do aparelho.
+
+**Outros.** `QUESTIONARIO_DESDE` é provisório (2026-11-26, a data da fundação): a costura troca pela data de
+publicação. `hasHealthData` passa a contar o questionário com saúde (`anamnese` sem `healthOmitted`). `CopyButton`
+mudou para `src/components/copy-button.tsx` sem mudar o comportamento.

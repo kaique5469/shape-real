@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, DatabaseBackup, FileSpreadsheet, LogOut, MessageSquareText, RotateCcw, Trash2 } from "lucide-react";
+import { Check, DatabaseBackup, FileSpreadsheet, IdCard, LogOut, MessageSquareText, RotateCcw, ShieldAlert, Trash2 } from "lucide-react";
 import { Alert, Badge, Button, Dialog, Field, Input, PageHeader, Panel, Segmented, Select, Textarea } from "@/components/ui";
 import { useApp, localRepo } from "@/lib/app-context";
 import { ACTIVITY_LABEL } from "@/lib/domain/nutrition";
@@ -20,6 +20,11 @@ import { maskPhone } from "@/lib/domain/format";
 import { CREF_MAX, crefLooksValid, maskCref, normalizeCref } from "@/lib/domain/cref";
 import { consentConfirmed, consentFromCheckbox } from "@/lib/domain/transfer";
 import { makeBackup } from "@/lib/transfer-client";
+import { WorkStyleForm } from "@/components/work-style-form";
+import { evWorkStyleSet } from "@/lib/anamnese-events";
+import type { WorkStyle } from "@/lib/domain/anamnese-types";
+import { AVISO_CREF, comDefinido, oQueMuda, resolveDefaults } from "@/lib/domain/work-style";
+import { estadoChave, questionarioLigado } from "@/lib/flags";
 import type { ActivityLevel, Equipment, Goal, Level, PlanId, Profile, Sex, SystemId } from "@/lib/domain/types";
 
 /** Apaga tudo o que o app guarda neste aparelho (dados, registro de envio, rascunho do treino, sessão local). */
@@ -53,6 +58,24 @@ export default function ContaPage() {
   const [delText, setDelText] = useState("");
   /** O aviso de formato do CREF só aparece depois que a pessoa sai do campo (não enquanto digita). */
   const [crefTouched, setCrefTouched] = useState(Boolean(user!.cref));
+  // "Seu jeito de trabalhar" (spec §3.1): só para o personal, com a chave do questionário ligada (em "todos" já no
+  // primeiro render; nos outros estados, lida depois de montar).
+  const [jeitoLigado, setJeitoLigado] = useState(() => estadoChave() === "todos");
+  const [ws, setWs] = useState<WorkStyle | undefined>(user!.workStyle);
+  const [wsSaving, setWsSaving] = useState(false);
+  const [wsMsg, setWsMsg] = useState<{ tone: "done" | "error"; text: string } | null>(null);
+  useEffect(() => setJeitoLigado(questionarioLigado()), []);
+  const showJeito = jeitoLigado && user!.role === "coach" && !returnTo;
+  // /conta?jeito=1 (cartão em /alunos): rola até o painel e põe o foco no título.
+  useEffect(() => {
+    if (!showJeito || new URLSearchParams(window.location.search).get("jeito") !== "1") return;
+    const el = document.getElementById("jeito");
+    if (!el) return;
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    el.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
+    el.querySelector<HTMLElement>("h2")?.setAttribute("tabindex", "-1");
+    el.querySelector<HTMLElement>("h2")?.focus({ preventScroll: true });
+  }, [showJeito]);
 
   useEffect(() => {
     if (user!.role === "athlete") repo.getCoach(user!.id).then(setCoach);
@@ -74,7 +97,10 @@ export default function ContaPage() {
       if (hasBody && !consentConfirmed(form)) throw new Error("Para salvar peso, altura e idade, marque a autorização de dados de saúde.");
       const cref = user!.role === "coach" ? normalizeCref(form.cref) : form.cref;
       const crefBefore = user!.cref;
-      await updateProfile({ ...form, weightKg: w, name: form.name.trim() || user!.name, cref });
+      // O jeito de trabalhar tem painel e botão próprios: o "Salvar perfil" não regrava a versão de quando a tela abriu.
+      const { workStyle: _ws, ...perfil } = form;
+      void _ws;
+      await updateProfile({ ...perfil, weightKg: w, name: form.name.trim() || user!.name, cref });
       // Só a situação (preenchido, no formato ou não), nunca o número.
       if (user!.role === "coach" && (cref ?? "") !== (crefBefore ?? "")) track("coach_cref_set", { filled: Boolean(cref), valid: crefLooksValid(cref), first: !crefBefore });
       if (cref !== form.cref) set({ cref });
@@ -84,6 +110,23 @@ export default function ContaPage() {
       setMsg({ tone: "error", text: err instanceof Error ? err.message : "Não foi possível salvar." });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function saveJeito() {
+    setWsSaving(true);
+    setWsMsg(null);
+    try {
+      const workStyle = comDefinido(ws, new Date().toISOString());
+      await updateProfile({ workStyle });
+      setWs(workStyle);
+      track("work_style_set", evWorkStyleSet(workStyle, "conta", false));
+      setWsMsg({ tone: "done", text: "Jeito de trabalhar salvo. Vale para os próximos cadastros, questionários e fichas." });
+    } catch (e) {
+      reportError(e, "conta:jeito");
+      setWsMsg({ tone: "error", text: "Não foi possível salvar neste aparelho. Tente de novo." });
+    } finally {
+      setWsSaving(false);
     }
   }
 
@@ -270,6 +313,43 @@ export default function ContaPage() {
           </form>
         </Panel>
 
+        {showJeito ? (
+          <section id="jeito" className="scroll-mt-4">
+            <Panel title="Seu jeito de trabalhar">
+              <p className="mb-5 max-w-[60ch] text-[0.9375rem] text-steel">Com isso, o cadastro, o questionário e a ficha já vêm do seu jeito. Em cada aluno, você ainda muda o que quiser.</p>
+              <WorkStyleForm
+                value={ws}
+                onChange={(next) => {
+                  setWs(next);
+                  setWsMsg(null);
+                }}
+              />
+              {resolveDefaults(ws, { hasCref: Boolean(user!.cref?.trim()) }).avisoCref ? (
+                <p className="mt-5 flex items-start gap-2 text-[0.9375rem]">
+                  <IdCard className="mt-0.5 size-4 shrink-0 text-warn-ink" aria-hidden />
+                  <span>{AVISO_CREF}</span>
+                </p>
+              ) : null}
+              <details className="mt-5 rounded-[var(--radius-ficha)] border border-rule">
+                <summary className="flex min-h-11 cursor-pointer items-center px-3 text-[0.9375rem] font-semibold">O que isso muda</summary>
+                <ul className="list-disc space-y-1.5 border-t border-rule py-3 pl-8 pr-3 text-sm">
+                  {oQueMuda(ws).map((linha) => (
+                    <li key={linha}>{linha}</li>
+                  ))}
+                </ul>
+              </details>
+              {wsMsg ? (
+                <Alert tone={wsMsg.tone} className="mt-4">
+                  {wsMsg.text}
+                </Alert>
+              ) : null}
+              <Button className="mt-4" onClick={() => void saveJeito()} loading={wsSaving}>
+                Salvar jeito de trabalhar
+              </Button>
+            </Panel>
+          </section>
+        ) : null}
+
         {user!.role === "athlete" && (coach || repo.capabilities.invites) ? (
           <Panel title="Personal">
             {coach ? (
@@ -390,6 +470,12 @@ export default function ContaPage() {
           <section id="copia">
             <Panel title="Cópia de segurança">
               <BackupReminder where="conta" className="-mt-1 mb-2" />
+              {user!.role === "coach" ? (
+                <p className="mb-2 flex max-w-[60ch] items-start gap-2 text-[0.9375rem]">
+                  <ShieldAlert className="mt-0.5 size-4 shrink-0 text-warn-ink" aria-hidden />
+                  <span>O arquivo tem respostas de saúde dos seus alunos. Guarde em um lugar só seu.</span>
+                </p>
+              ) : null}
               <p className="max-w-[60ch] text-[0.9375rem] text-steel">
                 {mode === "local"
                   ? `Tudo fica neste aparelho. A cópia junta num arquivo só ${user!.role === "coach" ? "seus alunos, " : ""}fichas, treinos, medidas e dieta, para levar a outro celular ou ao app instalado. Salve o arquivo no celular (no iPhone, em Arquivos) e toque em Restaurar. Fotos não entram na cópia.`

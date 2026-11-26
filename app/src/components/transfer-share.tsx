@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useId, useState } from "react";
-import { Check, Copy, MessageCircle, Send, Smartphone } from "lucide-react";
+import { MessageCircle, Send, Smartphone } from "lucide-react";
+import { CopyButton } from "@/components/copy-button";
 import { DeliveryLine, StatusRegion } from "@/components/delivery-status";
 import { Alert, Button, Dialog, Skeleton } from "@/components/ui";
 import { reportError, track, type FichaLinkWhere, type TreinosLinkWhere } from "@/lib/analytics";
@@ -19,35 +20,13 @@ export { useFichaDelivery, useFichaLink };
 
 const origin = () => (typeof window !== "undefined" ? window.location.origin : "");
 
-function CopyButton({ text, label = "Copiar mensagem", onCopied }: { text: string; label?: string; onCopied?: () => void }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <Button
-      variant="secondary"
-      className="flex-1 whitespace-nowrap"
-      icon={copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-      onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(text);
-          setCopied(true);
-          onCopied?.();
-          setTimeout(() => setCopied(false), 2000);
-        } catch {
-          /* sem área de transferência: o botão do WhatsApp continua */
-        }
-      }}
-    >
-      {copied ? "Copiado" : label}
-    </Button>
-  );
-}
-
 /**
  * Personal → celular do aluno. Monta um link com a ficha ativa e a dieta (`useFichaLink`); o aluno abre e passa a
  * treinar pelo app no próprio celular, sem cadastro. O toque grava o registro único do envio
  * (`sr:sent:{aluno}:ficha`, com as versões que foram) e o diálogo mostra o que o aparelho viu: "Envio iniciado",
  * "Mensagem copiada", nunca que a mensagem saiu ou chegou (U2 §3.5 personal 1–2).
  * `showLines="page"`: uma linha de situação sob o botão (M da U2 §3.3), ligada a ele por `aria-describedby`.
+ * `open`/`onOpenChange` + `hideTrigger`: o diálogo aberto por outra tela (passo "Enviar a ficha" dos próximos passos).
  */
 export function SendToStudent({
   student,
@@ -58,6 +37,9 @@ export function SendToStudent({
   variant = "secondary",
   version = 0,
   onSent,
+  open: openProp,
+  onOpenChange,
+  hideTrigger = false,
 }: {
   student: Profile;
   /** Medição (`ficha_link_sent.where`). */
@@ -70,8 +52,18 @@ export function SendToStudent({
   version?: number;
   /** Depois do toque: canal e a hora gravada no registro. */
   onSent?: (via: PrepVia, at: string) => void;
+  /** Diálogo controlado por quem chama (com `onOpenChange`). Sem a prop, o próprio botão abre. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** Só o diálogo, sem o botão (quem chama tem o próprio gatilho). */
+  hideTrigger?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [openState, setOpenState] = useState(false);
+  const open = openProp ?? openState;
+  const setOpen = (o: boolean) => {
+    if (openProp === undefined) setOpenState(o);
+    onOpenChange?.(o);
+  };
   const [tick, setTick] = useState(0);
   const first = firstName(student.name);
   const { estado, erro, entrega, toque, aoEnviar } = useFichaLink(student, open, { where });
@@ -91,10 +83,12 @@ export function SendToStudent({
 
   return (
     <>
-      <Button variant={variant} className={className} disabled={disabled} icon={<Smartphone className="size-4" />} onClick={() => setOpen(true)} aria-describedby={pageLine?.page ? lineId : undefined}>
-        Enviar para o celular de {first}
-      </Button>
-      {pageLine?.page ? (
+      {hideTrigger ? null : (
+        <Button variant={variant} className={className} disabled={disabled} icon={<Smartphone className="size-4" />} onClick={() => setOpen(true)} aria-describedby={pageLine?.page ? lineId : undefined}>
+          Enviar para o celular de {first}
+        </Button>
+      )}
+      {!hideTrigger && pageLine?.page ? (
         <p className="mt-1.5 text-sm">
           <DeliveryLine id={lineId} icon={pageLine.pageIcon ?? "pendente"}>
             {pageLine.page}

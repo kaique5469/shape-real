@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ATTENTION_ORDER,
   LIST_TOOLS_MIN,
+  QUESTIONARIO_LEMBRAR_DIAS,
   calendarDaysSince,
   contactMessage,
   contactReason,
@@ -413,4 +414,44 @@ describe("resultsStatus e LIST_TOOLS_MIN (U4a)", () => {
     expect(resultsStatus(Number.NaN)).toBe("Nenhum aluno");
   });
   it("a busca aparece a partir de 7 linhas, como antes", () => expect(LIST_TOOLS_MIN).toBe(7));
+});
+
+describe("questionário pendente na fila de contato (track C)", () => {
+  const soon = programValidity(iso(28, 10, 10), 4, NOW);
+  it("entra com 2 dias de pedido sem resposta e fica de fora com 1 dia", () => {
+    expect(QUESTIONARIO_LEMBRAR_DIAS).toBe(2);
+    expect(contactReason(false, null, true, 2)).toBe("questionario_pendente");
+    expect(contactReason(false, null, true, 9)).toBe("questionario_pendente");
+    expect(contactReason(false, null, true, 1)).toBeNull();
+    expect(contactReason(false, null, true, 0)).toBeNull();
+  });
+  it("sem pedido pendente (null: sem pedido ou com respostas mais novas) é o resultado de antes", () => {
+    expect(contactReason(true, null, true, null)).toBe("sem_noticias");
+    expect(contactReason(false, soon, true, null)).toBe("ficha_vencendo");
+    expect(contactReason(false, null, false, null)).toBeNull();
+  });
+  it("vem antes de sem notícias e de ficha vencendo, e vale também sem ficha", () => {
+    expect(contactReason(true, soon, true, 3)).toBe("questionario_pendente");
+    expect(contactReason(false, null, false, 3)).toBe("questionario_pendente");
+    expect(contactReason(true, null, false, 3)).toBe("questionario_pendente");
+  });
+  it("regressão: sem o quarto argumento, igual ao de antes", () => {
+    expect(contactReason(true, soon)).toBe("sem_noticias");
+    expect(contactReason(false, soon)).toBe("ficha_vencendo");
+    expect(contactReason(false, null)).toBeNull();
+    expect(contactReason(true, null, false)).toBeNull();
+    expect(contactReason(true, null, true)).toBe("sem_noticias");
+  });
+  it("mensagem: só o primeiro nome, sem link, sem 'mesmo celular' e sem prometer que continua de onde parou", () => {
+    const m = contactMessage("questionario_pendente", "Beatriz Lima Souza");
+    expect(m).toBe("Oi, Beatriz! Conseguiu ver o questionário? Se parou no meio, é só abrir o link de novo.");
+    expect(m).not.toContain("Lima");
+    expect(m).not.toMatch(/mesmo celular|continua de onde parou|https?:|#d=/i);
+    expect(m).not.toMatch(/kg|peso|medida|dor|saúde|%/i);
+  });
+  it("rótulo da fila: 'Questionário pedido há N dias'; sem os dias, não inventa número", () => {
+    expect(reasonLabel("questionario_pendente", { lastSessionAt: null, pedidoDias: 3 }, "local", NOW)).toBe("Questionário pedido há 3 dias");
+    expect(reasonLabel("questionario_pendente", { lastSessionAt: iso(13, 19), pedidoDias: 2 }, "supabase", NOW)).toBe("Questionário pedido há 2 dias");
+    expect(reasonLabel("questionario_pendente", { lastSessionAt: null }, "local", NOW)).toBe("Questionário pedido, ainda sem resposta");
+  });
 });

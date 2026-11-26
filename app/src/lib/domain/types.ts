@@ -2,6 +2,7 @@
  * Tipos de domínio do Shape Real. Puros (sem React, sem Supabase): o mesmo
  * modelo serve o modo local, o Supabase e as rotas de IA.
  */
+import type { Anamnese, AnamnesePedido, Liberacao, StepId, WorkStyle } from "./anamnese-types";
 
 export type Role = "athlete" | "coach";
 export type Goal = "hipertrofia" | "forca" | "emagrecimento" | "condicionamento" | "saude";
@@ -17,9 +18,11 @@ export type Unit = "reps" | "seg" | "min";
  * Quem registrou a autorização de dados de saúde (LGPD):
  *  - "personal": o personal marcou "O aluno autorizou registrar estes dados de saúde" no cadastro;
  *  - "aluno_link": o aluno tocou em "Salvar no meu celular" ao abrir a ficha enviada pelo personal;
- *  - "aluno": a própria pessoa marcou a autorização (Dieta ou Conta).
+ *  - "aluno": a própria pessoa marcou a autorização (Dieta ou Conta);
+ *  - "aluno_questionario": o aluno marcou a autorização do questionário inicial pelo link (texto `CONSENT_TEXT_ID`).
+ *    No preenchimento junto, a origem é "personal".
  */
-export type ConsentSource = "personal" | "aluno_link" | "aluno";
+export type ConsentSource = "personal" | "aluno_link" | "aluno" | "aluno_questionario";
 
 export type SystemId =
   | "livre"
@@ -166,6 +169,23 @@ export interface Profile {
   consentHealthAt?: string;
   /** Quem registrou `consentHealthAt`. Perfis antigos podem ter a data sem a origem. */
   consentSource?: ConsentSource;
+  // ---- Questionário inicial (anamnese). Leitura das respostas só por `readAnamnese` (questionario-link.ts). ----
+  /** Jeito de trabalhar (só no perfil do personal). */
+  workStyle?: WorkStyle;
+  /** Respostas atuais do questionário (aluno no aparelho do personal). */
+  anamnese?: Anamnese;
+  /** Rodada anterior (vai para cá quando chega uma nova). */
+  anamnesePrev?: Anamnese;
+  /** Pedido pendente pelo WhatsApp ("Questionário pedido em DD/MM"). */
+  anamnesePedido?: AnamnesePedido;
+  /** Liberações registradas pelo personal (médico, obstetra, fisioterapeuta). */
+  liberacoes?: Liberacao[];
+  /** Foco escolhido pelo aluno (até 3 grupos), passado ao gerador. */
+  emphasis?: MuscleGroup[];
+  /** Passos informativos marcados como feitos: id → ISO. */
+  passosFeitos?: Partial<Record<StepId, string>>;
+  /** Termos que o app acrescentou a `limitations` a partir do questionário (nunca os do personal). */
+  limitacoesDoQuestionario?: string[];
 }
 
 export interface PlannedExercise {
@@ -215,6 +235,11 @@ export interface Program {
    * personal: texto e impressão saem sem nome e CREF dele). Não viaja no link (o esquema do pacote descarta).
    */
   adjustedAt?: string;
+  /**
+   * O que o gerador pré-preencheu a partir do questionário e do jeito de trabalhar. O padrão aprendido (Entrega 2)
+   * só conta as escolhas do personal. Não existe `sharedAt`: o envio fica no registro único `sr:sent:{aluno}:ficha`.
+   */
+  sugerido?: { system?: SystemId; durationWeeks?: number };
 }
 
 export interface SetLog {

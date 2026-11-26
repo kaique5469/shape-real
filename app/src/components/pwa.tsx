@@ -6,6 +6,7 @@ import { Button, cx } from "@/components/ui";
 import { reportError, track } from "@/lib/analytics";
 import { useApp } from "@/lib/app-context";
 import { promptShowsAgain } from "@/lib/domain/export";
+import { deveAquecer, ehPaginaQuestionario, perfisDoAparelho } from "@/lib/questionario-base";
 
 /**
  * A cópia de segurança (validação dos links, montagem do arquivo) só é carregada quando o card do iPhone
@@ -94,6 +95,15 @@ export function PwaRegister() {
               last = Number(localStorage.getItem(WARM_KEY) ?? 0);
             } catch {}
             if (Date.now() - last < 6 * 3_600_000 || !navigator.onLine) return;
+            // Aluno que só abriu o questionário (sem perfil neste aparelho): não baixa o app inteiro no plano de dados.
+            const { pathname, hash } = window.location;
+            if (ehPaginaQuestionario(pathname)) {
+              let perfis = { temPerfil: false, temPerfilPersonal: false };
+              try {
+                perfis = perfisDoAparelho(localStorage);
+              } catch {}
+              if (!deveAquecer({ pathname, hash, ...perfis })) return;
+            }
             reg.active?.postMessage("warm");
             try {
               localStorage.setItem(WARM_KEY, String(Date.now()));

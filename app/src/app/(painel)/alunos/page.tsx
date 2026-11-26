@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { CalendarClock, CalendarX, ChevronRight, ClipboardList, Clock, MessageCircle, Search, Trash2, UserPlus, X, type LucideIcon } from "lucide-react";
-import { StudentForm } from "@/components/student-form";
+import { CalendarClock, CalendarX, ChevronRight, ClipboardList, Clock, FileText, Hourglass, Inbox, MessageCircle, OctagonX, Search, Trash2, UserPlus, X, type LucideIcon } from "lucide-react";
+import { StudentForm, useQuestionarioLigado, type StudentSavedModo } from "@/components/student-form";
 import { InviteDialog } from "@/components/invite-dialog";
 import { InstallCard } from "@/components/pwa";
 import { ColarLink } from "@/components/colar-link";
 import { BackupReminder } from "@/components/backup-reminder";
-import { Alert, Badge, Button, Dialog, Empty, Input, PageHeader, Skeleton } from "@/components/ui";
+import { Alert, Badge, Button, Dialog, Empty, Input, LinkButton, PageHeader, Skeleton } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
 import { fmtNum, relativeDay, useLoad } from "@/lib/hooks";
 import { programValidity, waLink, type Validity } from "@/lib/domain/format";
@@ -33,13 +33,16 @@ import {
   type AttentionReason,
   type ContactReason,
 } from "@/lib/domain/attention";
+import { CARTAO_JEITO_KEY, CARTAO_JEITO_TEXTO, diasDePedidoPendente, mostrarCartaoJeito, seloDoAluno, type Selo } from "@/lib/domain/anamnese-perfil";
 import { todayISO } from "@/lib/domain/ids";
 import { GOAL_LABEL } from "@/lib/domain/generator";
 import { PLANS, studentQuota } from "@/lib/domain/plans";
 import { welcomeRequested } from "@/lib/entry-points";
 import { track } from "@/lib/analytics";
+import { limparRascunhosVencidos } from "@/lib/questionario-client";
+import { rotaDepoisDoCadastro } from "@/lib/student-form-state";
 import type { Repository } from "@/lib/data/repository";
-import type { Invite, StudentSummary } from "@/lib/domain/types";
+import type { Invite, Profile, StudentSummary } from "@/lib/domain/types";
 
 /** Data (AAAA-MM-DD) da última vez que coach_list_viewed foi enviado: no máximo 1 vez por dia. */
 const LIST_VIEWED_KEY = "sr:coach-list-viewed";
@@ -69,11 +72,23 @@ interface Row {
   validity: Validity | null;
   /** Pendência do cartão (sem ficha → sem notícias → vencida → vencendo); null quando não há. */
   top: AttentionReason | null;
-  /** Motivo do "Chamar" da fila; aluno sem ficha nunca tem. */
+  /** Motivo do "Chamar" da fila; aluno sem ficha só tem o do questionário pendente. */
   reason: ContactReason | null;
+  /** Dias desde o pedido do questionário ainda sem resposta (só com a chave ligada); null sem pedido pendente. */
+  pedidoDias: number | null;
+  /** Selo do questionário (spec §6.1): um por linha, nunca nomeia condição. */
+  selo: { selo: Selo; texto: string } | null;
   /** Urgência para ordenar a lista (maior primeiro). */
   score: number;
 }
+
+/** Ícone de cada selo do questionário: o texto diz o estado; o ícone e a cor só reforçam. */
+const SELO_ICON: Record<Selo, { Icon: LucideIcon; tone: string }> = {
+  nao_comecar: { Icon: OctagonX, tone: "text-danger" },
+  liberacao_pendente: { Icon: FileText, tone: "text-warn-ink" },
+  respostas_novas: { Icon: Inbox, tone: "text-info-ink" },
+  questionario_pendente: { Icon: Hourglass, tone: "text-steel" },
+};
 
 /** Ícone de cada pendência do cartão (o de ficha é o mesmo de validityIcon). */
 const REASON_ICON: Record<AttentionReason, LucideIcon> = {
@@ -93,13 +108,15 @@ async function loadStudents(repo: Repository, coachId: string) {
   return list.map((s) => ({ s, week: s.sessionsWeek, goal: s.weeklyGoal }));
 }
 
-function toRow({ s, week, goal }: { s: StudentSummary; week: number | null; goal: number | null }, now: Date): Row {
+/** `questionario`: chave ligada (o pedido pendente entra na fila de contato só com ela). */
+function toRow({ s, week, goal }: { s: StudentSummary; week: number | null; goal: number | null }, now: Date, questionario: boolean): Row {
   const hasProgram = s.activeProgram !== null;
   const validity = s.activeProgram ? programValidity(s.activeProgram.createdAt, s.activeProgram.durationWeeks, now) : null;
   // Quem nunca mandou treino conta da ficha, se ela for mais nova que o vínculo: ficha recém-montada não nasce com alarme.
   const newsDays = daysWithoutNews({ lastSessionAt: s.lastSessionAt, linkedAt: s.linkedAt, programCreatedAt: s.activeProgram?.createdAt ?? null }, now);
   const quiet = newsDays >= inactiveThreshold(goal);
   const score = (hasProgram ? 0 : 4) + (validity?.state === "expired" ? 3 : validity?.state === "soon" ? 1 : 0) + (quiet ? 2 : 0);
+  const pedidoDias = questionario ? diasDePedidoPendente(s.profile, now) : null;
   return {
     s,
     week,
@@ -108,7 +125,9 @@ function toRow({ s, week, goal }: { s: StudentSummary; week: number | null; goal
     quiet,
     validity,
     top: topReason({ hasProgram, quiet, validity }),
-    reason: contactReason(quiet, validity, hasProgram),
+    reason: contactReason(quiet, validity, hasProgram, pedidoDias),
+    pedidoDias,
+    selo: seloDoAluno(s.profile, now),
     score,
   };
 }
@@ -133,13 +152,28 @@ function Alunos() {
   const [removing, setRemoving] = useState(false);
   const [goingSolo, setGoingSolo] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  /** "{nome} foi salvo. Sem internet: …" (cadastro sem rede, spec §5.1). */
+  const [savedOffline, setSavedOffline] = useState<string | null>(null);
+  const questionario = useQuestionarioLigado();
+  // Cartão do jeito de trabalhar: "Agora não" fica gravado neste aparelho (lido depois de montar).
+  const [jeitoDispensado, setJeitoDispensado] = useState(true);
+  useEffect(() => {
+    try {
+      setJeitoDispensado(localStorage.getItem(CARTAO_JEITO_KEY) === "0");
+    } catch {
+      setJeitoDispensado(false);
+    }
+    // Rascunhos do questionário vencidos (30 dias sem edição; 7 dias depois do toque em Enviar) saem ao abrir o painel.
+    limparRascunhosVencidos(new Date());
+  }, []);
+  const showJeito = mostrarCartaoJeito(user, questionario, jeitoDispensado);
 
   const canManage = repo.capabilities.managedStudents;
   const local = repo.mode === "local";
   const rows = useMemo(() => {
     const now = new Date();
     return (data ?? [])
-      .map((d) => toRow(d, now))
+      .map((d) => toRow(d, now, questionario))
       .sort((a, b) => {
         const ga = gap(a.s, now);
         const gb = gap(b.s, now);
@@ -147,7 +181,7 @@ function Alunos() {
         // no topo. Dentro de cada grupo, a urgência (score) de sempre.
         return Number(Boolean(b.reason)) - Number(Boolean(a.reason)) || b.score - a.score || (ga === gb ? 0 : gb > ga ? 1 : -1) || a.s.profile.name.localeCompare(b.s.profile.name);
       });
-  }, [data]);
+  }, [data, questionario]);
   const students = useMemo(() => rows.map((r) => r.s), [rows]);
   const listTools = students.length >= LIST_TOOLS_MIN;
   // Busca pelo início de cada palavra do nome, sem acento ("ana" acha Ana Souza, não Juliana). Sem o campo na tela
@@ -214,6 +248,28 @@ function Alunos() {
     const box = searchBoxRef.current;
     if (searching && box && box.contains(document.activeElement)) box.scrollIntoView({ block: "nearest", behavior: "instant" });
   }, [searching]);
+
+  function dismissJeito() {
+    setJeitoDispensado(true);
+    try {
+      localStorage.setItem(CARTAO_JEITO_KEY, "0");
+    } catch {
+      /* sem armazenamento: o cartão some agora e pode voltar na próxima visita */
+    }
+  }
+
+  /** Depois de salvar no cadastro (spec §5.1): questionário, página do aluno ou, sem rede, o aviso aqui mesmo. */
+  function afterSaved(p: Profile, modo: StudentSavedModo | undefined) {
+    setFormOpen(false);
+    const online = typeof navigator === "undefined" || navigator.onLine !== false;
+    const destino = rotaDepoisDoCadastro(p, modo ?? "completo", online);
+    if ("href" in destino) {
+      router.push(destino.href);
+      return;
+    }
+    setSavedOffline(destino.aviso);
+    void reload();
+  }
 
   function dismissWelcome() {
     setWelcome(false);
@@ -311,7 +367,13 @@ function Alunos() {
           <ol className="ruled">
             {[
               canManage
-                ? { n: 1, title: "Cadastre um aluno", body: "Nome, objetivo, rotina e limitações. Leva um minuto.", action: () => setFormOpen(true), cta: "Adicionar" }
+                ? {
+                    n: 1,
+                    title: "Cadastre um aluno",
+                    body: questionario ? "Nome e WhatsApp. O questionário inicial, com o aluno do seu lado ou pelo WhatsApp, completa o resto." : "Nome, objetivo, rotina e limitações. Leva um minuto.",
+                    action: () => setFormOpen(true),
+                    cta: "Adicionar",
+                  }
                 : { n: 1, title: "Convide um aluno", body: "Ele cria a conta pelo link e cai direto no seu painel.", action: newInvite, cta: "Convidar" },
               { n: 2, title: "Monte a ficha e a dieta", body: "Gere uma base pelas regras do app e ajuste, ou monte do zero. Depois envie pelo WhatsApp ou imprima.", action: null, cta: "" },
               isTester
@@ -342,6 +404,26 @@ function Alunos() {
               </Button>
             </div>
           ) : null}
+        </section>
+      ) : null}
+
+      {savedOffline ? (
+        <Alert tone="done" className="mb-5">
+          {savedOffline}
+        </Alert>
+      ) : null}
+
+      {showJeito ? (
+        <section aria-label="Seu jeito de trabalhar" className="ph-no-capture mb-5 flex flex-col gap-3 rounded-[var(--radius-ficha)] border border-rule-strong bg-paper p-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="min-w-0 text-[0.9375rem]">{CARTAO_JEITO_TEXTO}</p>
+          <div className="flex shrink-0 flex-col-reverse gap-2 sm:flex-row">
+            <Button variant="ghost" onClick={dismissJeito}>
+              Agora não
+            </Button>
+            <LinkButton href="/conta?jeito=1" variant="secondary">
+              Responder
+            </LinkButton>
+          </div>
         </section>
       ) : null}
 
@@ -403,7 +485,7 @@ function Alunos() {
                     <li key={r.s.profile.id} className="flex flex-col gap-2 py-2.5 last:pb-0.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                       <p className="min-w-0 text-sm leading-snug">
                         <span className="font-semibold">{name}</span>
-                        <span className="text-steel"> · {reasonLabel(reason, { lastSessionAt: r.s.lastSessionAt, daysLeft, daysWithoutNews: r.newsDays }, repo.mode)}</span>
+                        <span className="text-steel"> · {reasonLabel(reason, { lastSessionAt: r.s.lastSessionAt, daysLeft, daysWithoutNews: r.newsDays, pedidoDias: r.pedidoDias ?? undefined }, repo.mode)}</span>
                       </p>
                       <a
                         href={waLink(contactMessage(reason, r.s.profile.name, daysLeft), r.s.profile.phone)}
@@ -478,14 +560,7 @@ function Alunos() {
         </div>
       )}
 
-      <StudentForm
-        open={formOpen}
-        onClose={() => setFormOpen(false)}
-        onSaved={(p) => {
-          setFormOpen(false);
-          router.push(`/alunos/${p.id}?novo=1`);
-        }}
-      />
+      <StudentForm open={formOpen} onClose={() => setFormOpen(false)} onSaved={(p, _created, modo) => afterSaved(p, modo)} />
 
       <Dialog open={confirmSamples} onClose={() => setConfirmSamples(false)} title="Remover os alunos de exemplo?">
         <p className="text-[0.9375rem] text-steel">As fichas, treinos, medidas e dietas dos exemplos são apagados deste aparelho. Os alunos que você cadastrou continuam aqui.</p>
@@ -506,7 +581,7 @@ function Alunos() {
 
 /**
  * Linha do aluno (um único Link, sem botões dentro), nesta ordem (U4 §3.4):
- *  1. nome e o selo "exemplo";
+ *  1. nome e o selo "exemplo"; embaixo, o selo do questionário (ícone + texto, nunca nomeia condição);
  *  2. pendência, com ícone e sem corte (quebra em até 2 linhas): "Sem ficha ativa", "Sem notícias há 9 dias · …",
  *     "Ficha vencida há 5 dias", "Ficha vence em 3 dias";
  *  3. semana de segunda a domingo e a meta da ficha ativa ou do perfil (o mesmo "2 de 3" do Hoje do aluno) e o
@@ -520,6 +595,7 @@ function StudentRow({ row, mode }: { row: Row; mode: "local" | "supabase" }) {
   const summary = [week === null ? null : `${week}${goal ? ` de ${goal}` : ""} na semana`, top === "sem_noticias" ? null : last].filter(Boolean).join(" · ");
   const ficha = programLine({ programName: s.activeProgram?.name ?? null, goalLabel: s.profile.goal ? GOAL_LABEL[s.profile.goal] : null, validity, top });
   const Icon = top ? REASON_ICON[top] : null;
+  const selo = row.selo ? { ...row.selo, ...SELO_ICON[row.selo.selo] } : null;
   return (
     <li>
       <Link href={`/alunos/${s.profile.id}`} className="flex items-center gap-3 rounded-[8px] border border-rule bg-paper px-3 py-3 hover:border-iron sm:px-4">
@@ -529,6 +605,13 @@ function StudentRow({ row, mode }: { row: Row; mode: "local" | "supabase" }) {
             <span className="truncate font-bold">{s.profile.name}</span>
             {s.profile.sample ? <Badge className="shrink-0">exemplo</Badge> : null}
           </span>
+          {selo ? (
+            // ph-no-capture: o toque no selo não vai para a medição (o selo é derivado de saúde, spec §11.3).
+            <span data-selo={selo.selo} className="ph-no-capture num block text-sm font-semibold leading-snug text-iron">
+              <selo.Icon className={`mr-1.5 inline-block size-4 align-[-3px] ${selo.tone}`} aria-hidden />
+              {selo.texto}
+            </span>
+          ) : null}
           {top && Icon ? (
             // Ícone na linha do texto (não numa coluna à parte): a 2ª linha usa a largura toda e
             // "Sem notícias há 12 dias · último treino recebido em 11/11" cabe em 2 linhas a 360 px.

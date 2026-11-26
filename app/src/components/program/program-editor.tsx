@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, Copy, IdCard, MoreHorizontal, MoveLeft, MoveRight, Plus, Trash2, TriangleAlert } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, Copy, FileText, IdCard, MoreHorizontal, MoveLeft, MoveRight, Plus, Trash2, TriangleAlert } from "lucide-react";
 import { ExercisePicker } from "@/components/exercise-picker";
 import { FichaDay } from "@/components/ficha";
 import { EditorDeliveryLine, FichaContextHeader, FichaStatusLine, PanelDeliveryLines } from "@/components/program/editor-context";
@@ -13,6 +13,7 @@ import { ActionSheet, Alert, Button, Dialog, Field, IconButton, Input, Panel, Se
 import { reportError, track } from "@/lib/analytics";
 import { useApp } from "@/lib/app-context";
 import { COACH_IDENTITY_HINT, needsCoachIdentity } from "@/lib/data/demo";
+import { avaliacaoPendente } from "@/lib/domain/anamnese-ficha";
 import { prepStatusText, type DeliveryIcon, type PrepVia } from "@/lib/domain/delivery";
 import { GROUP_LABEL, getExercise, unitOf } from "@/lib/domain/exercises";
 import {
@@ -180,7 +181,7 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
       if (url.origin !== window.location.origin || url.pathname === window.location.pathname) return;
       e.preventDefault();
       e.stopPropagation();
-      setLeave(url.pathname + url.search);
+      setLeave(url.pathname + url.search + url.hash);
     };
     window.addEventListener("beforeunload", unload);
     document.addEventListener("click", click, true);
@@ -287,6 +288,8 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
   const barSends = barOpen && Boolean(postSave?.send) && realStudent;
   // Painel com o link do app: ficha de aluno real, no modo local (modelo, ficha própria, exemplo e nuvem: como antes).
   const linkPanel = kind === "aluno" && mode === "local" && realStudent && student ? student : null;
+  // Faixa do questionário (spec §6.1): trava ou porta abertas, ou respostas ilegíveis. Nunca nomeia a condição.
+  const avaliacao = kind === "aluno" && student && avaliacaoPendente(student, new Date()) ? student : null;
 
   const change = (fn: (p: Program) => Program) => {
     setProgram((p) => (p ? fn(p) : p));
@@ -452,6 +455,14 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
           student && showEditorDeliveryLine({ kind, mode, sample: !realStudent, active: program.active, dirty }) ? <EditorDeliveryLine student={student} version={deliveryVersion} /> : null
         }
       />
+
+      {avaliacao ? (
+        <Alert tone="warn" icon={<FileText className="mt-0.5 size-[18px] shrink-0 text-warn-ink" aria-hidden />} className="no-print ph-no-capture">
+          <Link href={`/alunos/${avaliacao.id}#resumo-aluno`} className="inline-flex min-h-11 items-center font-semibold underline">
+            {firstName(avaliacao.name)}: avaliação médica pendente (ver resumo)
+          </Link>
+        </Alert>
+      ) : null}
 
       {msg && !(dirty && msg.tone === "error") ? (
         <Alert tone={msg.tone} className="no-print">
@@ -703,9 +714,10 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
           </>
         ) : linkPanel ? (
           <>
-            <p className="mb-3 text-sm text-steel">Esta ficha não está ativa. O link para o celular leva só a ficha ativa.</p>
+            <p className="mb-3 text-sm text-steel">Torne a ficha ativa para enviar o link.</p>
             {pendingNote}
-            {programShare}
+            {/* Ficha inativa: o link fica para depois de ativar; o texto continua, como secundário (spec §8.6). */}
+            <ProgramShare {...shareProps} secondary />
           </>
         ) : (
           <>

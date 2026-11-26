@@ -1,4 +1,5 @@
 import posthog from "posthog-js";
+import { ehPaginaQuestionario, limparEventoPosthog, perfisDoAparelho, persistenciaPosthog, type LocalPagina } from "@/lib/questionario-base";
 
 /**
  * Analytics e captura de erros no navegador (PostHog), ligado antes de o app ficar interativo.
@@ -42,7 +43,24 @@ function stripLinkTargets(props: Record<string, unknown> | undefined) {
   if (Array.isArray(props.$elements)) for (const el of props.$elements) if (el && typeof el === "object") delete (el as Record<string, unknown>).attr__href;
 }
 
+/**
+ * Página da abertura (o init roda antes de /questionario limpar o `#d=` da barra). Os perfis do aparelho só são lidos em
+ * /questionario: lá o aluno do link fica com o PostHog em memória e sem IP (spec §11.3, DECISIONS entrada 14).
+ */
+function paginaDaAbertura(): LocalPagina {
+  const { pathname, hash } = window.location;
+  let temPerfilPersonal = false;
+  if (ehPaginaQuestionario(pathname)) {
+    try {
+      temPerfilPersonal = perfisDoAparelho(localStorage).temPerfilPersonal;
+    } catch {}
+  }
+  return { pathname, hash, temPerfilPersonal };
+}
+
 if (token) {
+  const abertura = paginaDaAbertura();
+  const persistence = persistenciaPosthog(abertura);
   posthog.init(token, {
     // Passa pelo próprio domínio (ver rewrites em next.config.ts) para bloqueadores não derrubarem os eventos.
     api_host: "/ingest",
@@ -50,7 +68,8 @@ if (token) {
     defaults: "2026-08-30",
     capture_exceptions: true,
     person_profiles: "identified_only",
-    persistence: "localStorage",
+    // "memory" em /questionario sem perfil de personal (o aluno do link); "localStorage" no resto, inclusive o junto.
+    persistence,
     disable_session_recording: true,
     // Cliques entram na análise, mas sem o texto nem os rótulos dos elementos (podem conter nomes de alunos).
     mask_all_text: true,
@@ -66,7 +85,9 @@ if (token) {
       cleanBag(props?.$set_once as Record<string, unknown> | undefined);
       cleanBag(event.$set as Record<string, unknown> | undefined);
       cleanBag(event.$set_once as Record<string, unknown> | undefined);
-      return event;
+      // Aluno do link: sem IP. Exceções em /questionario e /receber: só o tipo e o código (spec §11.3).
+      const { pathname, hash } = window.location;
+      return limparEventoPosthog(event, { pathname, hash, temPerfilPersonal: abertura.temPerfilPersonal, persistencia: persistence });
     },
   });
 } else if (process.env.NODE_ENV !== "production") {

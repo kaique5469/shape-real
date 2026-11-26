@@ -382,9 +382,17 @@ export function mergeMetric(existing: BodyMetric | null | undefined, incoming: B
 // ---- autorização de dados de saúde (LGPD) ----------------------------------------
 type ConsentFields = Pick<Profile, "consentHealthAt" | "consentSource">;
 
-/** Limitação, peso ou altura preenchidos: dados de saúde que só são guardados com a autorização registrada. */
-export function hasHealthData(p: Partial<Pick<Profile, "limitations" | "weightKg" | "heightCm">>): boolean {
-  return Boolean(p.limitations?.trim()) || (typeof p.weightKg === "number" && p.weightKg > 0) || (typeof p.heightCm === "number" && p.heightCm > 0);
+/**
+ * Limitação, peso, altura ou respostas de saúde do questionário (as que não foram omitidas): dados de saúde que só
+ * são guardados com a autorização registrada.
+ */
+export function hasHealthData(p: Partial<Pick<Profile, "limitations" | "weightKg" | "heightCm" | "anamnese">>): boolean {
+  return (
+    Boolean(p.limitations?.trim()) ||
+    (typeof p.weightKg === "number" && p.weightKg > 0) ||
+    (typeof p.heightCm === "number" && p.heightCm > 0) ||
+    Boolean(p.anamnese && !p.anamnese.healthOmitted)
+  );
 }
 
 type ConsentOwner = Partial<ConsentFields & Pick<Profile, "managedBy" | "remoteCoach">>;

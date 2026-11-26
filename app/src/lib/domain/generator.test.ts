@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
+import { NAO_QUER_IDS } from "./anamnese-ficha";
 import { EXERCISES, getExercise, registerCustomExercises, searchExercises, unitOf } from "./exercises";
 import { EMPHASIS_SLOTS, SYSTEMS, getSystem, suggestSystem } from "./systems";
 import {
@@ -629,5 +631,110 @@ describe("13. observações da ficha", () => {
     const p = gen({ system: "abc_inferiores", goal: "emagrecimento" });
     expect(p).toMatchObject({ name: "ABC Glúteos · Emagrecimento", system: "abc_inferiores", source: "modelo", active: true, ownerId: "u1" });
     expect(p.days.map((d) => d.key)).toEqual(["A", "B", "C"]);
+  });
+});
+
+// ───────────────────────── 14. Questionário: avoidIds, intensityCap e pós-parto (spec §8.4) ─────────────────────────
+
+describe("14. entradas do questionário", () => {
+  /** Ficha sem o que muda a cada chamada (ids, uids e datas). */
+  const fingerprint = (p: Program): string => {
+    const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = p;
+    void _id;
+    void _c;
+    void _u;
+    const days = rest.days.map((d) => ({ ...d, exercises: d.exercises.map(({ uid: _x, ...e }) => (void _x, e)) }));
+    return createHash("sha256").update(JSON.stringify({ ...rest, days })).digest("hex").slice(0, 16);
+  };
+  // Impressões digitais tiradas com o generator.ts de ANTES do lote (commit 6d39f27), seed 42.
+  const REGRESSAO: [GenerateInput, string][] = [
+    [{ goal: "hipertrofia", level: "intermediario", daysPerWeek: 4, sessionMinutes: 60, equipment: "academia", system: "abc", seed: 42 }, "3c61b9d88461a445"],
+    [{ goal: "saude", level: "iniciante", daysPerWeek: 3, sessionMinutes: 45, equipment: "peso_corporal", system: "fullbody", seed: 42 }, "4f815b65c0fe9842"],
+    [{ goal: "forca", level: "intermediario", daysPerWeek: 3, sessionMinutes: 60, equipment: "academia", system: "forca_5x5", seed: 42 }, "f86a508e815b722b"],
+    [{ goal: "emagrecimento", level: "intermediario", daysPerWeek: 4, sessionMinutes: 60, equipment: "academia", system: "upper_lower", emphasis: ["gluteos"], limitations: "dor no joelho direito", seed: 42 }, "ac81b04f8cf42608"],
+    [{ goal: "hipertrofia", level: "avancado", daysPerWeek: 6, sessionMinutes: 75, equipment: "academia", system: "ppl6", seed: 42 }, "7039952ecbc06ad2"],
+  ];
+
+  it.each(REGRESSAO)("regressão: sem avoidIds nem intensityCap, a ficha é a mesma de antes do lote (%#)", (input, hash) => {
+    expect(fingerprint(generateProgram(input, owner))).toBe(hash);
+    // avoidIds vazio e intensityCap ausente também não mudam nada.
+    expect(fingerprint(generateProgram({ ...input, avoidIds: [], intensityCap: undefined }, owner))).toBe(hash);
+  });
+
+  const TODOS_NAO_QUER = Object.values(NAO_QUER_IDS).flat();
+
+  it("avoidIds com todos os ids de NAO_QUER_IDS: nenhum aparece e cada dia continua completo", () => {
+    sweep({ systems: ["fullbody", "abc", "upper_lower", "abcde", "ppl6", "abc_inferiores"], goals: ["hipertrofia", "emagrecimento", "condicionamento"], equipments: EQUIPMENTS, levels: ["iniciante", "intermediario"], seeds: SEEDS.slice(0, 3) }, (p, input) => {
+      const sem = generateProgram({ ...input, avoidIds: TODOS_NAO_QUER }, owner);
+      sem.days.forEach((d, i) => {
+        for (const e of d.exercises) expect(TODOS_NAO_QUER, `${e.exerciseId} em ${where(input, d)}`).not.toContain(e.exerciseId);
+        const antes = p.days[i]!.exercises.length;
+        expect(d.exercises.length >= antes || d.exercises.length >= 4, `${where(input, d)} (antes ${antes})`).toBe(true);
+      });
+    });
+  });
+
+  it("avoidIds não muta o plano de limitações (o conjunto da limitação continua o mesmo)", () => {
+    const text = "dor no joelho";
+    const antes = [...analyzeLimitations(text).avoid].sort();
+    generateProgram({ ...base, limitations: text, avoidIds: ["leg_press", "cadeira_extensora"], intensityCap: "moderada" }, owner);
+    expect([...analyzeLimitations(text).avoid].sort()).toEqual(antes);
+  });
+
+  it("intensityCap: repetições a partir de 10, sem drop-set, sem tiros nem burpee e com a nota", () => {
+    const NOTA = "Intensidade moderada (dá para conversar treinando): repetições a partir de 10, sem drop-set e sem tiros. Vale para esta ficha; ao gerar outra, o app confere de novo.";
+    sweep({ systems: ["abc", "fullbody", "upper_lower", "ppl6", "abcde"], goals: GOALS, levels: LEVELS, equipments: ["academia", "home"], seeds: SEEDS.slice(0, 2), extra: { intensityCap: "moderada" } }, (p, input) => {
+      expect(p.notes, where(input)).toContain(NOTA);
+      for (const d of p.days)
+        for (const e of d.exercises) {
+          if ((e.unit ?? "reps") === "reps") {
+            expect(e.repsMin, `${e.exerciseId} em ${where(input, d)}`).toBeGreaterThanOrEqual(10);
+            expect(e.repsMax, `${e.exerciseId} em ${where(input, d)}`).toBeGreaterThanOrEqual(12);
+          }
+          expect(e.technique, `${e.exerciseId} em ${where(input, d)}`).not.toBe("drop_set");
+          expect(["hiit_esteira", "hiit_bike", "burpee"], where(input, d)).not.toContain(e.exerciseId);
+        }
+    });
+    // Avançado em hipertrofia: sem o teto tem drop-set; com o teto, não.
+    const adv = { level: "avancado" as const, goal: "hipertrofia" as const, system: "abc" as const, sessionMinutes: 75 };
+    expect(all(gen(adv)).some((e) => e.technique === "drop_set")).toBe(true);
+    expect(all(gen({ ...adv, intensityCap: "moderada" })).some((e) => e.technique === "drop_set")).toBe(false);
+    // Condicionamento em academia: sem o teto o fechamento pode ser tiro; com o teto, nunca.
+    for (const seed of SEEDS) {
+      const ids = all(gen({ goal: "condicionamento", sessionMinutes: 75, seed, intensityCap: "moderada" })).map((e) => e.exerciseId);
+      expect(ids).not.toContain("hiit_esteira");
+      expect(ids).not.toContain("hiit_bike");
+    }
+  });
+
+  it("intensityCap: o 5×5 vira Full Body com a nota de hoje e nada de série pesada", () => {
+    const p = gen({ system: "forca_5x5", goal: "forca", intensityCap: "moderada" });
+    expect(p.system).toBe("fullbody");
+    expect(p.notes).toContain("Full Body mais seguro");
+    expect(all(p).some((e) => (e.unit ?? "reps") === "reps" && e.repsMin < 10)).toBe(false);
+    // Sem o teto, o mesmo pedido continua 5×5.
+    expect(gen({ system: "forca_5x5", goal: "forca" }).system).toBe("forca_5x5");
+  });
+
+  it("analyzeLimitations('pós-parto'): rótulo próprio, reconhecido, sem impacto nem flexão de tronco, ficha inteira conservadora", () => {
+    const IMPACT = ["agachamento_salto", "burpee", "pular_corda", "polichinelo", "esteira_corrida", "corrida_rua", "hiit_esteira"];
+    const TRUNK_FLEXION = [
+      "abdominal_supra", "abdominal_infra", "abdominal_polia", "abdominal_maquina", "abdominal_declinado", "abdominal_canivete", "abdominal_remador",
+      "abdominal_obliquo", "abdominal_bicicleta", "abdominal_infra_paralela", "abdominal_roda", "elevacao_pernas_barra", "russian_twist", "rotacao_tronco_polia",
+    ];
+    for (const text of ["pós-parto", "pos-parto recente", "puerpério"]) {
+      const plan = analyzeLimitations(text);
+      expect(plan.labels, text).toEqual(["pós-parto"]);
+      expect(plan.unrecognized, text).toBe(false);
+      expect(plan.population, text).toBe(true);
+      for (const id of [...IMPACT, ...TRUNK_FLEXION]) expect(plan.avoid.has(id), `${id} (${text})`).toBe(true);
+      expect(plan.minRepsFor("quadriceps")).toBe(10);
+    }
+    // Não dispara em palavras parecidas.
+    expect(analyzeLimitations("parto normal há 2 anos").labels).not.toContain("pós-parto");
+    // Na ficha: nada de impacto nem flexão de tronco.
+    sweep({ systems: ["fullbody", "abc", "upper_lower"], goals: ["emagrecimento", "saude"], levels: ["iniciante"], equipments: ["academia", "home"], seeds: SEEDS.slice(0, 3), extra: { limitations: "pós-parto" } }, (p, input) => {
+      for (const e of all(p)) expect([...IMPACT, ...TRUNK_FLEXION], `${e.exerciseId} em ${where(input)}`).not.toContain(e.exerciseId);
+    });
   });
 });

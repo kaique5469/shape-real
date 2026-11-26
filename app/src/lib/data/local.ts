@@ -4,6 +4,7 @@ import { uid } from "@/lib/domain/ids";
 import { SENT_SINCE_KEY, SENT_SUFFIXES, sentKeyOf } from "@/lib/domain/export";
 import type { Food } from "@/lib/domain/foods";
 import type { BodyMetric, DietPlan, Exercise, Invite, PhotoPose, Profile, Program, ProgressPhoto, Session, StudentDraft } from "@/lib/domain/types";
+import { esquecerQuestionarioDoAluno, idsDasRodadas } from "@/lib/questionario-client";
 import { DataError, summarizeStudent, type Repository } from "./repository";
 
 /**
@@ -396,6 +397,11 @@ export class LocalRepository implements Repository {
   }
 
   async deleteAccount(userId: string) {
+    // Rodadas do questionário do perfil apagado: só os ids, lidos antes de o perfil sumir (spec §5.7 e §11.2).
+    let rodadas: string[] = [];
+    try {
+      rodadas = idsDasRodadas(read<Profile>("profiles").find((p) => p.id === userId));
+    } catch {}
     for (const photo of await this.listPhotos(userId)) await this.deletePhoto(photo);
     write("profiles", read<Profile>("profiles").filter((p) => p.id !== userId));
     write("programs", read<Program>("programs").filter((p) => p.ownerId !== userId));
@@ -406,6 +412,11 @@ export class LocalRepository implements Repository {
     write("custom_exercises", read<Owned<Exercise>>("custom_exercises").filter((r) => r.ownerId !== userId));
     write("custom_foods", read<Owned<Food>>("custom_foods").filter((r) => r.ownerId !== userId));
     clearDeliveryKeys(userId);
+    // Rascunho do junto (`sr:v1:qrascunho:aluno-{id}`) e `sr:v1:qapagado:{id}` de cada rodada (só a data): a mensagem
+    // antiga do WhatsApp não traz a saúde de volta sem aviso em /receber.
+    try {
+      esquecerQuestionarioDoAluno(userId, rodadas, new Date().toISOString());
+    } catch {}
   }
 
   /**

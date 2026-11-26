@@ -45,6 +45,8 @@ const { localRepo } = await import("@/lib/app-context");
 const { lastBackupAt } = await import("@/lib/data/local");
 const { buildFichaPacket, buildTreinosPacket } = await import("@/lib/domain/transfer");
 const { collectBackup, importFicha, importTreinos, makeBackup, markSessionsSent, parseBackup, restoreBackup, sentSessionIds } = await import("./transfer-client");
+const { anamneseBase } = await import("@/lib/domain/anamnese-fixtures");
+const { readAnamnese } = await import("@/lib/domain/questionario-link");
 
 const coach: Profile = { id: "c1", name: "Rafael Nunes", role: "coach", plan: "coach", onboarded: true, createdAt: "2026-01-01T00:00:00Z" };
 const student: Profile = { id: "s1", name: "Marina Costa", role: "athlete", plan: "free", onboarded: true, createdAt: "2026-01-02T00:00:00Z", managedBy: "c1" };
@@ -230,6 +232,60 @@ describe("cópia de segurança", () => {
     cancel = true;
     expect(await makeBackup(localRepo, coach, "hoje")).toBeNull();
     expect(lastBackupAt()).toBeNull();
+  });
+});
+
+describe("cópia de segurança com o questionário (D-32)", () => {
+  const VELHA = "2026-10-01T10:00:00-03:00";
+  const NOVA = "2026-11-20T10:00:00-03:00";
+  const liberacao = (id: string, registradoEm: string) => ({ id, por: "medico" as const, data: registradoEm.slice(0, 10), alertas: ["A-PARQ7" as const], registradoEm });
+
+  it("ida e volta com respostas normais: voltam iguais e abrem pela porta de leitura", async () => {
+    await seedCoachDevice();
+    const an = anamneseBase({ parq: [0, 0, 0, 0, 0, 0, 1], dor: 1, dorOnde: [{ r: "lombar" }], dorNota: 4, dorQuando: ["movimento"], dorDesde: "mais3m", dorAlerta: [] }, { answeredAt: NOVA });
+    await localRepo.saveProfile({ ...student, anamnese: an, liberacoes: [liberacao("l1", "2026-11-21T10:00:00-03:00")], limitations: "lombar", limitacoesDoQuestionario: ["lombar"] });
+    const backup = await collectBackup(localRepo, coach, new Date("2026-11-22T12:00:00Z"));
+
+    storage.clear();
+    await restoreBackup(parseBackup(JSON.stringify(backup))!);
+    const volta = (await localRepo.getProfile("s1"))!;
+    expect(volta.anamnese).toEqual(an);
+    expect(readAnamnese(volta)).toEqual(an);
+    expect(volta.liberacoes?.map((l) => l.id)).toEqual(["l1"]);
+    expect(volta.limitacoesDoQuestionario).toEqual(["lombar"]);
+  });
+
+  it("ida e volta com respostas de versão mais nova (v = 2): ficam guardadas e readAnamnese devolve 'versao_nova'", async () => {
+    await seedCoachDevice();
+    const v2 = { ...anamneseBase({}, { answeredAt: NOVA }), v: 2, a: { nome: "Marina Costa", perguntaNova: "x" } } as unknown as Profile["anamnese"];
+    await localRepo.saveProfile({ ...student, anamnese: v2 });
+    const backup = await collectBackup(localRepo, coach, new Date("2026-11-22T12:00:00Z"));
+
+    storage.clear();
+    await restoreBackup(parseBackup(JSON.stringify(backup))!);
+    const volta = (await localRepo.getProfile("s1"))!;
+    expect(volta.anamnese).toEqual(v2);
+    expect(readAnamnese(volta)).toBe("versao_nova");
+  });
+
+  it("restaurar uma cópia antiga por cima não apaga respostas nem liberações mais novas", async () => {
+    await seedCoachDevice();
+    await localRepo.saveProfile({ ...student, anamnese: anamneseBase({}, { id: "r1", answeredAt: VELHA }), liberacoes: [liberacao("l-velha", "2026-10-02T10:00:00-03:00")] });
+    const antiga = await collectBackup(localRepo, coach, new Date("2026-10-05T12:00:00Z"));
+
+    // Depois da cópia: rodada nova com "pediu para não treinar" e outra liberação.
+    const nova = anamneseBase({ parq: [0, 0, 0, 0, 0, 0, 1], orientacao: "pausa" }, { id: "r2", answeredAt: NOVA });
+    const anterior = (await localRepo.getProfile("s1"))!.anamnese;
+    await localRepo.saveProfile({ ...(await localRepo.getProfile("s1"))!, anamnese: nova, anamnesePrev: anterior, liberacoes: [liberacao("l-velha", "2026-10-02T10:00:00-03:00"), liberacao("l-nova", "2026-11-21T10:00:00-03:00")] });
+
+    await restoreBackup(parseBackup(JSON.stringify(antiga))!);
+    const depois = (await localRepo.getProfile("s1"))!;
+    expect((readAnamnese(depois) as { id: string }).id).toBe("r2");
+    expect((readAnamnese(depois) as { a: { orientacao?: string } }).a.orientacao).toBe("pausa");
+    expect((readAnamnese(depois, "anamnesePrev") as { id: string }).id).toBe("r1");
+    expect(depois.liberacoes?.map((l) => l.id).sort()).toEqual(["l-nova", "l-velha"]);
+    // O resto continua vindo da cópia, como antes; o vínculo com o personal continua.
+    expect(depois.managedBy).toBe("c1");
   });
 });
 

@@ -11,6 +11,7 @@ import { ColarLink } from "@/components/colar-link";
 import { RestoreBackupButton } from "@/components/backup-restore";
 import { useApp } from "@/lib/app-context";
 import { track } from "@/lib/analytics";
+import { gravarConvite } from "@/lib/flags";
 import type { Role } from "@/lib/domain/types";
 
 export default function EntrarPage() {
@@ -47,6 +48,9 @@ function Entrar() {
   useEffect(() => {
     if (mode === "criar") track("signup_started", { role });
   }, [mode, role]);
+
+  // Convite do questionário (`?beta=questionario`): só faz diferença quando a chave não está ligada para todos.
+  useEffect(() => gravarConvite(location.search), []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();

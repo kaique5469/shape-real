@@ -2,6 +2,7 @@
 
 import posthog from "posthog-js";
 
+import type { Alimentacao, Atendimento, SecaoId } from "@/lib/domain/anamnese-types";
 import type { FichaSendSituation, FichaVersao, PrepVia } from "@/lib/domain/delivery";
 
 /**
@@ -70,7 +71,20 @@ export type EventName =
   // UX 23/11 (propriedades fechadas em StrictEventProps)
   | "diet_adjust_started"
   | "evolution_compare_shown"
-  | "workout_resumed";
+  | "workout_resumed"
+  // Questionário inicial (propriedades fechadas em StrictEventProps; montadas por src/lib/anamnese-events.ts)
+  | "work_style_set"
+  | "work_style_suggestion"
+  | "anamnese_requested"
+  | "anamnese_opened"
+  | "anamnese_link_opened"
+  | "anamnese_part_done"
+  | "anamnese_sent"
+  | "anamnese_send_confirmed"
+  | "anamnese_received"
+  | "anamnese_deleted"
+  | "summary_viewed"
+  | "next_step_clicked";
 
 const enabled = Boolean(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN ?? process.env.NEXT_PUBLIC_POSTHOG_KEY);
 
@@ -124,6 +138,34 @@ export type SessionFeature =
   | "trocar_bloqueado"
   | "proxima_serie_visivel";
 
+// ---- Questionário inicial (spec da anamnese §12) -------------------------------------------
+// Regra: nenhuma propriedade muda por causa de uma resposta de saúde, nem pela presença ou ausência de uma parte ou de
+// um passo que só existe com (ou sem) gatilho de saúde. Nada de resposta, nível ou contagem de alertas, liberação,
+// termo, "enviado sem saúde", nome, telefone, CREF, id de pedido, link ou público atendido.
+
+/** `reavaliacao` dos eventos: "nao" quando a rodada não é reavaliação (ou na Entrega 1). */
+export type ReavaliacaoProp = "nao" | "saude" | "tudo";
+/** Faixa do tempo de preenchimento (`anamnese_sent.minutos`). */
+export type FaixaMinutos = "<3" | "3-5" | "5-8" | "8-12" | ">12";
+/** `anamnese_part_done.parte`: nunca `dorMais` (só existe com dor ou lesão). */
+export type ParteEvento = Exclude<SecaoId, "dorMais">;
+/** `next_step_clicked.passo`: sem os passos clínicos e sem `dieta`/`nutricionista` (inferência negativa). */
+export type PassoEvento = "gerar_ficha" | "enviar_ficha" | "avaliacao" | "checkin" | "reavaliar" | "questionario" | "lembrar";
+/** `student_created.modo` (cadastro rápido, formulário completo ou aluno criado em /receber). */
+export type StudentCreatedModo = "agora" | "whatsapp" | "depois" | "completo" | "receber";
+/** `link_dead_end_shown`, formato fixo (os 4 primeiros motivos já existiam em /abrir e /receber). */
+export type DeadEndProps = {
+  tela: "abrir" | "receber" | "questionario";
+  motivo: "invalido" | "iphone" | "nao_personal" | "sem_alunos" | "versao_nova" | "questionario_personal" | "respostas_no_aluno";
+  via_paste: boolean;
+};
+/** Chaves novas de `program_generated` (`evProgramGeneratedExtra`). `ajustes_n`: 0–7. */
+export type ProgramGeneratedExtra = { from_anamnese: boolean; ajustes_n: number };
+/** Chaves novas de `ficha_link_sent` (`evFichaLinkExtra`). `aluno_novo`: criado a partir de `QUESTIONARIO_DESDE`. */
+export type FichaLinkExtra = { primeira: boolean; horas_desde_cadastro: number | null; questionario: "link" | "junto" | "nenhum"; aluno_novo: boolean };
+/** Chave nova de `student_created` (`evStudentCreatedExtra`). */
+export type StudentCreatedExtra = { modo: StudentCreatedModo };
+
 /** `diet_analyzed`: sem `score` (a nota é derivada da dieta). Um `score` passado por engano é descartado. */
 export interface DietAnalyzedProps {
   source: string;
@@ -146,13 +188,56 @@ export interface StrictEventProps {
   };
   /** Rascunho de treino reaberto (`begin(d, false)`), inclusive pela tela de conflito. */
   workout_resumed: { origem: "rascunho" | "conflito"; mudou_exercicio: boolean; instalado: boolean };
+  /** Beco sem saída de um link (/abrir, /receber, /questionario). */
+  link_dead_end_shown: DeadEndProps;
+  // Questionário inicial: as telas passam o retorno das funções de src/lib/anamnese-events.ts.
+  /** Jeito de trabalhar salvo ou pulado. `publico_n` 0–2; `perguntas_n` 0–3 (sempre 0 na Entrega 1). */
+  work_style_set: {
+    origem: "onboarding" | "conta" | "cartao";
+    pulou: boolean;
+    atendimento: Atendimento | "nao_respondeu";
+    alimentacao: Alimentacao | "nao_respondeu";
+    publico_n: number;
+    semanas: 4 | 6 | 8 | 12 | null;
+    perguntas_n: number;
+  };
+  /** [E2] Sugestão do padrão aprendido aceita ou dispensada. */
+  work_style_suggestion: { campo: "divisao" | "semanas"; aceitou: boolean };
+  /** Uma vez por pedido, no primeiro toque em WhatsApp ou Copiar. `modulos_n` 0–5; `extras_n` 0–3. */
+  anamnese_requested: { via: "whatsapp" | "copiar"; reavaliacao: ReavaliacaoProp; modulos_n: number; extras_n: number; de: "cadastro" | "aluno" | "passos" | "lembrete"; reenvio: boolean };
+  anamnese_opened: { modo: "link" | "junto" | "previa"; ios_browser: boolean; retomou: boolean; aparelho: "aluno" | "personal_dono" | "outro" };
+  /** Abertura do ramo `anamnese` de /receber, antes das guardas. */
+  anamnese_link_opened: { tela: "receber"; via_paste: boolean };
+  /** `indice`: posição em `secoesDoPedido` (só as partes que o pedido define). */
+  anamnese_part_done: { parte: ParteEvento; indice: number; modo: "link" | "junto" };
+  /** `modulos_n`: módulos pedidos (não os exibidos); `pulados_n` nunca conta `dorMais`. */
+  anamnese_sent: { modo: "link" | "junto"; minutos: FaixaMinutos; modulos_n: number; pulados_n: number; extras_n: number; reenvio: boolean; incompleto: boolean; reavaliacao: ReavaliacaoProp };
+  anamnese_send_confirmed: { resposta: "sim" | "tentar" | "copiar" };
+  /** `diferencas_n` sem peso e altura. */
+  anamnese_received: { achou: "ref" | "nome" | "escolhido" | "novo"; diferencas_n: number; reenvio: boolean; dias_desde_pedido: number | null; reavaliacao: ReavaliacaoProp };
+  anamnese_deleted: { com_cadastro: boolean };
+  summary_viewed: { tem_questionario: boolean; origem: "aba" | "receber" | "junto" };
+  next_step_clicked: { passo: PassoEvento };
 }
 
-/** Chaves permitidas dos eventos novos (formato da fundação da anamnese; ela acrescenta as dela). */
+/** Chaves permitidas dos eventos com propriedades fechadas (as mesmas de StrictEventProps; teste em analytics.anamnese.test.ts). */
 export const EVENT_PROPS = {
   diet_adjust_started: ["origem"],
   evolution_compare_shown: ["kind", "state", "direction", "chart", "suspect", "by_coach"],
   workout_resumed: ["origem", "mudou_exercicio", "instalado"],
+  link_dead_end_shown: ["tela", "motivo", "via_paste"],
+  work_style_set: ["origem", "pulou", "atendimento", "alimentacao", "publico_n", "semanas", "perguntas_n"],
+  work_style_suggestion: ["campo", "aceitou"],
+  anamnese_requested: ["via", "reavaliacao", "modulos_n", "extras_n", "de", "reenvio"],
+  anamnese_opened: ["modo", "ios_browser", "retomou", "aparelho"],
+  anamnese_link_opened: ["tela", "via_paste"],
+  anamnese_part_done: ["parte", "indice", "modo"],
+  anamnese_sent: ["modo", "minutos", "modulos_n", "pulados_n", "extras_n", "reenvio", "incompleto", "reavaliacao"],
+  anamnese_send_confirmed: ["resposta"],
+  anamnese_received: ["achou", "diferencas_n", "reenvio", "dias_desde_pedido", "reavaliacao"],
+  anamnese_deleted: ["com_cadastro"],
+  summary_viewed: ["tem_questionario", "origem"],
+  next_step_clicked: ["passo"],
 } as const satisfies Partial<Record<EventName, readonly string[]>>;
 
 /**
@@ -168,11 +253,15 @@ export const EVENT_PROPS = {
  *  - session_feature_used: features novas (SessionFeature) com faixa (UnmarkBand), estado ("pendente" |
  *    "preenchida" | "concluida"), feitas, preenchidas, acao ("serie" | "exercicio"), alvo ("serie" | "exercicio"),
  *    origem ("personal" | "propria" | "livre") e mesma_unidade em trocar_exercicio;
- *  - workout_completed: desmarcadas, trocas, grupos_desfeitos.
+ *  - workout_completed: desmarcadas, trocas, grupos_desfeitos;
+ *  - questionário inicial: program_generated (ProgramGeneratedExtra), ficha_link_sent (FichaLinkExtra),
+ *    student_created (StudentCreatedExtra); student_contacted.reason ganha o valor "questionario_pendente".
  */
 export const EXTRA_PROPS = {
   treinos_link_sent: ["where", "resend", "novos"],
-  ficha_link_sent: ["where", "situacao"],
+  ficha_link_sent: ["where", "situacao", "primeira", "horas_desde_cadastro", "questionario", "aluno_novo"],
+  program_generated: ["from_anamnese", "ajustes_n"],
+  student_created: ["modo"],
   treinos_link_received: ["same", "ficha_versao"],
   diet_analyzed: ["itens"],
   diet_saved: ["origem"],

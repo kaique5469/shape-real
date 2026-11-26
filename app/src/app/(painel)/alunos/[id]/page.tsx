@@ -1,11 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, use, useMemo, useState } from "react";
+import { Suspense, use, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, ClipboardList, Eye, FileText, MessageCircle, MoreHorizontal, Pencil, Plus, Ruler, Salad, Trophy, UserMinus } from "lucide-react";
+import { ArrowLeft, ClipboardList, Eye, FileText, MessageCircle, MoreHorizontal, Pencil, Plus, Send, Trash2, Trophy, UserMinus } from "lucide-react";
+import { ApagarRespostasDialog } from "@/components/anamnese/apagar-respostas-dialog";
+import { PedirQuestionario } from "@/components/anamnese/pedir-questionario";
+import { ProximosPassos } from "@/components/anamnese/proximos-passos";
+import { ResumoAluno } from "@/components/anamnese/resumo-aluno";
 import { ProgramList } from "@/components/program/program-list";
-import { StudentForm } from "@/components/student-form";
+import { StudentForm, useQuestionarioLigado } from "@/components/student-form";
 import { DietView } from "@/components/views/diet-view";
 import { EvolutionView } from "@/components/views/evolution-view";
 import { ReportView } from "@/components/views/report-view";
@@ -14,10 +18,16 @@ import { HistoryView } from "@/components/views/history-view";
 import { ActionSheet, Alert, Badge, Button, Dialog, IconButton, LinkButton, Panel, Segmented, Skeleton, cx } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
 import { fmtDate, fmtNum, relativeDay, useLoad } from "@/lib/hooks";
+import { SECAO_TITULO, comNomes } from "@/lib/domain/anamnese";
+import { avisoCadastroNovo, marcarVisto, rotuloFazerQuestionario, temRespostas, textoPelaMetade } from "@/lib/domain/anamnese-perfil";
+import { ehExemplo, type WorkStyle } from "@/lib/domain/anamnese-types";
 import { firstName, programValidity, waLink, waPhone } from "@/lib/domain/format";
 import { GOAL_LABEL, LEVEL_LABEL } from "@/lib/domain/generator";
 import { weekStart } from "@/lib/domain/progression";
-import { track } from "@/lib/analytics";
+import { summarize } from "@/lib/domain/resumo";
+import { reportError, track } from "@/lib/analytics";
+import { apagarRascunho, chaveRascunho, lerRascunho, type Rascunho } from "@/lib/questionario-client";
+import { ctxDoJunto, secaoDoRascunho } from "@/lib/questionario-flow";
 import type { BodyMetric, Equipment, Profile, Program, Session } from "@/lib/domain/types";
 import { useStudent } from "./student";
 
@@ -41,6 +51,14 @@ export default function AlunoPage({ params }: { params: Promise<{ id: string }> 
   );
 }
 
+/** Tira um parâmetro da barra de endereço sem navegar (o Next sincroniza `useSearchParams` com o history nativo). */
+function semParametro(id: string, search: URLSearchParams, nome: string) {
+  const q = new URLSearchParams(search.toString());
+  q.delete(nome);
+  const resto = q.toString();
+  window.history.replaceState(null, "", `/alunos/${id}${resto ? `?${resto}` : ""}`);
+}
+
 function Aluno({ id }: { id: string }) {
   const { user, repo, mode, actAs } = useApp();
   const router = useRouter();
@@ -49,6 +67,8 @@ function Aluno({ id }: { id: string }) {
   const requested = search.get("aba") as Tab | null;
   const tab: Tab = TABS.some((t) => t.value === requested) ? requested! : "resumo";
   const justCreated = Boolean(search.get("novo"));
+  const questionario = useQuestionarioLigado();
+  const [hoje] = useState(() => new Date());
   const [menu, setMenu] = useState(false);
   const [edit, setEdit] = useState(false);
   const [confirm, setConfirm] = useState(false);
@@ -56,6 +76,50 @@ function Aluno({ id }: { id: string }) {
   const [err, setErr] = useState<string | null>(null);
   // Relê a situação do envio da ficha ao trocar de aba (a ficha ou a dieta podem ter mudado nas abas).
   const [deliveryTick, setDeliveryTick] = useState(0);
+  // Questionário: menu "Fazer o questionário", pedido pelo WhatsApp, "Apagar respostas" e o rascunho do junto.
+  const [questMenu, setQuestMenu] = useState(false);
+  const [pedir, setPedir] = useState<"cadastro" | "aluno" | null>(null);
+  const [apagar, setApagar] = useState(false);
+  const [rascunho, setRascunho] = useState<Rascunho | null>(null);
+
+  // ?pedir=1 (cadastro rápido com "Mandar pelo WhatsApp"): abre o pedido uma vez e tira o parâmetro.
+  const pediu = useRef(false);
+  useEffect(() => {
+    if (pediu.current || !student || !questionario || search.get("pedir") !== "1") return;
+    pediu.current = true;
+    setPedir("cadastro");
+    semParametro(id, search, "pedir");
+  }, [student, questionario, search, id]);
+
+  // ?questionario=novo (fim do junto ou recepção): rola até o resumo e tira o parâmetro.
+  const rolou = useRef(false);
+  useEffect(() => {
+    if (rolou.current || !student || search.get("questionario") !== "novo") return;
+    rolou.current = true;
+    requestAnimationFrame(() => {
+      const reduz = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      document.getElementById("resumo-aluno")?.scrollIntoView({ block: "start", behavior: reduz ? "auto" : "smooth" });
+    });
+    semParametro(id, search, "questionario");
+  }, [student, search, id]);
+
+  // O personal viu o resumo: tira o selo "Respostas novas" (vistoEm), uma vez por aluno.
+  const visto = useRef<string | null>(null);
+  useEffect(() => {
+    if (!student || tab !== "resumo" || visto.current === student.id) return;
+    const next = marcarVisto(student, new Date().toISOString());
+    if (next === student) return;
+    visto.current = student.id;
+    repo
+      .saveProfile(next)
+      .then(setData)
+      .catch((e) => reportError(e, "resumo:visto"));
+  }, [student, tab, repo, setData]);
+
+  // Rascunho do junto neste aparelho ("Questionário pela metade"), relido ao voltar para a aba.
+  useEffect(() => {
+    setRascunho(questionario ? lerRascunho(chaveRascunho({ studentId: id })) : null);
+  }, [questionario, id, tab]);
 
   if (loading) return <Skeleton className="h-96" />;
   if (!student)
@@ -70,6 +134,7 @@ function Aluno({ id }: { id: string }) {
 
   const first = firstName(student.name);
   const managed = student.managedBy === user?.id;
+  const exemplo = ehExemplo(student);
   const phone = waPhone(student.phone);
   const facts = [
     student.goal && GOAL_LABEL[student.goal],
@@ -96,6 +161,7 @@ function Aluno({ id }: { id: string }) {
     }
   }
 
+  // "Remover aluno" no modo local apaga também o rascunho do junto e grava `qapagado` das rodadas (deleteAccount).
   async function remove() {
     setBusy("remove");
     try {
@@ -108,6 +174,11 @@ function Aluno({ id }: { id: string }) {
       setBusy(null);
       setConfirm(false);
     }
+  }
+
+  function descartarRascunho() {
+    apagarRascunho(chaveRascunho({ studentId: id }));
+    setRascunho(null);
   }
 
   return (
@@ -139,7 +210,9 @@ function Aluno({ id }: { id: string }) {
             <p className="mt-1.5 whitespace-pre-wrap text-steel">{student.coachNotes}</p>
           </details>
         ) : null}
-        {mode === "local" && !student.sample ? <SendToStudent student={student} where="pagina_aluno" showLines="page" version={deliveryTick} variant="primary" className="mt-3 w-full sm:w-auto" /> : null}
+        {mode === "local" && !student.sample ? (
+          <SendToStudent student={student} where="pagina_aluno" showLines="page" version={deliveryTick} variant="primary" className="mt-3 w-full sm:w-auto" onSent={() => setDeliveryTick((n) => n + 1)} />
+        ) : null}
         <div className="mt-2 flex flex-wrap gap-2">
           {mode === "local" ? (
             <Button variant={student.sample ? "primary" : "secondary"} onClick={viewAs} loading={busy === "view"} icon={<Eye className="size-4" />} className="flex-1 whitespace-nowrap px-3 sm:flex-none sm:px-4">
@@ -161,7 +234,7 @@ function Aluno({ id }: { id: string }) {
       </header>
 
       {err ? (
-        <Alert tone="error" className="mb-4">
+        <Alert tone="error" className="no-print mb-4">
           {err}
         </Alert>
       ) : null}
@@ -170,7 +243,22 @@ function Aluno({ id }: { id: string }) {
         <Segmented label="Seção do aluno" value={tab} onChange={setTab} size="sm" className="min-w-max" options={TABS} />
       </div>
 
-      {tab === "resumo" ? <Summary student={student} justCreated={justCreated} onTab={setTab} onEdit={() => setEdit(true)} /> : null}
+      {tab === "resumo" ? (
+        <Summary
+          student={student}
+          ws={user?.workStyle}
+          hoje={hoje}
+          justCreated={justCreated}
+          questionario={questionario}
+          version={deliveryTick}
+          rascunho={rascunho}
+          onDescartarRascunho={descartarRascunho}
+          onTab={setTab}
+          onEdit={() => setEdit(true)}
+          onChange={setData}
+          onFichaSent={() => setDeliveryTick((n) => n + 1)}
+        />
+      ) : null}
       {tab === "ficha" ? (
         <div className="space-y-4">
           <div className="no-print flex justify-end">
@@ -192,6 +280,9 @@ function Aluno({ id }: { id: string }) {
         title={student.name}
         actions={[
           ...(managed ? [{ label: "Editar dados do aluno", icon: <Pencil className="size-5" />, onSelect: () => setEdit(true) }] : []),
+          // Portas do questionário só com a chave; apagar respostas, sempre que houver (direito do aluno, spec §11.2).
+          ...(managed && questionario ? [{ label: rotuloFazerQuestionario(student), icon: <ClipboardList className="size-5" />, onSelect: () => setQuestMenu(true) }] : []),
+          ...(managed && temRespostas(student) ? [{ label: "Apagar respostas do questionário", icon: <Trash2 className="size-5" />, tone: "danger" as const, onSelect: () => setApagar(true) }] : []),
           {
             label: managed ? "Remover aluno" : "Desvincular aluno",
             icon: <UserMinus className="size-5" />,
@@ -201,6 +292,20 @@ function Aluno({ id }: { id: string }) {
           },
         ]}
       />
+
+      {/* "Fazer o questionário": junto (neste aparelho) ou pelo WhatsApp. Aluno de exemplo não recebe pedido. */}
+      <ActionSheet
+        open={questMenu}
+        onClose={() => setQuestMenu(false)}
+        title={rotuloFazerQuestionario(student)}
+        actions={[
+          { label: `Preencher agora com ${first}`, icon: <ClipboardList className="size-5" />, onSelect: () => router.push(`/questionario?aluno=${encodeURIComponent(id)}`) },
+          ...(exemplo ? [] : [{ label: "Mandar pelo WhatsApp", icon: <Send className="size-5" />, onSelect: () => setPedir("aluno") }]),
+        ]}
+      />
+
+      <PedirQuestionario open={pedir !== null} onClose={() => setPedir(null)} student={student} de={pedir ?? "aluno"} onPedido={setData} />
+      <ApagarRespostasDialog open={apagar} onClose={() => setApagar(false)} student={student} onSaved={setData} />
 
       <StudentForm
         open={edit}
@@ -238,14 +343,116 @@ interface SummaryData {
   hasDiet: boolean;
 }
 
-/** O que o personal confere antes da aula: frequência, último treino, medidas e validade da ficha. */
-function Summary({ student, justCreated, onTab, onEdit }: { student: Profile; justCreated: boolean; onTab: (t: Tab) => void; onEdit: () => void }) {
-  const { repo, mode } = useApp();
+/**
+ * Aba Resumo: o questionário no topo (ResumoAluno, quando há respostas) e os próximos passos no lugar da lista de antes
+ * (sempre; dentro do resumo, no bloco 2, quando ele aparece). Depois, o que o personal confere antes da aula:
+ * frequência, último treino, medidas e validade da ficha (fora da impressão do resumo).
+ */
+function Summary({
+  student,
+  ws,
+  hoje,
+  justCreated,
+  questionario,
+  version,
+  rascunho,
+  onDescartarRascunho,
+  onTab,
+  onEdit,
+  onChange,
+  onFichaSent,
+}: {
+  student: Profile;
+  ws?: WorkStyle;
+  hoje: Date;
+  justCreated: boolean;
+  questionario: boolean;
+  version: number;
+  rascunho: Rascunho | null;
+  onDescartarRascunho: () => void;
+  onTab: (t: Tab) => void;
+  onEdit: () => void;
+  onChange: (p: Profile) => void;
+  onFichaSent: () => void;
+}) {
+  const { repo, user } = useApp();
   const id = student.id;
   const { data, loading, error } = useLoad<SummaryData>(async () => {
     const [sessions, programs, metrics, diet] = await Promise.all([repo.listSessions(id), repo.listPrograms(id), repo.listMetrics(id), repo.getDiet(id)]);
     return { sessions, programs, metrics, hasDiet: Boolean(diet?.meals.some((m) => m.items.length)) };
   }, [id, repo]);
+  const resumo = useMemo(() => summarize({ profile: student, ws, hoje }), [student, ws, hoje]);
+  // Com respostas legíveis, os passos entram no resumo (bloco 2); senão, ficam no topo da aba.
+  const passosNoResumo = Boolean(resumo && !resumo.problema);
+  const parte = useMemo(() => {
+    if (!rascunho) return "";
+    const nomes = { personal: user?.name ?? "", aluno: student.name };
+    return comNomes(SECAO_TITULO[secaoDoRascunho(rascunho, ctxDoJunto({ hoje, ...nomes, atendimento: ws?.atendimento }), "junto")], nomes);
+  }, [rascunho, user?.name, student.name, hoje, ws?.atendimento]);
+
+  const passos = loading ? (
+    <Skeleton className="no-print h-32" />
+  ) : data ? (
+    <ProximosPassos
+      student={student}
+      ws={ws}
+      activeProgram={data.programs.find((p) => p.active) ?? null}
+      metricsCount={data.metrics.length}
+      hasDiet={data.hasDiet}
+      hoje={hoje}
+      questionario={questionario}
+      version={version}
+      onChange={onChange}
+      onTab={onTab}
+      onFichaSent={onFichaSent}
+    />
+  ) : null;
+
+  return (
+    <div className="space-y-4">
+      {justCreated ? (
+        <Alert tone="done" className="no-print">
+          {avisoCadastroNovo(student, questionario)}
+        </Alert>
+      ) : null}
+
+      {questionario && rascunho ? (
+        <section aria-label="Questionário pela metade" className="no-print ph-no-capture flex flex-col gap-3 rounded-[var(--radius-ficha)] border border-rule-strong bg-paper p-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="flex min-w-0 items-start gap-2 font-semibold">
+            <ClipboardList className="mt-0.5 size-5 shrink-0 text-steel" aria-hidden />
+            <span className="min-w-0">{textoPelaMetade(parte)}</span>
+          </p>
+          <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+            <LinkButton href={`/questionario?aluno=${encodeURIComponent(id)}`} className="w-full sm:w-auto">
+              Continuar
+            </LinkButton>
+            <Button variant="danger" icon={<Trash2 className="size-4" aria-hidden />} onClick={onDescartarRascunho} className="w-full sm:w-auto">
+              Descartar
+            </Button>
+          </div>
+        </section>
+      ) : null}
+
+      <ResumoAluno student={student} ws={ws} hoje={hoje} onChange={onChange} passos={passosNoResumo ? passos : undefined} />
+      {passosNoResumo ? null : passos}
+
+      {loading ? (
+        <Skeleton className="no-print h-72" />
+      ) : error || !data ? (
+        <Alert tone="error" className="no-print">
+          {error ?? "Não foi possível carregar o resumo."}
+        </Alert>
+      ) : (
+        <SummaryPanels student={student} data={data} onTab={onTab} onEdit={onEdit} />
+      )}
+    </div>
+  );
+}
+
+/** Frequência, último treino, ficha ativa, medidas e o atalho do relatório (não entram na impressão do resumo). */
+function SummaryPanels({ student, data, onTab, onEdit }: { student: Profile; data: SummaryData; onTab: (t: Tab) => void; onEdit: () => void }) {
+  const { mode } = useApp();
+  const id = student.id;
 
   const weeks = useMemo(() => {
     const out: { start: string; count: number }[] = [];
@@ -253,13 +460,10 @@ function Summary({ student, justCreated, onTab, onEdit }: { student: Profile; ju
     for (let i = 3; i >= 0; i--) {
       const d = new Date(now.getTime() - i * 7 * 86_400_000);
       const start = weekStart(d.toISOString());
-      out.push({ start, count: (data?.sessions ?? []).filter((s) => weekStart(s.startedAt) === start).length });
+      out.push({ start, count: data.sessions.filter((s) => weekStart(s.startedAt) === start).length });
     }
     return out;
   }, [data]);
-
-  if (loading) return <Skeleton className="h-72" />;
-  if (error || !data) return <Alert tone="error">{error ?? "Não foi possível carregar o resumo."}</Alert>;
 
   const first = firstName(student.name);
   const active = data.programs.find((p) => p.active) ?? null;
@@ -283,51 +487,8 @@ function Summary({ student, justCreated, onTab, onEdit }: { student: Profile; ju
   const hasMeasures = measures.some((m) => m.value);
   const minutes = last?.finishedAt ? Math.round((new Date(last.finishedAt).getTime() - new Date(last.startedAt).getTime()) / 60000) : null;
 
-  const todo = [
-    !active && { key: "ficha", icon: <ClipboardList className="size-5" />, title: `Montar a ficha de ${first}`, body: "Gere uma base pelo perfil ou monte do zero.", href: `/alunos/${id}/ficha/nova` },
-    !sortedMetrics.length && { key: "aval", icon: <Ruler className="size-5" />, title: "Registrar a avaliação inicial", body: "Peso, % de gordura e circunferências para comparar depois.", tab: "evolucao" as Tab },
-    !data.hasDiet && { key: "dieta", icon: <Salad className="size-5" />, title: "Definir metas e orientações de dieta", body: "Calorias, proteína e um cardápio base.", tab: "dieta" as Tab },
-  ].filter(Boolean) as { key: string; icon: React.ReactNode; title: string; body: string; href?: string; tab?: Tab }[];
-
   return (
-    <div className="space-y-4">
-      {justCreated ? (
-        <Alert tone="done">
-          Cadastro de {first} concluído. O próximo passo é montar a ficha.
-        </Alert>
-      ) : null}
-
-      {todo.length ? (
-        <Panel title="Próximos passos" pad={false}>
-          <ul className="ruled">
-            {todo.map((t) => {
-              const inner = (
-                <>
-                  <span className="grid size-10 shrink-0 place-items-center rounded-full border border-rule-strong">{t.icon}</span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block font-semibold">{t.title}</span>
-                    <span className="block text-sm text-steel">{t.body}</span>
-                  </span>
-                </>
-              );
-              return (
-                <li key={t.key}>
-                  {t.href ? (
-                    <Link href={t.href} className="flex min-h-14 items-center gap-3 px-4 py-3 hover:bg-chalk">
-                      {inner}
-                    </Link>
-                  ) : (
-                    <button type="button" onClick={() => onTab(t.tab!)} className="flex min-h-14 w-full items-center gap-3 px-4 py-3 text-left hover:bg-chalk">
-                      {inner}
-                    </button>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        </Panel>
-      ) : null}
-
+    <div className="no-print space-y-4">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <Panel title="Frequência nas últimas 4 semanas">
           <ul className="space-y-2">

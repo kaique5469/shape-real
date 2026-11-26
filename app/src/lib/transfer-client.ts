@@ -6,7 +6,7 @@ import { lastBackupAt, markBackupDone } from "@/lib/data/local";
 import type { Repository } from "@/lib/data/repository";
 import { addPrepEntries, fichaDelivery, fichaEchoOf, fichaVersao, isIsoDate, nextAck, parseFichaAck, parseFichaSendRecord, parsePrepLog, sameSession, type FichaAck, type FichaDelivery, type FichaSendRecord, type FichaVersao, type PrepEntry, type PrepVia, type VersionPair } from "@/lib/domain/delivery";
 import { uid } from "@/lib/domain/ids";
-import { backupAgeBucket, backupFileName, buildBackup, downloadText, parseBackup as parseBackupFile, SENT_KEY_RE, SENT_SINCE_KEY, SENT_SUFFIXES, sentKeyOf, type Backup, type BackupBundle } from "@/lib/domain/export";
+import { backupAgeBucket, backupFileName, buildBackup, downloadText, mesclarRestauracao, parseBackup as parseBackupFile, SENT_KEY_RE, SENT_SINCE_KEY, SENT_SUFFIXES, sentKeyOf, type Backup, type BackupBundle } from "@/lib/domain/export";
 import { fichaLinkItems, mergeMetric, mirrorLoads, receivedVersions, studentFieldsOf, type FichaPacket, type TreinosPacket } from "@/lib/domain/transfer";
 import type { Profile, Session } from "@/lib/domain/types";
 
@@ -337,7 +337,10 @@ async function restoreBundle(b: BackupBundle, ownerOverride?: Partial<Profile>) 
   // Exercícios e alimentos próprios antes das fichas e dietas que apontam para eles.
   for (const e of b.customExercises ?? []) await localRepo.saveCustomExercise(b.profile.id, { ...e, custom: true });
   for (const f of b.customFoods ?? []) await localRepo.saveCustomFood(b.profile.id, f);
-  await localRepo.saveProfile({ ...b.profile, ...ownerOverride });
+  // Perfil que já existe no aparelho: as respostas do questionário mais novas e as liberações dos dois lados ficam
+  // (D-32). O resto vem da cópia, como antes.
+  const atual = await localRepo.getProfile(b.profile.id).catch(() => null);
+  await localRepo.saveProfile(mesclarRestauracao(atual, { ...b.profile, ...ownerOverride }));
   for (const p of b.programs ?? []) await localRepo.saveProgram({ ...p, ownerId: b.profile.id }, { keepUpdatedAt: true });
   if (b.sessions?.length) localRepo.saveSessionsBulk(b.sessions.map((s) => ({ ...s, userId: b.profile.id })));
   if (b.metrics?.length) localRepo.saveMetricsBulk(b.metrics.map((m) => ({ ...m, userId: b.profile.id })));

@@ -1,5 +1,6 @@
 "use client";
 
+import { ANAMNESE_V, CONSENT_TEXT_ID, PARQ_TEXT_ID, type Anamnese, type AnamnesePedido, type WorkStyle } from "@/lib/domain/anamnese-types";
 import { getExercise } from "@/lib/domain/exercises";
 import { generateProgram } from "@/lib/domain/generator";
 import { uid, todayISO } from "@/lib/domain/ids";
@@ -214,6 +215,173 @@ async function seedAthlete(
 export const DEMO_ATHLETE_ID = "demo-atleta";
 export const DEMO_COACH_ID = "demo-personal";
 
+// ───────────────────────── Questionário dos exemplos (respostas fictícias) ─────────────────────────
+
+const DIA_MS = 86_400_000;
+const diasAntes = (agora: Date, dias: number) => new Date(agora.getTime() - dias * DIA_MS).toISOString();
+
+/**
+ * Respostas fictícias dos alunos de exemplo (demonstração e /testar), rotuladas "respostas fictícias" na interface
+ * (`ehExemplo`). Mostram o resumo sem e com alerta:
+ *  - Juliana: pelo link, treina há mais de 3 meses, PAR-Q só com "sim" na 5 e termo marcado, dor no joelho direito
+ *    4/10 em alguns movimentos há mais de 3 meses, falta de tempo, não quer correr, foco em glúteos. Sem vermelho nem
+ *    laranja. Já vista pelo personal.
+ *  - Marcos: PAR-Q só com "sim" na 6 e sem termo, pressão alta com controle desconhecido e remédio de pressão, treina
+ *    há mais de 3 meses (A-PRESSAO e A-PARQ-SIM; [E2] O-PRESS e O-HAS). Chegou há 2 dias e ainda não foi vista.
+ * Ids fixos ("exemplo-…"): nunca viram pedido real nem evento.
+ */
+export function respostasExemplo(quem: "juliana" | "marcos", agora: Date): Anamnese {
+  if (quem === "juliana") {
+    const at = diasAntes(agora, 42);
+    return {
+      v: ANAMNESE_V,
+      id: "exemplo-juliana",
+      answeredAt: at,
+      receivedAt: at,
+      vistoEm: at,
+      by: "aluno",
+      via: "link",
+      modulos: [],
+      parqText: PARQ_TEXT_ID,
+      a: {
+        nome: "Juliana Prado",
+        ano: 1991,
+        sexo: "F",
+        altura: 165,
+        peso: 63,
+        parq: [0, 0, 0, 0, 1, 0, 0],
+        regular: "sim3m",
+        condicoes: [],
+        sintomas: [],
+        remedios: 0,
+        cirurgia: 0,
+        orientacao: "nao",
+        gestacao: "nao",
+        dor: 1,
+        dorOnde: [{ r: "joelho", l: "d" }],
+        dorNota: 4,
+        dorQuando: ["movimento"],
+        dorDesde: "mais3m",
+        lesao: 0,
+        tratamento: "nao",
+        objetivo: "gordura",
+        experiencia: "a3",
+        dias: 4,
+        minutos: 60,
+        onde: "academia",
+        nutri: "nao",
+        foco: ["gluteos"],
+        naoQuer: ["correr"],
+        barreira: ["tempo"],
+      },
+      consent: { at, source: "aluno_questionario", textId: CONSENT_TEXT_ID },
+      declaredAt: at,
+      termo: { at, nome: "Juliana Prado" },
+    };
+  }
+  const at = diasAntes(agora, 2);
+  return {
+    v: ANAMNESE_V,
+    id: "exemplo-marcos",
+    answeredAt: at,
+    receivedAt: at,
+    by: "aluno",
+    via: "link",
+    modulos: [],
+    parqText: PARQ_TEXT_ID,
+    a: {
+      nome: "Marcos Antunes",
+      ano: 1987,
+      sexo: "M",
+      altura: 182,
+      peso: 88,
+      parq: [0, 0, 0, 0, 0, 1, 0],
+      regular: "sim3m",
+      condicoes: ["pressao"],
+      sintomas: [],
+      remedios: 1,
+      remediosPara: ["pressao"],
+      cirurgia: 0,
+      orientacao: "nao",
+      pressaoControle: "naoSei",
+      dor: 0,
+      lesao: 0,
+      objetivo: "forca",
+      experiencia: "mais3",
+      dias: 3,
+      minutos: 60,
+      onde: "academia",
+      nutri: "nao",
+    },
+    consent: { at, source: "aluno_questionario", textId: CONSENT_TEXT_ID },
+    declaredAt: at,
+  };
+}
+
+/**
+ * Beatriz: questionário pedido há 3 dias, ainda sem resposta (selo "Questionário pendente" e o lembrete). Exemplo:
+ * nada é enviado, por isso o pedido não tem pacote (`packed` vazio).
+ */
+export function pedidoExemplo(agora: Date): AnamnesePedido {
+  return { id: "exemplo-pedido-beatriz", at: diasAntes(agora, 3), modulos: [], packed: "" };
+}
+
+/**
+ * Jeito de trabalhar pronto só no personal da demonstração (academia · emagrecimento · 3×60 · 6 semanas · encaminha
+ * ao nutricionista). Nunca no /testar: quem testa precisa ver "Como você trabalha?" e o cartão da lista.
+ */
+export function jeitoDemonstracao(agora: Date): WorkStyle {
+  return { atendimento: "academia", publico: ["emagrecimento"], dias: 3, minutos: 60, semanas: 6, alimentacao: "encaminho", definidoEm: agora.toISOString() };
+}
+
+/** O que cada exemplo ganha do questionário, pela ordem dos alunos (Juliana, Marcos, Beatriz). */
+function questionarioDoExemplo(i: number, agora: Date): Partial<Profile> {
+  if (i === 0) return { anamnese: respostasExemplo("juliana", agora) };
+  if (i === 1) return { anamnese: respostasExemplo("marcos", agora) };
+  return { anamnesePedido: pedidoExemplo(agora) };
+}
+
+/** Marca de que os exemplos já existentes ganharam o questionário (roda uma vez por aparelho; "Apagar dados" leva junto). */
+const EXEMPLOS_QUESTIONARIO_KEY = (conjunto: "teste" | "demo") => `sr:v1:exemplos-questionario:${conjunto}`;
+function lerMarca(conjunto: "teste" | "demo"): boolean {
+  try {
+    return localStorage.getItem(EXEMPLOS_QUESTIONARIO_KEY(conjunto)) === "1";
+  } catch {
+    return false;
+  }
+}
+function gravarMarca(conjunto: "teste" | "demo") {
+  try {
+    localStorage.setItem(EXEMPLOS_QUESTIONARIO_KEY(conjunto), "1");
+  } catch {}
+}
+
+/**
+ * Migração leve: acrescenta as respostas fictícias (e o pedido da Beatriz) aos exemplos que já existiam sem
+ * questionário. Nunca recria um exemplo removido, nunca troca respostas que já existem e roda uma vez por aparelho
+ * (o personal pode ter apagado as respostas de um exemplo depois).
+ */
+async function completarExemplos(repo: LocalRepository, ids: readonly string[], conjunto: "teste" | "demo", agora = new Date()): Promise<number> {
+  if (lerMarca(conjunto)) return 0;
+  let n = 0;
+  for (const [i, id] of ids.entries()) {
+    const p = await repo.getProfile(id);
+    if (!p || p.anamnese || p.anamnesePrev || p.anamnesePedido) continue;
+    await repo.saveProfile({ ...p, ...questionarioDoExemplo(i, agora) });
+    n++;
+  }
+  gravarMarca(conjunto);
+  return n;
+}
+
+const TESTE_EXEMPLOS = ["teste-ex-1", "teste-ex-2", "teste-ex-3"] as const;
+const DEMO_EXEMPLOS = ["demo-aluna-1", "demo-aluno-2", "demo-aluna-3"] as const;
+
+/** Exemplos do /testar criados antes do questionário: ganham as respostas fictícias (devolve quantos mudaram). */
+export function completarExemplosTeste(repo: LocalRepository, agora = new Date()): Promise<number> {
+  return completarExemplos(repo, TESTE_EXEMPLOS, "teste", agora);
+}
+
 export async function seedDemo(repo: LocalRepository, role: "athlete" | "coach"): Promise<string> {
   if (role === "athlete") {
     if (!(await repo.getProfile(DEMO_ATHLETE_ID))) {
@@ -221,17 +389,24 @@ export async function seedDemo(repo: LocalRepository, role: "athlete" | "coach")
     }
     return DEMO_ATHLETE_ID;
   }
-  if (!(await repo.getProfile(DEMO_COACH_ID))) {
-    await repo.saveProfile(profile({ id: DEMO_COACH_ID, name: "Camila Duarte (demonstração)", role: "coach", plan: "coach" }));
+  const coach = await repo.getProfile(DEMO_COACH_ID);
+  if (coach) {
+    // Demonstração aberta antes do questionário: jeito de trabalhar e respostas fictícias, uma vez.
+    if (!coach.workStyle) await repo.saveProfile({ ...coach, workStyle: jeitoDemonstracao(new Date()) });
+    await completarExemplos(repo, DEMO_EXEMPLOS, "demo");
+  } else {
+    const agora = new Date();
+    await repo.saveProfile(profile({ id: DEMO_COACH_ID, name: "Camila Duarte (demonstração)", role: "coach", plan: "coach", workStyle: jeitoDemonstracao(agora) }));
     const students = [
       { id: "demo-aluna-1", name: "Juliana Prado", sex: "F" as const, birthYear: 1991, heightCm: 165, weightKg: 63.2, goal: "emagrecimento" as Goal, level: "intermediario" as Level, system: "abcd_inferiores" as SystemId, days: 4, weeks: 6, seed: 11, delta: -0.35, bf: 27, skip: 0.08, emphasis: ["gluteos"] as MuscleGroup[] },
       { id: "demo-aluno-2", name: "Marcos Antunes", sex: "M" as const, birthYear: 1987, heightCm: 182, weightKg: 88.0, goal: "forca" as Goal, level: "avancado" as Level, system: "forca_5x5" as SystemId, days: 3, weeks: 6, seed: 23, delta: 0.1, bf: 20, skip: 0.05 },
       { id: "demo-aluna-3", name: "Beatriz Lima", sex: "F" as const, birthYear: 1999, heightCm: 160, weightKg: 55.5, goal: "hipertrofia" as Goal, level: "iniciante" as Level, system: "fullbody" as SystemId, days: 3, weeks: 5, seed: 37, delta: 0.15, bf: 24, skip: 0.45 },
     ];
-    for (const s of students) {
-      await seedAthlete(repo, { ...s, coachId: DEMO_COACH_ID, stopDaysAgo: s.id === "demo-aluna-3" ? 9 : undefined });
+    for (const [i, s] of students.entries()) {
+      await seedAthlete(repo, { ...s, coachId: DEMO_COACH_ID, stopDaysAgo: s.id === "demo-aluna-3" ? 9 : undefined, extra: questionarioDoExemplo(i, agora) });
       repo.linkDirect(DEMO_COACH_ID, s.id, new Date(Date.now() - s.weeks * 7 * 86_400_000).toISOString());
     }
+    gravarMarca("demo");
   }
   return DEMO_COACH_ID;
 }
@@ -257,16 +432,22 @@ export function needsCoachIdentity(p: Pick<Profile, "id" | "role" | "name" | "cr
 }
 
 export async function seedTester(repo: LocalRepository): Promise<string> {
-  if (await repo.getProfile(TESTER_COACH_ID)) return TESTER_COACH_ID;
+  if (await repo.getProfile(TESTER_COACH_ID)) {
+    // Quem já testou não recebe os exemplos de novo; os que existem ganham o questionário fictício.
+    await completarExemplosTeste(repo);
+    return TESTER_COACH_ID;
+  }
+  const agora = new Date();
   await repo.saveProfile(profile({ id: TESTER_COACH_ID, name: "Personal", role: "coach", plan: "coach", createdAt: new Date().toISOString() }));
   const samples = [
     { id: "teste-ex-1", name: "Juliana Prado", sex: "F" as const, birthYear: 1991, heightCm: 165, weightKg: 63.2, goal: "emagrecimento" as Goal, level: "intermediario" as Level, system: "abcd_inferiores" as SystemId, days: 4, weeks: 6, seed: 11, delta: -0.35, bf: 27, skip: 0.08, emphasis: ["gluteos"] as MuscleGroup[] },
     { id: "teste-ex-2", name: "Marcos Antunes", sex: "M" as const, birthYear: 1987, heightCm: 182, weightKg: 88.0, goal: "forca" as Goal, level: "avancado" as Level, system: "forca_5x5" as SystemId, days: 3, weeks: 6, seed: 23, delta: 0.1, bf: 20, skip: 0.05 },
     { id: "teste-ex-3", name: "Beatriz Lima", sex: "F" as const, birthYear: 1999, heightCm: 160, weightKg: 55.5, goal: "hipertrofia" as Goal, level: "iniciante" as Level, system: "fullbody" as SystemId, days: 3, weeks: 5, seed: 37, delta: 0.15, bf: 24, skip: 0.45, stopDaysAgo: 9 },
   ];
-  for (const s of samples) {
-    await seedAthlete(repo, { ...s, coachId: TESTER_COACH_ID, extra: { sample: true, managedBy: TESTER_COACH_ID } });
+  for (const [i, s] of samples.entries()) {
+    await seedAthlete(repo, { ...s, coachId: TESTER_COACH_ID, extra: { sample: true, managedBy: TESTER_COACH_ID, ...questionarioDoExemplo(i, agora) } });
     repo.linkDirect(TESTER_COACH_ID, s.id, new Date(Date.now() - s.weeks * 7 * 86_400_000).toISOString());
   }
+  gravarMarca("teste");
   return TESTER_COACH_ID;
 }

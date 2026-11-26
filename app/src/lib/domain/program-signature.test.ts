@@ -110,7 +110,7 @@ describe("programSignature", () => {
     };
     expect(programSignature(equivalent)).toBe(sig);
     // Campos que a anamnese acrescentar sem passar pelo editor não contam.
-    expect(programSignature({ ...base, sharedAt: "2026-11-23T00:00:00Z", sugerido: true } as Program)).toBe(sig);
+    expect(programSignature({ ...base, sharedAt: "2026-11-23T00:00:00Z", sugerido: { system: "abc", durationWeeks: 8 } } as Program)).toBe(sig);
     // Sem validade: 0, null e ausente são o mesmo.
     const noValidity = { ...base, durationWeeks: undefined };
     expect(programSignature({ ...base, durationWeeks: 0 })).toBe(programSignature(noValidity));

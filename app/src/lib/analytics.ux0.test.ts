@@ -27,9 +27,10 @@ describe("medição (UX0)", () => {
   });
 
   it("eventos novos da UX estão na lista de propriedades", () => {
-    expect(Object.keys(EVENT_PROPS).sort()).toEqual(["diet_adjust_started", "evolution_compare_shown", "workout_resumed"]);
+    // A fundação do questionário acrescenta os eventos dela (analytics.anamnese.test.ts); os da UX continuam.
+    expect(Object.keys(EVENT_PROPS)).toEqual(expect.arrayContaining(["diet_adjust_started", "evolution_compare_shown", "workout_resumed"]));
     expect(EXTRA_PROPS.treinos_link_sent).toEqual(["where", "resend", "novos"]);
-    expect(EXTRA_PROPS.ficha_link_sent).toEqual(["where", "situacao"]);
+    expect(EXTRA_PROPS.ficha_link_sent.slice(0, 2)).toEqual(["where", "situacao"]);
     expect(EXTRA_PROPS.treinos_link_received).toEqual(["same", "ficha_versao"]);
     expect(EXTRA_PROPS.workout_completed).toEqual(["desmarcadas", "trocas", "grupos_desfeitos"]);
   });

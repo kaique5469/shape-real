@@ -6,7 +6,12 @@ import { ArrowLeft, PenLine, Play } from "lucide-react";
 import { Logo } from "@/components/brand";
 import { GoalPicker, LimitsPicker, RoutinePicker, suggestFor, withSuggestion, type TrainingPrefs } from "@/components/preferences";
 import { Alert, Button, Field, Input, cx } from "@/components/ui";
+import { WorkStyleForm } from "@/components/work-style-form";
 import { useApp } from "@/lib/app-context";
+import { evWorkStyleSet } from "@/lib/anamnese-events";
+import type { WorkStyle } from "@/lib/domain/anamnese-types";
+import { JEITO_SUB, JEITO_TITULO, comDefinido, comPulado } from "@/lib/domain/work-style";
+import { estadoChave, questionarioLigado } from "@/lib/flags";
 import { aiAvailable, aiProgram } from "@/lib/ai/client";
 import { maskPhone, waPhone } from "@/lib/domain/format";
 import { getSystem } from "@/lib/domain/systems";
@@ -34,6 +39,13 @@ export default function Onboarding() {
   const [aiBusy, setAiBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [genFailed, setGenFailed] = useState(false);
+  // "Como você trabalha?" (spec §3.1): começa do que já estava salvo, se a pessoa voltou ao onboarding.
+  const [ws, setWs] = useState<WorkStyle | undefined>(undefined);
+  const [skipping, setSkipping] = useState(false);
+  // Chave do questionário: em "todos" já vale no primeiro render; nos outros estados depende do aparelho e é lida
+  // depois de montar.
+  const [jeitoLigado, setJeitoLigado] = useState(() => estadoChave() === "todos");
+  useEffect(() => setJeitoLigado(questionarioLigado()), []);
 
   useEffect(() => {
     if (!ready) return;
@@ -55,6 +67,10 @@ export default function Onboarding() {
   useEffect(() => {
     if (savedPhone) setPhone((p) => p || maskPhone(savedPhone));
   }, [savedPhone]);
+  const savedWs = user?.workStyle;
+  useEffect(() => {
+    if (savedWs) setWs((w) => w ?? savedWs);
+  }, [savedWs]);
 
   if (!ready || !user) return null;
   // O sistema segue a sugestão para as respostas (dá para trocar depois, em Treinos).
@@ -68,15 +84,39 @@ export default function Onboarding() {
   const isCoach = user.role === "coach";
   const dayKey = firstDayKey(prefs.system);
 
-  async function finishCoach() {
+  const coachDigits = () => phone.replace(/\D/g, "");
+  const phoneError = () => {
+    const digits = coachDigits();
+    return digits && !waPhone(digits) ? "Confira o WhatsApp: DDD e número, por exemplo (11) 91234-5678." : null;
+  };
+
+  /** WhatsApp do personal: com a chave ligada, segue para "Como você trabalha?"; senão, conclui. */
+  function submitCoachPhone() {
     setError(null);
-    const digits = phone.replace(/\D/g, "");
-    if (digits && !waPhone(digits)) return setError("Confira o WhatsApp: DDD e número, por exemplo (11) 91234-5678.");
+    const err = phoneError();
+    if (err) return setError(err);
+    if (jeitoLigado) setStep(1);
+    else void finishCoach(null);
+  }
+
+  /** Conclui o onboarding do personal. `jeito`: "salvar" grava `workStyle` com `definidoEm`; "pular" grava `puladoEm`. */
+  async function finishCoach(jeito: "salvar" | "pular" | null) {
+    setError(null);
+    const err = phoneError();
+    if (err) {
+      setStep(0);
+      return setError(err);
+    }
+    const digits = coachDigits();
+    const agora = new Date().toISOString();
+    const workStyle = jeito === "salvar" ? comDefinido(ws, agora) : jeito === "pular" ? comPulado(user?.workStyle, agora) : undefined;
     setBusy(true);
+    setSkipping(jeito === "pular");
     // Sem isso, o efeito de "já fez o onboarding" redireciona para /alunos e o parâmetro de boas-vindas se perde.
     finishing.current = true;
     try {
-      await updateProfile({ onboarded: true, ...(digits ? { phone: digits } : {}) });
+      await updateProfile({ onboarded: true, ...(digits ? { phone: digits } : {}), ...(workStyle ? { workStyle } : {}) });
+      if (jeito) track("work_style_set", evWorkStyleSet(workStyle, "onboarding", jeito === "pular"));
       track("onboarding_completed", { role: "coach", whatsapp: Boolean(digits) });
       router.replace("/alunos?bemvindo=1");
     } catch (e) {
@@ -84,6 +124,7 @@ export default function Onboarding() {
       finishing.current = false;
       setError(e instanceof Error ? e.message : "Não foi possível concluir. Tente de novo.");
       setBusy(false);
+      setSkipping(false);
     }
   }
 
@@ -181,7 +222,7 @@ export default function Onboarding() {
               noValidate
               onSubmit={(e) => {
                 e.preventDefault();
-                void finishCoach();
+                submitCoachPhone();
               }}
             >
               <Field label="Seu WhatsApp (opcional)" hint="É para onde seus alunos devolvem os treinos. Sem ele, o aluno precisa te procurar nos contatos.">
@@ -190,6 +231,15 @@ export default function Onboarding() {
             </form>
           ),
         },
+        ...(jeitoLigado
+          ? [
+              {
+                title: JEITO_TITULO,
+                sub: JEITO_SUB,
+                body: <WorkStyleForm value={ws} onChange={setWs} compact />,
+              },
+            ]
+          : []),
       ]
     : [
         { title: "Qual é o seu objetivo?", sub: "Dá para mudar quando quiser.", body: <GoalPicker value={prefs.goal} onChange={(goal) => set({ goal })} /> },
@@ -220,16 +270,24 @@ export default function Onboarding() {
   const withCode = canInvite && Boolean(invite.trim());
 
   let primary: React.ReactNode;
-  if (!last) {
+  // Passo "Como você trabalha?": "Salvar" e, abaixo, "Pular, decido depois" do mesmo tamanho (spec §3.1).
+  const jeitoStep = isCoach && current === 1;
+  if (isCoach && current === 0) {
+    primary = (
+      <Button size="lg" className={PRIMARY} type="submit" form="onboarding-personal" loading={busy}>
+        {last ? "Abrir meu painel" : "Continuar"}
+      </Button>
+    );
+  } else if (jeitoStep) {
+    primary = (
+      <Button size="lg" className={PRIMARY} loading={busy && !skipping} disabled={busy} onClick={() => void finishCoach("salvar")}>
+        Salvar
+      </Button>
+    );
+  } else if (!last) {
     primary = (
       <Button size="lg" className={PRIMARY} onClick={() => setStep(current + 1)}>
         Continuar
-      </Button>
-    );
-  } else if (isCoach) {
-    primary = (
-      <Button size="lg" className={PRIMARY} type="submit" form="onboarding-personal" loading={busy}>
-        Abrir meu painel
       </Button>
     );
   } else if (genFailed) {
@@ -318,6 +376,11 @@ export default function Onboarding() {
             )}
             {primary}
           </div>
+          {jeitoStep ? (
+            <Button size="lg" variant="secondary" className="mt-2 w-full" loading={busy && skipping} disabled={busy} onClick={() => void finishCoach("pular")}>
+              Pular, decido depois
+            </Button>
+          ) : null}
         </div>
       </div>
     </div>

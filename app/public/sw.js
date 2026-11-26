@@ -6,13 +6,16 @@
  * - /api e /ingest nunca passam por aqui: IA e medição de uso só existem com rede.
  * Ao mudar a lógica deste arquivo, troque VERSION para descartar os caches antigos.
  */
-const VERSION = "v3";
+const VERSION = "v4";
 const PAGES = `sr-pages-${VERSION}`;
 const ASSETS = `sr-assets-${VERSION}`;
 // /abrir e /receber: o link do WhatsApp precisa abrir mesmo sem sinal (os dados vêm no próprio link).
+// /questionario: o preenchimento junto (?aluno=) vai do "Adicionar aluno" ao resumo em modo avião, e o aluno do link
+// continua o rascunho sem sinal. v4: a troca de versão descarta os caches antigos (cópia velha de /receber sem o ramo
+// do questionário).
 // /entrar, /onboarding e /treinos/novo ("Montar do zero"): quem abriu a página inicial uma vez cria o perfil e a ficha em
 // modo avião. A busca (?modo=criar, ?perfil=personal) é lida no aparelho; a cópia guardada é a do caminho.
-const CORE = ["/hoje", "/sessao", "/treinos", "/treinos/novo", "/historico", "/evolucao", "/dieta", "/conta", "/alunos", "/abrir", "/receber", "/entrar", "/onboarding"];
+const CORE = ["/hoje", "/sessao", "/treinos", "/treinos/novo", "/historico", "/evolucao", "/dieta", "/conta", "/alunos", "/abrir", "/receber", "/questionario", "/entrar", "/onboarding"];
 const MAX_ASSETS = 320;
 
 self.addEventListener("install", (event) => {

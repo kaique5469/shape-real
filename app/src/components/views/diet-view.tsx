@@ -10,6 +10,7 @@ import { DietRead, NotesRead, PlanVsTargets } from "@/components/views/diet-read
 import { useApp } from "@/lib/app-context";
 import { OfflineError, aiAvailable, aiDietAnalyze, aiDietGenerate, useAI, type DietAnalysis } from "@/lib/ai/client";
 import { COACH_IDENTITY_HINT, needsCoachIdentity } from "@/lib/data/demo";
+import { avisoDieta } from "@/lib/domain/anamnese-perfil";
 import {
   MACRO_LABEL,
   MACRO_ORDER,
@@ -414,8 +415,30 @@ export function DietView({ owner, mode, onDeliveryChange }: { owner: Profile; mo
     }
   }
 
-  if (loading) return <Skeleton className="h-80" />;
-  if (loadErr) return <Alert tone="error">{loadErr}</Alert>;
+  // Aviso fixo (spec §7, fim): com gatilho clínico de nutricionista nas respostas, a aba serve só para registrar as
+  // metas do nutricionista. Sem botão de fechar, acima de tudo, e nunca nomeia a condição.
+  const aviso = coach ? avisoDieta(owner) : null;
+  const avisoFixo = aviso ? (
+    <Alert tone="warn" className="no-print ph-no-capture">
+      {aviso}
+    </Alert>
+  ) : null;
+  if (loading)
+    return avisoFixo ? (
+      <div className="space-y-5">
+        {avisoFixo}
+        <Skeleton className="h-80" />
+      </div>
+    ) : (
+      <Skeleton className="h-80" />
+    );
+  if (loadErr)
+    return (
+      <div className="space-y-5">
+        {avisoFixo}
+        <Alert tone="error">{loadErr}</Alert>
+      </div>
+    );
 
   const mealActions = (meal: Meal): SheetAction[] => {
     const i = diet?.meals.findIndex((m) => m.uid === meal.uid) ?? -1;
@@ -445,6 +468,7 @@ export function DietView({ owner, mode, onDeliveryChange }: { owner: Profile; mo
 
   return (
     <div className="space-y-5">
+      {avisoFixo}
       {coach && !crnSeen ? (
         <Alert tone="info" className="no-print">
           <div className="flex items-start gap-2">

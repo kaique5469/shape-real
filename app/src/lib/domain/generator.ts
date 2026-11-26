@@ -24,6 +24,13 @@ export interface GenerateInput {
   limitations?: string;
   emphasis?: MuscleGroup[];
   seed?: number;
+  /** Ids que o motor não usa, além dos da limitação (o "não quero fazer" do questionário). Não vão para a IA. */
+  avoidIds?: string[];
+  /**
+   * Teto de intensidade (spec §8.4): programa conservador (o 5×5 vira Full Body), repetições a partir de 10, sem
+   * drop-set e sem tiros. Vem do questionário (sem treino regular, pressão sem controle…); o personal pode desmarcar.
+   */
+  intensityCap?: "moderada";
 }
 
 export const GOAL_LABEL: Record<Goal, string> = {
@@ -251,6 +258,8 @@ const LIMITATION_RULES: LimitationRule[] = [
     minReps: 10,
     population: true,
   },
+  // Pós-parto recente ou sinal de assoalho pélvico (token "pós-parto" do questionário, spec §8.3): sem impacto nem flexão de tronco.
+  { label: "pós-parto", match: /pos-?parto|puerper/, avoid: [...IMPACT, ...TRUNK_FLEXION], minReps: 10, population: true },
 ];
 
 /** "Sem dor no joelho", "não tenho lesão": a frase negada não aciona regra. */
@@ -888,6 +897,8 @@ interface DayCtx extends PickCtx {
   highFrequency: boolean;
   /** Programa trocado por um mais seguro por causa de limitação: nada de séries abaixo de 6 repetições. */
   conservative: boolean;
+  /** Teto de intensidade moderada: repetições a partir de 10 e sem drop-set. */
+  capped: boolean;
   emphasisByDay: Map<MuscleGroup, Set<string>>;
 }
 
@@ -913,6 +924,11 @@ function buildDay(tpl: DayTemplate, ctx: DayCtx): WorkoutDay {
       scheme.repsMax = Math.max(scheme.repsMax, 8);
       scheme.sets = Math.min(scheme.sets, 4);
       scheme.restSec = Math.min(scheme.restSec, 150);
+    }
+    // Intensidade moderada (dá para conversar treinando): nada abaixo de 10 repetições.
+    if (ctx.capped && (ex.unit ?? "reps") === "reps") {
+      scheme.repsMin = Math.max(scheme.repsMin, CAP_MIN_REPS);
+      scheme.repsMax = Math.max(scheme.repsMax, CAP_MAX_REPS);
     }
     // Sessões de até 60 min: acessórios com 60–90 s de descanso, iguais em todos os dias da ficha.
     if (ctx.minutes <= 60 && !mainLift && (ex.unit ?? "reps") === "reps") scheme.restSec = Math.min(scheme.restSec, ex.compound ? 90 : 60);
@@ -1021,7 +1037,7 @@ function buildDay(tpl: DayTemplate, ctx: DayCtx): WorkoutDay {
   }
 
   // 4. Avançado em hipertrofia: drop-set no último isolado com carga (de preferência de um grupo do foco).
-  if (input.level === "avancado" && input.goal === "hipertrofia") {
+  if (input.level === "avancado" && input.goal === "hipertrofia" && !ctx.capped) {
     const loadable = (e: Entry) => !e.ex.compound && e.ex.pattern === "isolado" && isReps(e) && ["maquina", "cabo", "halter"].includes(e.ex.implement) && e.ex.group !== "antebraco";
     const candidates = [...list].reverse().filter(loadable);
     const target = candidates.find((e) => tpl.focus.includes(e.ex.group)) ?? candidates[0];
@@ -1043,11 +1059,20 @@ const NOTE_BODYWEIGHT = "Aquecimento: 5 min de mobilidade e polichinelos leves. 
 const NOTE_5X5 =
   "Comece leve (cerca de metade do que você faria em 5 repetições) e faça 2–3 séries de aquecimento subindo a carga antes das séries válidas. Fechou todas as séries com 5 repetições: suba 2,5 kg no agachamento, supino, desenvolvimento e remada e 5 kg no terra. Falhou: repita a carga; após duas falhas seguidas, volte 10%.";
 
-/** O 5×5 depende dos básicos com barra: sem academia ou com limitação que os tira, vira um Full Body. */
-function resolveSystem(input: GenerateInput, lim: LimitationPlan): { system: TrainingSystem; note?: string; conservative: boolean } {
-  if (input.system !== "forca_5x5") return { system: getSystem(input.system), conservative: false };
-  if (input.equipment !== "academia") return { system: getSystem("fullbody"), note: "O 5×5 precisa de barra e anilhas; montei um Full Body equivalente.", conservative: false };
-  if (lim.population || FIVE_BASICS.some((id) => lim.avoid.has(id))) {
+/** Teto de intensidade moderada (spec §8.4): o que sai da ficha, o piso de repetições e a nota. */
+const CAP_AVOID = ["hiit_esteira", "hiit_bike", "burpee"];
+const CAP_MIN_REPS = 10;
+const CAP_MAX_REPS = 12;
+const NOTE_CAP = "Intensidade moderada (dá para conversar treinando): repetições a partir de 10, sem drop-set e sem tiros. Vale para esta ficha; ao gerar outra, o app confere de novo.";
+
+/**
+ * O 5×5 depende dos básicos com barra: sem academia ou com limitação que os tira, vira um Full Body.
+ * O teto de intensidade conta como condição geral (`population`).
+ */
+function resolveSystem(input: GenerateInput, lim: LimitationPlan, capped: boolean): { system: TrainingSystem; note?: string; conservative: boolean } {
+  if (input.system !== "forca_5x5") return { system: getSystem(input.system), conservative: capped };
+  if (input.equipment !== "academia") return { system: getSystem("fullbody"), note: "O 5×5 precisa de barra e anilhas; montei um Full Body equivalente.", conservative: capped };
+  if (lim.population || capped || FIVE_BASICS.some((id) => lim.avoid.has(id))) {
     return { system: getSystem("fullbody"), note: "O 5×5 depende dos básicos pesados com barra; com as limitações informadas, montei um Full Body mais seguro.", conservative: true };
   }
   return { system: getSystem("forca_5x5"), conservative: false };
@@ -1056,7 +1081,11 @@ function resolveSystem(input: GenerateInput, lim: LimitationPlan): { system: Tra
 /** Motor determinístico: gera uma ficha completa sem IA (também é o fallback da IA). Mesma seed, mesma ficha. */
 export function generateProgram(input: GenerateInput, owner: { ownerId: string; createdBy: string }): Program {
   const lim = analyzeLimitations(input.limitations);
-  const { system, note, conservative } = resolveSystem(input, lim);
+  const capped = input.intensityCap === "moderada";
+  const { system, note, conservative } = resolveSystem(input, lim, capped);
+  // Sem as entradas novas, o conjunto é o da limitação (mesma ficha de antes com a mesma seed); com elas, um Set novo.
+  const extraAvoid = [...(input.avoidIds ?? []), ...(capped ? CAP_AVOID : [])];
+  const avoid = extraAvoid.length ? new Set([...lim.avoid, ...extraAvoid]) : lim.avoid;
   const emphasisByDay = new Map<MuscleGroup, Set<string>>();
   for (const g of input.emphasis ?? []) if (g !== "cardio" && !emphasisByDay.has(g)) emphasisByDay.set(g, emphasisDays(system, g));
 
@@ -1067,12 +1096,13 @@ export function generateProgram(input: GenerateInput, owner: { ownerId: string; 
     level: input.level,
     goal: input.goal,
     system: system.id,
-    avoid: lim.avoid,
+    avoid,
     usedInDay: new Set<string>(),
     usedInProgram: new Set<string>(),
     seed: input.seed ?? 1,
     salt: "",
     conservative,
+    capped,
     minutes: Math.max(25, input.sessionMinutes || 60),
     highFrequency: system.days > 0 && system.id !== "forca_5x5" && input.daysPerWeek >= 2 * system.days,
     emphasisByDay,
@@ -1081,6 +1111,7 @@ export function generateProgram(input: GenerateInput, owner: { ownerId: string; 
 
   const notes = [
     note,
+    capped ? NOTE_CAP : undefined,
     system.id === "forca_5x5" ? NOTE_5X5 : input.equipment === "peso_corporal" ? NOTE_BODYWEIGHT : `${NOTE_WARMUP} ${NOTE_LOAD}`,
     lim.labels.length ? `Limitações consideradas: ${lim.labels.join(", ")}. Os exercícios de maior risco para a região ficaram de fora; revise antes de aplicar.` : undefined,
     lim.unrecognized ? `Atenção: não reconheci a limitação informada (“${(input.limitations ?? "").trim().slice(0, 80)}”). Revise os exercícios antes de aplicar.` : undefined,

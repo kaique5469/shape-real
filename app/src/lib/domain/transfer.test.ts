@@ -3,6 +3,7 @@ import { cameFromPaste, packData, packedFromHash, packedFromText, pastedLinkHref
 import { getExercise } from "./exercises";
 import { backupAgeBucket, backupFileName, backupReminderDue, backupStatusShort, backupStatusText, buildBackup, parseBackup, programsToCsv, promptShowsAgain } from "./export";
 import { buildFichaPacket, buildTreinosPacket, consentConfirmed, consentFromCheckbox, consentMetric, hasHealthData, MAX_SESSIONS_PER_LINK, mergeMetric, mirrorLoads, parsePacket, sessionToText, studentFieldsOf, topLoads, TRANSFER_VERSION, treinosMessage, type FichaPacket, type TreinosPacket } from "./transfer";
+import type { Anamnese } from "./anamnese-types";
 import type { BodyMetric, DietPlan, Exercise, Profile, Program, Session } from "./types";
 
 const coach: Profile = { id: "c1", name: "Rafael Nunes", role: "coach", plan: "coach", onboarded: true, createdAt: "2026-01-01T00:00:00Z", phone: "11988887777" };
@@ -377,6 +378,13 @@ describe("autorização de dados de saúde", () => {
     expect(hasHealthData({ limitations: "hérnia lombar" })).toBe(true);
     expect(hasHealthData({ weightKg: 72.5 })).toBe(true);
     expect(hasHealthData({ heightCm: 172 })).toBe(true);
+  });
+  it("respostas do questionário contam como dados de saúde, menos as enviadas sem saúde (healthOmitted)", () => {
+    const anamnese: Anamnese = { v: 1, id: "r1", answeredAt: "2026-11-23T12:00:00.000Z", by: "aluno", via: "link", modulos: [], parqText: "sp-16724-2018", a: { nome: "Marina Costa" } };
+    expect(hasHealthData({ anamnese })).toBe(true);
+    expect(hasHealthData({ anamnese: { ...anamnese, healthOmitted: true } })).toBe(false);
+    expect(hasHealthData({ anamnese: { ...anamnese, healthOmitted: true }, weightKg: 60 })).toBe(true);
+    expect(hasHealthData({ anamnese: undefined })).toBe(false);
   });
   it("checkbox marcado registra data e origem; marcado de novo mantém a autorização original", () => {
     const now = "2026-11-22T10:00:00.000Z";

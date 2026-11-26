@@ -80,9 +80,15 @@ export function packedFromText(text: string): string | null {
   return m?.[1] ?? null;
 }
 
-/** Endereço interno que abre o pacote colado: ficha → /abrir, treinos → /receber. `colar=1` marca que veio pelo campo. */
-export function pastedLinkHref(kind: "ficha" | "treinos", packed: string): string {
-  return `${kind === "ficha" ? "/abrir" : "/receber"}#d=${packed}&colar=1`;
+/** Rota que abre cada tipo de pacote (spec §10.1). */
+const ROTA_DO_PACOTE = { ficha: "/abrir", treinos: "/receber", anamnese: "/receber", pedido_anamnese: "/questionario" } as const;
+
+/**
+ * Endereço interno que abre o pacote colado: ficha → /abrir, treinos e respostas do questionário → /receber, pedido do
+ * questionário → /questionario. `colar=1` marca que veio pelo campo.
+ */
+export function pastedLinkHref(kind: keyof typeof ROTA_DO_PACOTE, packed: string): string {
+  return `${ROTA_DO_PACOTE[kind]}#d=${packed}&colar=1`;
 }
 
 /** O endereço atual veio do campo "Colar link"? */

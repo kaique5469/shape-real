@@ -104,14 +104,21 @@ export function newsLabel(lastSessionAt: string | null, mode: "local" | "supabas
 }
 
 /** Motivo do contato; também vai para a medição (student_contacted.reason). */
-export type ContactReason = "sem_noticias" | "ficha_vencendo";
+export type ContactReason = "sem_noticias" | "ficha_vencendo" | "questionario_pendente";
+
+/** Dias de pedido sem resposta a partir dos quais o questionário entra na fila ("Lembrar"). */
+export const QUESTIONARIO_LEMBRAR_DIAS = 2;
 
 /**
- * Motivo para o botão "Chamar": sem notícias vem antes da ficha vencendo. Ficha vencida não entra (o personal
- * monta outra, não manda mensagem) e aluno sem ficha nunca entra (`hasProgram === false`): o próximo passo dele é
- * a ficha, não "Se treinou, me manda pelo app". Sem `hasProgram`, conta como com ficha (o resultado de antes).
+ * Motivo para o botão "Chamar". Questionário pedido há `QUESTIONARIO_LEMBRAR_DIAS` dias ou mais sem resposta vem antes
+ * de tudo (com ou sem ficha: o próximo passo desse aluno é responder). Depois, sem notícias vem antes da ficha
+ * vencendo. Ficha vencida não entra (o personal monta outra, não manda mensagem) e aluno sem ficha nunca entra por
+ * esses dois motivos (`hasProgram === false`): o próximo passo dele é a ficha, não "Se treinou, me manda pelo app".
+ * Sem `hasProgram`, conta como com ficha; sem `questionarioPendenteDias` (dias do pedido pendente, de
+ * `diasDePedidoPendente`), o resultado de antes.
  */
-export function contactReason(quiet: boolean, validity: Pick<Validity, "state"> | null, hasProgram = true): ContactReason | null {
+export function contactReason(quiet: boolean, validity: Pick<Validity, "state"> | null, hasProgram = true, questionarioPendenteDias?: number | null): ContactReason | null {
+  if (typeof questionarioPendenteDias === "number" && questionarioPendenteDias >= QUESTIONARIO_LEMBRAR_DIAS) return "questionario_pendente";
   if (!hasProgram) return null;
   if (quiet) return "sem_noticias";
   if (validity?.state === "soon") return "ficha_vencendo";
@@ -131,24 +138,31 @@ function expiresIn(daysLeft: number): string {
 
 /**
  * Mensagem fixa do botão "Chamar", editável no próprio WhatsApp. Só o primeiro nome e, na ficha, os dias
- * que faltam: nunca peso, medidas ou outro dado de saúde.
+ * que faltam: nunca peso, medidas ou outro dado de saúde. O lembrete do questionário vai sem link (o link vai pelo
+ * "Lembrar" da página do aluno) e não promete que o rascunho continua: o navegador do aluno pode ter apagado.
  */
 export function contactMessage(reason: ContactReason, name: string, daysLeft = 0): string {
   const first = firstName(name);
+  if (reason === "questionario_pendente") return `Oi, ${first}! Conseguiu ver o questionário? Se parou no meio, é só abrir o link de novo.`;
   if (reason === "ficha_vencendo") return `Oi, ${first}! Sua ficha ${expiresIn(daysLeft)}. Já estou preparando a próxima. Quer mudar alguma coisa?`;
   return `Oi, ${first}! Tudo certo por aí? Faz uns dias que não chega treino seu. Se treinou, me manda pelo app; se travou, me conta que a gente ajusta.`;
 }
 
 /**
- * Situação de quem está na fila, ao lado do botão "Chamar": a de "sem notícias" (newsLabel) ou a da ficha
- * vencendo ("Ficha vence em 3 dias").
+ * Situação de quem está na fila, ao lado do botão "Chamar": a de "sem notícias" (newsLabel), a da ficha
+ * vencendo ("Ficha vence em 3 dias") ou a do questionário ("Questionário pedido há 3 dias", com `pedidoDias`).
  */
 export function reasonLabel(
   reason: ContactReason,
-  s: { lastSessionAt: string | null; daysLeft?: number; daysWithoutNews?: number },
+  s: { lastSessionAt: string | null; daysLeft?: number; daysWithoutNews?: number; pedidoDias?: number },
   mode: "local" | "supabase",
   now = new Date(),
 ): string {
+  if (reason === "questionario_pendente") {
+    // Sem os dias, não inventa um número.
+    const n = s.pedidoDias;
+    return typeof n === "number" && Number.isFinite(n) && n >= 1 ? `Questionário pedido há ${daysText(Math.trunc(n))}` : "Questionário pedido, ainda sem resposta";
+  }
   return reason === "ficha_vencendo" ? expiringLabel(s.daysLeft ?? 0) : newsLabel(s.lastSessionAt, mode, now, { daysWithoutNews: s.daysWithoutNews });
 }
 

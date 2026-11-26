@@ -3,13 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { reportError, track, type FichaLinkWhere } from "@/lib/analytics";
 import { useApp } from "@/lib/app-context";
+import { extraDoEnvioDaFicha } from "@/lib/domain/anamnese-perfil";
 import { coachSignature } from "@/lib/domain/cref";
 import { fichaSendSituation, type FichaDelivery, type PrepVia } from "@/lib/domain/delivery";
 import { firstName, waPhone } from "@/lib/domain/format";
 import { buildFichaPacket, fichaLinkItems } from "@/lib/domain/transfer";
 import type { DietPlan, Profile, Program } from "@/lib/domain/types";
 import { packData } from "@/lib/share-link";
-import { markFichaPrepared, readFichaDelivery } from "@/lib/transfer-client";
+import { fichaSendRecord, markFichaPrepared, readFichaDelivery } from "@/lib/transfer-client";
 
 /**
  * Envio da ficha e da dieta por link (`/abrir#d=`) — a peça da anamnese §8.6 na forma mínima que a U2b usa, com o
@@ -48,6 +49,7 @@ export interface FichaLink {
 }
 
 const origin = () => (typeof window !== "undefined" ? window.location.origin : "");
+
 /** Registro de envio só existe no modo local e com aluno real (U2 F3). */
 const tracks = (mode: string, student: Profile) => mode === "local" && !student.sample;
 
@@ -96,6 +98,9 @@ export function useFichaLink(student: Profile, enabled: boolean, opts: { where?:
       if (!built) return null;
       const { estado, entrega } = built;
       const at = new Date().toISOString();
+      // Antes de gravar o toque: havia registro de envio deste aluno? Só existe no modo local, com aluno real; fora
+      // dele, `primeira` não teria evidência e as chaves do questionário não vão.
+      const extra = tracking ? extraDoEnvioDaFicha(student, fichaSendRecord(student.id) === null, at) : null;
       if (tracking) markFichaPrepared(student.id, { at, via, programAt: estado.programa?.updatedAt ?? null, dietAt: estado.dieta?.updatedAt ?? null });
       track("ficha_link_sent", {
         via,
@@ -104,6 +109,7 @@ export function useFichaLink(student: Profile, enabled: boolean, opts: { where?:
         direct: Boolean(waPhone(student.phone)),
         ...(where ? { where } : {}),
         situacao: entrega ? fichaSendSituation(entrega) : "sem_info",
+        ...extra,
       });
       const t = { via, at };
       setToque(t);

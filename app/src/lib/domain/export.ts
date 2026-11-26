@@ -255,3 +255,80 @@ export function promptShowsAgain(dismissed: { n: number; at: string | null } | n
   const d = daysSince(dismissed.at, now);
   return d !== null && d >= afterDays;
 }
+
+/** Instante de uma data lida de um perfil ou de um arquivo (sem confiar no formato); null quando não dá para ler. */
+function instante(v: unknown): number | null {
+  if (typeof v !== "string" || v.length > 40) return null;
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? t : null;
+}
+
+/** A rodada de `atual` fica? Só com respostas; contra a cópia, quando é mais nova ou igual (o aparelho desempata). */
+function ficaAnamneseDoAparelho(atual: Profile, daCopia: Profile): boolean {
+  const local = atual.anamnese as unknown;
+  if (!isObj(local)) return false;
+  const copia = daCopia.anamnese as unknown;
+  if (!isObj(copia)) return true;
+  const tl = instante(local.answeredAt);
+  const tc = instante(copia.answeredAt);
+  if (tc === null) return true;
+  if (tl === null) return false;
+  return tl >= tc;
+}
+
+/** Liberações dos dois lados, unidas por `id`; com o mesmo `id`, a registrada por último (empate: a do aparelho). */
+function unirLiberacoes(atual: unknown, daCopia: unknown): Profile["liberacoes"] {
+  const porId = new Map<string, NonNullable<Profile["liberacoes"]>[number]>();
+  const somar = (lista: unknown, aparelho: boolean) => {
+    if (!Array.isArray(lista)) return;
+    for (const l of lista) {
+      if (!isObj(l) || !isId(l.id)) continue;
+      const lib = l as unknown as NonNullable<Profile["liberacoes"]>[number];
+      const ja = porId.get(lib.id);
+      if (!ja) {
+        porId.set(lib.id, lib);
+        continue;
+      }
+      const tj = instante(ja.registradoEm) ?? -Infinity;
+      const tn = instante(lib.registradoEm) ?? -Infinity;
+      if (tn > tj || (tn === tj && aparelho)) porId.set(lib.id, lib);
+    }
+  };
+  somar(daCopia, false);
+  somar(atual, true);
+  return porId.size ? [...porId.values()] : undefined;
+}
+
+/**
+ * Restauração de um aluno que já existe no aparelho (spec §9.2, D-32). Hoje a restauração gravava o perfil como veio:
+ * uma cópia antiga apagaria respostas e liberações mais novas (e a trava de "pediu para não treinar"). Agora:
+ *  - fica a `anamnese` com `answeredAt` mais novo (empate: a do aparelho), com a `anamnesePrev` e os
+ *    `limitacoesDoQuestionario` dela. As limitações (`limitations`) acompanham os tokens: são o texto que eles indexam,
+ *    e a ficha seguinte precisa considerar as dores da rodada que ficou;
+ *  - se a rodada que fica é a do aparelho, tem saúde e a cópia não tem autorização, a autorização do aparelho fica
+ *    (respostas de saúde nunca sem a autorização registrada);
+ *  - `liberacoes` unidas por `id`;
+ *  - o resto, como hoje: vale o que veio na cópia.
+ * A anamnese que fica não é confiada aqui: quem lê usa `readAnamnese` (versão mais nova ou dado danificado viram trava).
+ * `atual` null = aluno novo neste aparelho: devolve a cópia.
+ */
+export function mesclarRestauracao(atual: Profile | null, daCopia: Profile): Profile {
+  if (!atual) return daCopia;
+  const out: Profile = { ...daCopia };
+  if (ficaAnamneseDoAparelho(atual, daCopia)) {
+    out.anamnese = atual.anamnese;
+    out.anamnesePrev = atual.anamnesePrev;
+    out.limitacoesDoQuestionario = atual.limitacoesDoQuestionario;
+    out.limitations = atual.limitations;
+    const comSaude = isObj(atual.anamnese) && !(atual.anamnese as { healthOmitted?: unknown }).healthOmitted;
+    if (comSaude && atual.consentHealthAt && !daCopia.consentHealthAt) {
+      out.consentHealthAt = atual.consentHealthAt;
+      out.consentSource = atual.consentSource;
+    }
+  }
+  out.liberacoes = unirLiberacoes(atual.liberacoes, daCopia.liberacoes);
+  for (const k of ["anamnese", "anamnesePrev", "limitacoesDoQuestionario", "limitations", "liberacoes", "consentHealthAt", "consentSource"] as const) {
+    if (out[k] === undefined) delete out[k];
+  }
+  return out;
+}
