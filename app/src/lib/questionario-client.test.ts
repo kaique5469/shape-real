@@ -237,3 +237,42 @@ describe("aluno removido do aparelho (deleteAccount)", () => {
     expect(qc.idsDasRodadas({ anamnese: { id: 7 } as unknown as Profile["anamnese"] })).toEqual([]);
   });
 });
+
+describe("junto: 'Pular por agora' no rascunho", () => {
+  it("guarda só ids do catálogo, sem repetir; lixo some", () => {
+    const k = qc.chaveRascunho({ studentId: "s-1" });
+    storage.setItem(k, JSON.stringify({ ...rascunho(), pulouPorAgora: ["objetivo", "parq.3", "objetivo", 7, "<script>", "a".repeat(60)] }));
+    expect(qc.lerRascunho(k)?.pulouPorAgora).toEqual(["objetivo", "parq.3"]);
+    storage.setItem(k, JSON.stringify({ ...rascunho(), pulouPorAgora: "objetivo" }));
+    expect(qc.lerRascunho(k)?.pulouPorAgora).toBeUndefined();
+  });
+});
+
+describe("pedido da aba (recarregar no meio do questionário)", () => {
+  const sessao = new MemStorage();
+  beforeEach(() => {
+    sessao.clear();
+    sessao.bloqueado = false;
+    vi.stubGlobal("sessionStorage", sessao);
+  });
+
+  it("guarda e lê o pacote do pedido; some com esquecerPedidoDaAba", () => {
+    qc.guardarPedidoDaAba("1.abc_DEF-123");
+    expect(sessao.getItem(qc.PEDIDO_DA_ABA_KEY)).toBe("1.abc_DEF-123");
+    expect(qc.pedidoDaAba()).toBe("1.abc_DEF-123");
+    qc.esquecerPedidoDaAba();
+    expect(qc.pedidoDaAba()).toBeNull();
+  });
+
+  it("valor que não é pacote vira null; armazenamento bloqueado não lança", () => {
+    sessao.setItem(qc.PEDIDO_DA_ABA_KEY, "javascript:alert(1)");
+    expect(qc.pedidoDaAba()).toBeNull();
+    sessao.bloqueado = true;
+    expect(() => qc.guardarPedidoDaAba("1.abc")).not.toThrow();
+    expect(qc.pedidoDaAba()).toBeNull();
+  });
+
+  it("a chave fica sob sr:v1: e só guarda o pacote do pedido (nunca respostas)", () => {
+    expect(qc.PEDIDO_DA_ABA_KEY.startsWith("sr:v1:")).toBe(true);
+  });
+});

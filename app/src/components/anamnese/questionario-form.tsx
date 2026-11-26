@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from "react";
 import { ChevronDown, MessageCircle, Pencil, Printer } from "lucide-react";
 import { ConferirDiferencas } from "@/components/anamnese/conferir-diferencas";
+import { CopyButton } from "@/components/copy-button";
 import { DeuCerto } from "@/components/anamnese/deu-certo";
 import { Pergunta } from "@/components/anamnese/pergunta";
 import { ResumoAluno } from "@/components/anamnese/resumo-aluno";
@@ -163,6 +164,8 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
   const [erroEnvio, setErroEnvio] = useState(false);
   const [tocou, setTocou] = useState(Boolean(restaurada && inicial.rascunho?.enviarTocadoEm));
   const [deuCerto, setDeuCerto] = useState(false);
+  /** "Deu certo?" aberto agora: o fechamento do diálogo (Esc, X, ou depois de uma resposta) conta uma vez só. */
+  const deuCertoAberto = useRef(false);
   const [conferencia, setConferencia] = useState<Conferencia | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [erroSalvar, setErroSalvar] = useState(false);
@@ -228,7 +231,10 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
   const mudar = useCallback(
     (f: (r: Rascunho) => Rascunho) => {
       const cur = rRef.current;
-      if (cur) atualizar(f(cur));
+      if (!cur) return;
+      atualizar(f(cur));
+      // Aviso de validação antigo sai assim que a pessoa mexe (não fica "Falta marcar…" com a caixa já marcada).
+      setAviso("");
     },
     [atualizar],
   );
@@ -285,6 +291,7 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
       const s = rRef.current ? secaoDoHistorico(e.state, secoesRef.current) : null;
       setErros({});
       setAviso("");
+      deuCertoAberto.current = false;
       setDeuCerto(false);
       if (s) {
         setTela({ t: "parte", secao: s });
@@ -373,6 +380,11 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
     setRascunho(r);
     setTocou(Boolean(r.enviarTocadoEm));
     const secao = base ? secaoDoRascunho(r, ctxBase, modo) : "voce";
+    if (base) {
+      // Continuar de onde parei: as partes anteriores entram no histórico, e o voltar do Android segue voltando uma parte.
+      const lista = secoesDoQuestionario(ctxEfetivo(ctxBase, r, modo), r.a);
+      for (const s of lista.slice(0, Math.max(0, lista.indexOf(secao)))) window.history.pushState({ qSecao: s }, "");
+    }
     irPara(secao);
   };
   const comecarDeNovo = () => {
@@ -458,19 +470,17 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
   useEffect(() => {
     if (!tocou || !pedido) return;
     const on = () => {
-      if (document.visibilityState === "visible" && telaRef.current.t === "parte") setDeuCerto(true);
+      if (document.visibilityState === "visible" && telaRef.current.t === "parte") {
+        deuCertoAberto.current = true;
+        setDeuCerto(true);
+      }
     };
     document.addEventListener("visibilitychange", on);
     return () => document.removeEventListener("visibilitychange", on);
   }, [tocou, pedido]);
 
-  const aoTocarEnviar = (e: MouseEvent<HTMLAnchorElement>) => {
-    if (!navigator.onLine) {
-      e.preventDefault();
-      anunciar(QTEXTO.semInternet);
-      return;
-    }
-    // O WhatsApp abre pela própria âncora (ação padrão do toque); daqui em diante, só registros no aparelho.
+  /** Toque em Enviar (ou cópia da mensagem sem rede): grava `enviarTocadoEm`, mostra "Já enviei" e conta o envio uma vez. */
+  const registrarToque = () => {
     try {
       const cur = rRef.current;
       if (!cur || !pedido) return;
@@ -502,12 +512,31 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
     }
   };
 
+  const aoTocarEnviar = (e: MouseEvent<HTMLAnchorElement>) => {
+    if (!navigator.onLine) {
+      e.preventDefault();
+      anunciar(QTEXTO.semInternet);
+      return;
+    }
+    // O WhatsApp abre pela própria âncora (ação padrão do toque); daqui em diante, só registros no aparelho.
+    registrarToque();
+  };
+
+  /** "Não enviou: tentar de novo", Esc ou o X: a resposta "tentar" (a âncora reabre o WhatsApp no próprio toque). */
+  const fecharDeuCerto = () => {
+    if (!deuCertoAberto.current) return;
+    deuCertoAberto.current = false;
+    if (eventos) track("anamnese_send_confirmed", evSendConfirmed("tentar"));
+    setDeuCerto(false);
+  };
+
   const confirmarEnvio = () => {
     if (!pedido) return;
     cancelarGravacao();
     apagarRascunho(chave);
     marcarEnviado(pedido.id, new Date().toISOString());
     if (eventos) track("anamnese_send_confirmed", evSendConfirmed("sim"));
+    deuCertoAberto.current = false;
     setDeuCerto(false);
     setTocou(false);
     rRef.current = null;
@@ -686,7 +715,7 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
   if (tela.t === "velho" && pedido) {
     return (
       <div className="space-y-5">
-        <h1 ref={titulo} tabIndex={-1} className="plate-type text-[1.75rem] leading-tight outline-none">
+        <h1 ref={titulo} tabIndex={-1} className="plate-type text-[1.5rem] leading-tight break-words outline-none">
           {QTEXTO.oi(pedido.student.name)}
         </h1>
         <p>{QTEXTO.velho(fmtDiaMes(pedido.sentAt), pedido.coach.name)}</p>
@@ -708,6 +737,7 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
   if (tela.t === "inicio") {
     const r0 = rascunho ?? inicial.rascunho;
     const minutos = estimarMinutos(ctx);
+    const autorizado = rascunho ? rascunho.autorizouJunto === true : autorizouInicio;
     const retomar = r0 ? (
       <div className="space-y-3">
         <p className="font-semibold">{QTEXTO.parou(rotuloParte(secoesDoQuestionario(ctxEfetivo(ctxBase, r0, modo), r0.a), secaoDoRascunho(r0, ctxBase, modo), ctx).titulo)}</p>
@@ -726,7 +756,7 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
       return (
         <div className="space-y-5">
           {props.modo === "link" && props.aparelho === "outro" ? <Alert tone="info">{QTEXTO.outroPersonal(pedido.coach.name, pedido.student.name)}</Alert> : null}
-          <h1 ref={titulo} tabIndex={-1} className="plate-type text-[2rem] leading-[1.05] outline-none">
+          <h1 ref={titulo} tabIndex={-1} className="plate-type text-[1.75rem] leading-[1.1] break-words outline-none">
             {QTEXTO.oi(pedido.student.name)}
           </h1>
           <p>{QTEXTO.quer(pedido.coach.name)}</p>
@@ -759,13 +789,21 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
 
     return (
       <div className="space-y-5">
-        <h1 ref={titulo} tabIndex={-1} className="plate-type text-[2rem] leading-[1.05] outline-none">
+        <h1 ref={titulo} tabIndex={-1} className="plate-type text-[1.75rem] leading-[1.1] break-words outline-none">
           {QTEXTO.juntoTitulo(nomeAluno)}
         </h1>
         <p>{QTEXTO.juntoTexto(nomeAluno, minutos)}</p>
         <div className="rounded-[var(--radius-ficha)] border border-rule bg-paper px-4 py-3">
-          {caixa(autorizouInicio, setAutorizouInicio, QTEXTO.juntoAutorizou(nomeAluno))}
-          {!autorizouInicio ? <p className="mt-1 text-[0.9375rem] text-steel">{QTEXTO.juntoSemAutorizacao}</p> : null}
+          {caixa(
+            autorizado,
+            (v) => {
+              setAutorizouInicio(v);
+              // Voltou à boas-vindas com o questionário em andamento: a caixa vale para ele (sem ela, a saúde sai do rascunho).
+              if (rascunho) mudar((r) => ({ ...r, autorizouJunto: v }));
+            },
+            QTEXTO.juntoAutorizou(nomeAluno),
+          )}
+          {!autorizado ? <p className="mt-1 text-[0.9375rem] text-steel">{QTEXTO.juntoSemAutorizacao}</p> : null}
         </div>
         {retomar ?? (
           <Button size="lg" className="w-full" onClick={() => comecar(null)}>
@@ -779,7 +817,7 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
   if (tela.t === "fimLink" && pedido) {
     return (
       <div className="space-y-5">
-        <h1 ref={titulo} tabIndex={-1} className="plate-type text-[1.75rem] leading-tight outline-none">
+        <h1 ref={titulo} tabIndex={-1} className="plate-type text-[1.5rem] leading-tight break-words outline-none">
           {QTEXTO.fimLink(pedido.student.name, pedido.coach.name)}
         </h1>
         {rodapeLink}
@@ -790,7 +828,7 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
   if (tela.t === "fimJunto" && aluno) {
     return (
       <div className="space-y-5">
-        <h1 ref={titulo} tabIndex={-1} className="plate-type text-[1.75rem] leading-tight outline-none">
+        <h1 ref={titulo} tabIndex={-1} className="plate-type text-[1.5rem] leading-tight break-words outline-none">
           {QTEXTO.juntoSalvo(aluno.name)}
         </h1>
         {online ? (
@@ -807,7 +845,7 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
     return (
       <div>
         {cabecalhoJunto}
-        <h1 ref={titulo} tabIndex={-1} className="plate-type mb-4 text-[1.625rem] leading-tight outline-none">
+        <h1 ref={titulo} tabIndex={-1} className="plate-type mb-4 text-[1.5rem] leading-tight break-words outline-none">
           {CONFERIR_TEXTO.titulo}
         </h1>
         <ConferirDiferencas diferencas={conferencia.difs} limitacoes={conferencia.lim} value={conferencia.escolhas} onChange={(v) => setConferencia({ ...conferencia, escolhas: v })} />
@@ -837,8 +875,11 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
   const cabecalhoParte = (
     <div className="mb-6">
       <h1 ref={titulo} tabIndex={-1} className="outline-none">
-        <span className="block text-[0.9375rem] font-semibold text-steel">{rot.texto} ·</span>
-        <span className="plate-type mt-0.5 block text-[1.625rem] leading-tight">{rot.titulo}</span>
+        <span className="block text-[0.9375rem] font-semibold text-steel">
+          {rot.texto}
+          <span className="sr-only"> · </span>
+        </span>{" "}
+        <span className="plate-type mt-0.5 block text-[1.5rem] leading-tight break-words">{rot.titulo}</span>
       </h1>
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-chalk-2" aria-hidden>
         <div className="h-full rounded-full bg-iron" style={{ width: `${Math.round((rot.n / rot.m) * 100)}%` }} />
@@ -1101,9 +1142,26 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
             <p id="q-envio-linha" className="text-[0.875rem] text-steel">
               {rotulo.linha}
             </p>
-            {!online ? <p className="text-[0.9375rem] font-semibold">{QTEXTO.semInternet}</p> : null}
+            {!online ? (
+              <>
+                <p className="text-[0.9375rem] font-semibold">{QTEXTO.semInternet}</p>
+                {/* Sem rede, a mensagem pronta pode ir copiada (o WhatsApp manda quando o sinal voltar). */}
+                {podeEnviar && envioPronto ? (
+                  <div className="flex">
+                    <CopyButton text={envioPronto.texto} label={QTEXTO.copiar} onCopied={registrarToque} />
+                  </div>
+                ) : null}
+              </>
+            ) : null}
             {tocou ? (
-              <Button variant="secondary" className="w-full" onClick={() => setDeuCerto(true)}>
+              <Button
+                variant="secondary"
+                className="w-full"
+                onClick={() => {
+                  deuCertoAberto.current = true;
+                  setDeuCerto(true);
+                }}
+              >
                 {QTEXTO.jaEnviei}
               </Button>
             ) : null}
@@ -1117,17 +1175,11 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
           texto={envioPronto?.texto ?? null}
           offline={!online}
           onSim={confirmarEnvio}
-          onTentar={() => {
-            if (eventos) track("anamnese_send_confirmed", evSendConfirmed("tentar"));
-            setDeuCerto(false);
-          }}
+          onTentar={fecharDeuCerto}
           onCopiar={() => {
             if (eventos) track("anamnese_send_confirmed", evSendConfirmed("copiar"));
           }}
-          onFechar={() => {
-            if (eventos) track("anamnese_send_confirmed", evSendConfirmed("tentar"));
-            setDeuCerto(false);
-          }}
+          onFechar={fecharDeuCerto}
         />
       </div>
     );

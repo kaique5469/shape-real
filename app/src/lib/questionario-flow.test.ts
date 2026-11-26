@@ -4,7 +4,21 @@ import { HOJE, anoParaIdade, ctxBase, respostasBase } from "@/lib/domain/anamnes
 import type { AnamneseAnswers, SecaoId } from "@/lib/domain/anamnese-types";
 import type { PedidoPacket } from "@/lib/domain/questionario-link";
 import type { Rascunho } from "./questionario-client";
+import { ERRO_ANO, PERGUNTAS } from "@/lib/domain/anamnese";
 import {
+  QTEXTO,
+  chaveDoEnvio,
+  ehPerguntaDeSaude,
+  erroDoNumero,
+  faltandoNoJunto,
+  horaMinuto,
+  linhaSalvo,
+  pendenciasDoEnvio,
+  rotuloDoEnvio,
+  rotuloParte,
+  secaoDoHistorico,
+  textoDoNumero,
+  textoFalta,
   ctxDoJunto,
   ctxDoPedido,
   ctxEfetivo,
@@ -411,5 +425,119 @@ describe("guardas da página", () => {
     expect(pedidoVelho("2026-09-26T11:00:00Z", agora)).toBe(true);
     expect(pedidoVelho("2026-09-28T12:00:00Z", agora)).toBe(false);
     expect(pedidoVelho("data ruim", agora)).toBe(false);
+  });
+});
+
+describe("tela: regras pequenas", () => {
+  const pergunta = (id: string) => PERGUNTAS.find((p) => p.id === id)!;
+
+  it("textoFalta no singular e no plural (região aria-live do Continuar)", () => {
+    expect(textoFalta(1)).toBe("Falta responder: 1 pergunta");
+    expect(textoFalta(3)).toBe("Falta responder: 3 perguntas");
+  });
+
+  it("linha 'Salvo neste celular às HH:MM' (link) e 'neste aparelho' (junto); data ruim não afirma nada", () => {
+    const iso = new Date(2026, 10, 23, 9, 5).toISOString();
+    expect(horaMinuto(iso)).toBe("09:05");
+    expect(linhaSalvo(iso, "link")).toBe("Salvo neste celular às 09:05");
+    expect(linhaSalvo(iso, "junto")).toBe("Salvo neste aparelho às 09:05");
+    expect(linhaSalvo("x", "link")).toBe("");
+  });
+
+  it("rotuloParte: 'Parte N de M' e o título com o nome do personal", () => {
+    const secoes: SecaoId[] = ["voce", "parq", "saude", "dor", "treino", "enviar"];
+    expect(rotuloParte(secoes, "parq", ctxBase())).toMatchObject({ n: 2, m: 6, texto: "Parte 2 de 6", titulo: "Saúde: 7 perguntas" });
+    expect(rotuloParte(secoes, "enviar", ctxBase())).toMatchObject({ n: 6, titulo: "Conferir e enviar" });
+  });
+
+  it("secaoDoHistorico: só uma parte que existe agora (voltar do Android)", () => {
+    const secoes: SecaoId[] = ["voce", "treino", "enviar"];
+    expect(secaoDoHistorico({ qSecao: "treino", __NA: true }, secoes)).toBe("treino");
+    expect(secaoDoHistorico({ qSecao: "parq" }, secoes)).toBeNull();
+    expect(secaoDoHistorico(null, secoes)).toBeNull();
+    expect(secaoDoHistorico({ qSecao: 3 }, secoes)).toBeNull();
+  });
+
+  it("campos numéricos: texto inicial com vírgula no peso; erro do ano com o texto da spec; faixa nos outros", () => {
+    expect(textoDoNumero("peso", 72.5)).toBe("72,5");
+    expect(textoDoNumero("altura", 170)).toBe("170");
+    expect(textoDoNumero("altura", undefined)).toBe("");
+    expect(erroDoNumero(pergunta("ano"), "19", HOJE)).toBe(ERRO_ANO);
+    expect(erroDoNumero(pergunta("ano"), "2020", HOJE)).toBe(ERRO_ANO);
+    expect(erroDoNumero(pergunta("ano"), "1990", HOJE)).toBeNull();
+    expect(erroDoNumero(pergunta("altura"), "300", HOJE)).toBe("Confira: use um número de 120 a 230.");
+    expect(erroDoNumero(pergunta("peso"), "72,5", HOJE)).toBeNull();
+    expect(erroDoNumero(pergunta("peso"), "abc", HOJE)).toBe("Confira: use um número de 30 a 300.");
+    expect(erroDoNumero(pergunta("peso"), "", HOJE)).toBeNull();
+    expect(erroDoNumero(pergunta("nome"), "Ana", HOJE)).toBeNull();
+  });
+
+  it("pendenciasDoEnvio: obrigatórias de todas as partes e a caixa 'declaro'", () => {
+    expect(pendenciasDoEnvio({ rascunho: rasc(respostasBase()), ctx: ctxBase(), modo: "link" })).toEqual({ faltam: [], declaro: true });
+    // Mudou o PAR-Q pelo "Editar": a pergunta do médico (parte Saúde) passa a faltar.
+    const parq = respostasBase({ parq: [0, 1, 0, 0, 0, 0, 0] });
+    const p = pendenciasDoEnvio({ rascunho: rasc(parq, { declaro: false }), ctx: ctxBase(), modo: "link" });
+    expect(p.faltam.map((x) => x.id)).toEqual(["orientacao"]);
+    expect(p.declaro).toBe(false);
+  });
+
+  it("junto: 'Pular por agora' deixa seguir, mas a obrigatória continua faltando para 'Salvar e ver o resumo'", () => {
+    const a = respostasBase();
+    delete a.objetivo;
+    const r = rasc(a, { autorizouJunto: true, pulouPorAgora: ["objetivo"] });
+    const ctx = ctxDoJunto({ hoje: HOJE, personal: "Carlos Lima", aluno: "Ana Souza" });
+    expect(pendenciasDoEnvio({ rascunho: r, ctx, modo: "junto" }).faltam).toEqual([]);
+    expect(faltandoNoJunto(r, ctx).map((x) => x.id)).toEqual(["objetivo"]);
+    // Pelo link, "Pular por agora" não existe.
+    expect(pendenciasDoEnvio({ rascunho: r, ctx: ctxBase(), modo: "link" }).faltam.map((x) => x.id)).toEqual(["objetivo"]);
+  });
+
+  it("rascunho do junto sem autorização não guarda nem os ids de saúde pulados", () => {
+    const ctx = ctxDoJunto({ hoje: HOJE, personal: "Carlos Lima", aluno: "Ana Souza" });
+    const r = rascunhoParaGravar({ rascunho: rasc({ nome: "Ana" }, { pulouPorAgora: ["parq.2", "condicoes", "objetivo"] }), ctx, modo: "junto", agora: AGORA });
+    expect(r.pulouPorAgora).toEqual(["objetivo"]);
+    const so = rascunhoParaGravar({ rascunho: rasc({ nome: "Ana" }, { pulouPorAgora: ["parq.2"] }), ctx, modo: "junto", agora: AGORA });
+    expect(so.pulouPorAgora).toBeUndefined();
+    expect(ehPerguntaDeSaude("parq.0")).toBe(true);
+    expect(ehPerguntaDeSaude("peso")).toBe(true);
+    expect(ehPerguntaDeSaude("objetivo")).toBe(false);
+  });
+
+  it("chaveDoEnvio muda com autorização, responsável, declaro e recado; não com o toque em Enviar", () => {
+    const r = rasc(respostasBase(), { consent: true });
+    const k = chaveDoEnvio(r);
+    expect(chaveDoEnvio({ ...r, enviarTocadoEm: AGORA })).toBe(k);
+    expect(chaveDoEnvio({ ...r, consent: false })).not.toBe(k);
+    expect(chaveDoEnvio({ ...r, responsavelOk: true })).not.toBe(k);
+    expect(chaveDoEnvio({ ...r, declaro: false })).not.toBe(k);
+    expect(chaveDoEnvio({ ...r, a: { ...r.a, recado: "oi" } })).not.toBe(k);
+  });
+
+  it("rotuloDoEnvio: com telefone, sem telefone e sem autorização (spec §4.10)", () => {
+    expect(rotuloDoEnvio({ autorizada: true, telefone: true, personal: "Carlos Lima" })).toEqual({
+      botao: "Enviar para Carlos no WhatsApp",
+      linha: "Abre o WhatsApp com a mensagem pronta. É só tocar em enviar.",
+    });
+    expect(rotuloDoEnvio({ autorizada: true, telefone: false, personal: "Carlos Lima" })).toEqual({ botao: "Enviar pelo WhatsApp", linha: "Escolha a conversa com Carlos." });
+    expect(rotuloDoEnvio({ autorizada: false, telefone: true, personal: "carlos" })).toEqual({
+      botao: "Enviar sem dados de saúde",
+      linha: "As respostas de saúde (Partes 2 a 4, peso, altura e hábitos) não vão. Carlos faz essas perguntas pessoalmente.",
+    });
+  });
+
+  it("textos finais da spec (boas-vindas, autorização e 'Deu certo?')", () => {
+    expect(QTEXTO.oi("ana souza")).toBe("Oi, ana!");
+    expect(QTEXTO.quer("carlos lima")).toBe("Carlos quer conhecer você para montar seu treino com segurança.");
+    expect(QTEXTO.partes(6, 4)).toBe("São 6 partes curtas, uns 4 minutos.");
+    expect(QTEXTO.jaEnviou("23/11", "09:05", "Carlos")).toBe("Você já enviou em 23/11 às 09:05. Se Carlos não recebeu, toque em Responder de novo.");
+    expect(QTEXTO.autorizo("Carlos Lima")).toBe("Autorizo Carlos Lima a guardar e usar minhas respostas de saúde para montar e acompanhar meu treino.");
+    expect(QTEXTO.menorCaixa("Ana Souza", "Maria Souza", "Carlos Lima")).toBe(
+      "Sou responsável por Ana Souza (Maria Souza) e autorizo Carlos Lima a guardar e usar estas respostas de saúde para montar e acompanhar o treino.",
+    );
+    expect(QTEXTO.fimLink("Ana Souza", "carlos")).toBe("Pronto, Ana! Carlos vai ler suas respostas e falar com você. Quando chegar sua ficha, é só abrir o link que carlos mandar.");
+    expect(QTEXTO.deuCertoTexto("Carlos")).toBe("Se você tocou em enviar no WhatsApp, pronto: Carlos recebe suas respostas.");
+    // Sem nome, nunca "undefined" nem espaço solto.
+    expect(QTEXTO.oi("")).toBe("Oi!");
+    expect(QTEXTO.fimLink("", "")).toBe("Pronto! Seu personal vai ler suas respostas e falar com você. Quando chegar sua ficha, é só abrir o link que seu personal mandar.");
   });
 });
