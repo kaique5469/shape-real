@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { assignLinks, linkGroups } from "@/lib/domain/session-flow";
 import type { PlannedExercise, Program, Session, Technique } from "@/lib/domain/types";
-import { buildDraft, decimalsOf, defaultPlan, draftHasWork, draftKey, draftProgressText, parseDraft, parsePtNumber, readDraftInfo, restDelayBand, saveDraft, splitCompareLine, suggestionEdit, tween, type WorkoutDraft } from "./workout-draft";
+import { startRest } from "@/lib/domain/rest";
+import { buildDraft, decimalsOf, defaultPlan, draftHasWork, draftKey, draftProgressText, parseDraft, parsePtNumber, readDraftInfo, restDelayBand, resumeOpenUid, saveDraft, splitCompareLine, suggestionEdit, swapInDraft, tween, unmarkBand, type WorkoutDraft } from "./workout-draft";
 
 const session: Session = {
   id: "s1",
@@ -302,4 +303,146 @@ describe("parseDraft: links (U1d)", () => {
       delete (globalThis as { localStorage?: unknown }).localStorage;
     }
   });
+});
+
+describe("parseDraft: série que iniciou o descanso (U1b)", () => {
+  it("rascunho com rest.from preserva o campo; from inválido some sem perder o descanso", () => {
+    const rest = startRest(90, Date.parse("2026-03-01T10:01:00Z"), { logUid: "a", index: 0 })!;
+    expect(parseDraft(JSON.stringify({ session, rest }))?.rest).toEqual(rest);
+    const bad = parseDraft(JSON.stringify({ session, rest: { ...rest, from: { logUid: "a", index: "0" } } }));
+    expect(bad?.rest).toEqual({ until: rest.until, total: 90 });
+  });
+});
+
+describe("unmarkBand", () => {
+  it("faixas do tempo entre marcar e desmarcar (evento serie_desmarcada)", () => {
+    expect(unmarkBand(0)).toBe("ate_10s");
+    expect(unmarkBand(10)).toBe("ate_10s");
+    expect(unmarkBand(10.5)).toBe("10_60s");
+    expect(unmarkBand(60)).toBe("10_60s");
+    expect(unmarkBand(61)).toBe("mais_60s");
+    expect(unmarkBand(-3)).toBe("ate_10s");
+    expect(unmarkBand(Number.NaN)).toBe("ate_10s");
+  });
+});
+
+describe("swapInDraft (U1c)", () => {
+  /** Treino A com uma marca anterior do supino com halteres, para haver sugestão de carga. */
+  const prior: Session = {
+    id: "old",
+    userId: "u",
+    programId: "p1",
+    dayKey: "A",
+    startedAt: "2026-11-10T10:00:00Z",
+    finishedAt: "2026-11-10T11:00:00Z",
+    exercises: [{ uid: "o1", exerciseId: "supino_reto_halter", name: "Supino reto com halteres", sets: [{ loadKg: 24, reps: 10, done: true }, { loadKg: 24, reps: 10, done: true }] }],
+    volumeKg: 480,
+    prs: [],
+  };
+  const base = () => {
+    const d = buildDraft("u", program, "A", []);
+    const sup = d.session.exercises[1]!;
+    // Valores digitados (sem ✓) e observação do personal no supino.
+    sup.sets[0] = { loadKg: 40, reps: 8, done: false };
+    sup.planned = { ...sup.planned!, notes: "Amplitude parcial (ombro)." };
+    return d;
+  };
+
+  it("mesma unidade: mantém número de séries, faixa, técnica e uid; séries recomeçam vazias", () => {
+    const d = base();
+    const sup = d.session.exercises[1]!;
+    const out = swapInDraft(d, sup.uid, { id: "supino_reto_halter", name: "Supino reto com halteres", compound: true }, [prior]);
+    const got = out.session.exercises[1]!;
+    expect(got.uid).toBe(sup.uid);
+    expect(got).toMatchObject({ exerciseId: "supino_reto_halter", name: "Supino reto com halteres", unit: "reps" });
+    expect(got.sets).toHaveLength(4);
+    expect(got.sets.every((s) => !s.done && s.reps === null)).toBe(true);
+    expect(got.planned).toMatchObject({ sets: 4, repsMin: 8, repsMax: 12, restSec: 90, technique: "bi_set", loadKg: null });
+    // A observação do personal era do exercício trocado: não vale para o substituto.
+    expect(got.planned?.notes).toBeUndefined();
+    // O grupo do bi-set continua (mesmo uid) e os outros registros não mudam.
+    expect(out.links).toEqual(d.links);
+    expect(out.session.exercises[0]).toBe(d.session.exercises[0]);
+    expect(out.session.exercises[2]).toBe(d.session.exercises[2]);
+    // O rascunho de entrada não é alterado.
+    expect(d.session.exercises[1]!.exerciseId).toBe("supino_reto_barra");
+  });
+
+  it("atualiza a sugestão de carga do registro (e a carga das séries)", () => {
+    const d = base();
+    const uid = d.session.exercises[1]!.uid;
+    const out = swapInDraft(d, uid, { id: "supino_reto_halter", name: "Supino reto com halteres", compound: true }, [prior]);
+    expect(out.suggestions[uid]).toBeDefined();
+    expect(out.suggestions[uid]).not.toEqual(d.suggestions[uid]);
+    expect(out.session.exercises[1]!.sets.every((s) => s.loadKg === (out.suggestions[uid]!.loadKg ?? null))).toBe(true);
+  });
+
+  it("outra unidade: prescrição padrão com a técnica de antes, sem sugestão de carga", () => {
+    const d = base();
+    const uid = d.session.exercises[1]!.uid;
+    const out = swapInDraft(d, uid, { id: "prancha", name: "Prancha", compound: false }, []);
+    const got = out.session.exercises[1]!;
+    expect(got).toMatchObject({ uid, exerciseId: "prancha", unit: "seg" });
+    expect(got.planned).toEqual({ ...defaultPlan({ id: "prancha", compound: false }), technique: "bi_set" });
+    expect(got.sets).toHaveLength(3);
+    expect(got.sets.every((s) => s.loadKg === null && s.reps === null && !s.done)).toBe(true);
+    expect(out.suggestions).not.toHaveProperty(uid);
+  });
+
+  it("registro inexistente: devolve o mesmo rascunho", () => {
+    const d = base();
+    expect(swapInDraft(d, "nao-existe", { id: "prancha", name: "Prancha", compound: false }, [])).toBe(d);
+  });
+});
+
+describe("openUid (U8a: retomar no exercício aberto)", () => {
+  const store = new Map<string, string>();
+  beforeEach(() => {
+    store.clear();
+    (globalThis as { localStorage?: Pick<Storage, "getItem" | "setItem" | "removeItem"> }).localStorage = {
+      getItem: (k) => store.get(k) ?? null,
+      setItem: (k, v) => void store.set(k, v),
+      removeItem: (k) => void store.delete(k),
+    };
+  });
+  afterEach(() => {
+    delete (globalThis as { localStorage?: unknown }).localStorage;
+  });
+
+  it("parseDraft mantém openUid string", () => {
+    expect(parseDraft(JSON.stringify({ session, openUid: "u3" }))?.openUid).toBe("u3");
+  });
+  it("parseDraft descarta openUid que não é string (ou vazio)", () => {
+    for (const bad of [42, null, true, { uid: "u3" }, ["u3"], ""]) {
+      const d = parseDraft(JSON.stringify({ session, openUid: bad }));
+      expect(d).not.toBeNull();
+      expect(d && "openUid" in d).toBe(false);
+    }
+  });
+  it("rascunho antigo sem openUid continua abrindo (e igual a antes)", () => {
+    const d = parseDraft(JSON.stringify({ session, suggestions: {}, restSec: { a: 90 } }));
+    expect(d).toEqual({ session, suggestions: {}, restSec: { a: 90 } });
+  });
+  it("saveDraft grava o openUid que vem no objeto e omite undefined", () => {
+    const draft: WorkoutDraft = { session, suggestions: {}, restSec: {} };
+    saveDraft("u", { ...draft, openUid: "a" }, null);
+    expect(JSON.parse(store.get(draftKey("u"))!).openUid).toBe("a");
+    expect(parseDraft(store.get(draftKey("u")))?.openUid).toBe("a");
+    saveDraft("u", { ...draft, openUid: undefined }, null);
+    expect("openUid" in JSON.parse(store.get(draftKey("u"))!)).toBe(false);
+  });
+});
+
+describe("resumeOpenUid (U8a)", () => {
+  const ex = (uid: string, done: boolean[]) => ({ uid, exerciseId: "supino_reto_barra", name: "Supino", sets: done.map((d) => ({ loadKg: 20, reps: d ? 10 : null, done: d })) });
+  const three = { exercises: [ex("u1", [false, false]), ex("u2", [false]), ex("u3", [false])] };
+  it("volta ao que estava aberto", () => expect(resumeOpenUid(three, "u3")).toBe("u3"));
+  it("exercício removido → 1º pendente", () => expect(resumeOpenUid(three, "x")).toBe("u1"));
+  it("sem openUid → 1º pendente (regra de hoje)", () => expect(resumeOpenUid({ exercises: [ex("u1", [true, true]), ex("u2", [true, false])] })).toBe("u2"));
+  it("tudo feito → 1º exercício", () => expect(resumeOpenUid({ exercises: [ex("u1", [true]), ex("u2", [true])] })).toBe("u1"));
+  it("sem exercícios → null", () => {
+    expect(resumeOpenUid({ exercises: [] })).toBeNull();
+    expect(resumeOpenUid({ exercises: [] }, "u1")).toBeNull();
+  });
+  it("aberto já concluído continua valendo (a pessoa estava nele)", () => expect(resumeOpenUid({ exercises: [ex("u1", [false]), ex("u2", [true])] }, "u2")).toBe("u2"));
 });

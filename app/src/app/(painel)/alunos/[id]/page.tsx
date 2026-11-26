@@ -54,6 +54,8 @@ function Aluno({ id }: { id: string }) {
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState<"view" | "remove" | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Relê a situação do envio da ficha ao trocar de aba (a ficha ou a dieta podem ter mudado nas abas).
+  const [deliveryTick, setDeliveryTick] = useState(0);
 
   if (loading) return <Skeleton className="h-96" />;
   if (!student)
@@ -77,7 +79,10 @@ function Aluno({ id }: { id: string }) {
     student.equipment && EQUIPMENT_LABEL[student.equipment],
   ].filter(Boolean);
 
-  const setTab = (t: Tab) => router.replace(`/alunos/${id}${t === "resumo" ? "" : `?aba=${t}`}`, { scroll: false });
+  const setTab = (t: Tab) => {
+    setDeliveryTick((n) => n + 1);
+    router.replace(`/alunos/${id}${t === "resumo" ? "" : `?aba=${t}`}`, { scroll: false });
+  };
 
   async function viewAs() {
     setBusy("view");
@@ -134,7 +139,7 @@ function Aluno({ id }: { id: string }) {
             <p className="mt-1.5 whitespace-pre-wrap text-steel">{student.coachNotes}</p>
           </details>
         ) : null}
-        {mode === "local" && !student.sample ? <SendToStudent student={student} variant="primary" className="mt-3 w-full sm:w-auto" /> : null}
+        {mode === "local" && !student.sample ? <SendToStudent student={student} where="pagina_aluno" showLines="page" version={deliveryTick} variant="primary" className="mt-3 w-full sm:w-auto" /> : null}
         <div className="mt-2 flex flex-wrap gap-2">
           {mode === "local" ? (
             <Button variant={student.sample ? "primary" : "secondary"} onClick={viewAs} loading={busy === "view"} icon={<Eye className="size-4" />} className="flex-1 whitespace-nowrap px-3 sm:flex-none sm:px-4">
@@ -176,7 +181,7 @@ function Aluno({ id }: { id: string }) {
           <ProgramList ownerId={id} basePath={`/alunos/${id}/ficha`} newHref={`/alunos/${id}/ficha/nova`} canExport student={student} />
         </div>
       ) : null}
-      {tab === "dieta" ? <DietView owner={student} mode="coach" /> : null}
+      {tab === "dieta" ? <DietView owner={student} mode="coach" onDeliveryChange={() => setDeliveryTick((n) => n + 1)} /> : null}
       {tab === "evolucao" ? <EvolutionView userId={id} editable byCoach student={student} onStudentChange={setData} /> : null}
       {tab === "historico" ? <HistoryView userId={id} editable={false} canExport /> : null}
       {tab === "relatorio" ? <ReportView subject={student} byCoach /> : null}

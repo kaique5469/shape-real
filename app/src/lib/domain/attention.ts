@@ -226,6 +226,9 @@ export function programLine(i: ProgramLineInput): { state: string | null; name: 
   return { state: warn && !pendingIsProgram ? fichaStateText(v) : null, name: i.programName };
 }
 
+/** A partir de quantas linhas (exemplos incluídos) a busca aparece em /alunos. */
+export const LIST_TOOLS_MIN = 7;
+
 /** Sem acento, minúsculas e dividido em palavras (espaço, hífen ou qualquer outro sinal que não seja letra ou dígito). */
 function searchWords(s: string): string[] {
   return s

@@ -1,30 +1,36 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronRight, Copy, MessageCircle, Search, Trash2, UserPlus, X } from "lucide-react";
+import { CalendarClock, CalendarX, ChevronRight, ClipboardList, Clock, MessageCircle, Search, Trash2, UserPlus, X, type LucideIcon } from "lucide-react";
 import { StudentForm } from "@/components/student-form";
 import { InviteDialog } from "@/components/invite-dialog";
 import { InstallCard } from "@/components/pwa";
 import { ColarLink } from "@/components/colar-link";
 import { BackupReminder } from "@/components/backup-reminder";
-import { Alert, Badge, Button, Dialog, Empty, Input, PageHeader, Skeleton, cx } from "@/components/ui";
+import { Alert, Badge, Button, Dialog, Empty, Input, PageHeader, Skeleton } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
 import { fmtNum, relativeDay, useLoad } from "@/lib/hooks";
-import { normalize } from "@/lib/domain/exercises";
 import { programValidity, waLink, type Validity } from "@/lib/domain/format";
 import {
+  LIST_TOOLS_MIN,
   calendarDaysSince,
   contactMessage,
   contactReason,
+  daysWithoutNews,
   displayNames,
-  isQuiet,
+  inactiveThreshold,
+  matchesQuery,
   namesList,
-  newsLabel,
+  pendingText,
+  programLine,
   reasonLabel,
+  resultsStatus,
   splitQueue,
   studentBand,
+  topReason,
+  type AttentionReason,
   type ContactReason,
 } from "@/lib/domain/attention";
 import { todayISO } from "@/lib/domain/ids";
@@ -49,20 +55,33 @@ export default function AlunosPage() {
   );
 }
 
-/** Aluno com a semana (segunda a domingo) e a meta já resolvidas, e o motivo de chamar, se houver. */
+/** Aluno com a semana (segunda a domingo) e a meta já resolvidas, a pendência do cartão e o motivo de chamar, se houver. */
 interface Row {
   s: StudentSummary;
   /** Treinos recebidos de segunda a domingo; null se não deu para ler. */
   week: number | null;
   /** Meta da semana (ficha ativa ou perfil); null sem meta. */
   goal: number | null;
-  /** Parado: dias sem notícias ≥ inactiveThreshold(meta). */
+  /** Dias sem notícias, a partir do último treino recebido ou, sem nenhum, do vínculo ou da ficha (o mais recente). */
+  newsDays: number;
+  /** Parado: newsDays ≥ inactiveThreshold(meta). */
   quiet: boolean;
   validity: Validity | null;
+  /** Pendência do cartão (sem ficha → sem notícias → vencida → vencendo); null quando não há. */
+  top: AttentionReason | null;
+  /** Motivo do "Chamar" da fila; aluno sem ficha nunca tem. */
   reason: ContactReason | null;
   /** Urgência para ordenar a lista (maior primeiro). */
   score: number;
 }
+
+/** Ícone de cada pendência do cartão (o de ficha é o mesmo de validityIcon). */
+const REASON_ICON: Record<AttentionReason, LucideIcon> = {
+  sem_ficha: ClipboardList,
+  sem_noticias: Clock,
+  ficha_vencida: CalendarX,
+  ficha_vencendo: CalendarClock,
+};
 
 /**
  * Lista de alunos com a contagem da semana de segunda a domingo e a meta da ficha ativa (ou do perfil):
@@ -75,10 +94,23 @@ async function loadStudents(repo: Repository, coachId: string) {
 }
 
 function toRow({ s, week, goal }: { s: StudentSummary; week: number | null; goal: number | null }, now: Date): Row {
+  const hasProgram = s.activeProgram !== null;
   const validity = s.activeProgram ? programValidity(s.activeProgram.createdAt, s.activeProgram.durationWeeks, now) : null;
-  const quiet = isQuiet(s, goal, now);
-  const score = (s.activeProgram ? 0 : 4) + (validity?.state === "expired" ? 3 : validity?.state === "soon" ? 1 : 0) + (quiet ? 2 : 0);
-  return { s, week, goal, quiet, validity, reason: contactReason(quiet, validity), score };
+  // Quem nunca mandou treino conta da ficha, se ela for mais nova que o vínculo: ficha recém-montada não nasce com alarme.
+  const newsDays = daysWithoutNews({ lastSessionAt: s.lastSessionAt, linkedAt: s.linkedAt, programCreatedAt: s.activeProgram?.createdAt ?? null }, now);
+  const quiet = newsDays >= inactiveThreshold(goal);
+  const score = (hasProgram ? 0 : 4) + (validity?.state === "expired" ? 3 : validity?.state === "soon" ? 1 : 0) + (quiet ? 2 : 0);
+  return {
+    s,
+    week,
+    goal,
+    newsDays,
+    quiet,
+    validity,
+    top: topReason({ hasProgram, quiet, validity }),
+    reason: contactReason(quiet, validity, hasProgram),
+    score,
+  };
 }
 
 /** Dias desde o último treino recebido; quem nunca mandou vem antes. */
@@ -97,7 +129,6 @@ function Alunos() {
   const [invite, setInvite] = useState<Invite | null>(null);
   const [inviting, setInviting] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [confirmSamples, setConfirmSamples] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [goingSolo, setGoingSolo] = useState(false);
@@ -118,8 +149,14 @@ function Alunos() {
       });
   }, [data]);
   const students = useMemo(() => rows.map((r) => r.s), [rows]);
-  const shown = query.trim() ? rows.filter((r) => normalize(r.s.profile.name).includes(normalize(query))) : rows;
-  const quietCount = rows.filter((r) => r.quiet).length;
+  const listTools = students.length >= LIST_TOOLS_MIN;
+  // Busca pelo início de cada palavra do nome, sem acento ("ana" acha Ana Souza, não Juliana). Sem o campo na tela
+  // (ex.: abaixo de 7 depois de "Remover exemplos"), uma busca antiga não filtra nada.
+  const activeQuery = listTools ? query : "";
+  const shown = rows.filter((r) => matchesQuery(r.s.profile.name, activeQuery));
+  const searching = activeQuery.trim().length > 0;
+  // Só alunos com ficha: quem não tem ficha está na pendência "Sem ficha ativa", não em "sem notícias".
+  const quietCount = rows.filter((r) => r.top === "sem_noticias").length;
   // Mesma semana do Hoje do aluno: segunda a domingo.
   const activeWeek = rows.filter((r) => (r.week ?? 0) > 0).length;
   // Fila de quem precisa de uma mensagem, na mesma ordem de urgência da lista.
@@ -144,6 +181,39 @@ function Alunos() {
     }
     track("coach_list_viewed", { faixa_alunos: band });
   }, [band, isDemo]);
+
+  // Busca: o resultado vai para o leitor de tela 500 ms depois da última tecla, nunca na primeira renderização.
+  const searchBoxRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const announceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refocusSearch = useRef(false);
+  const [announce, setAnnounce] = useState("");
+  useEffect(() => () => {
+    if (announceTimer.current) clearTimeout(announceTimer.current);
+  }, []);
+
+  function changeQuery(value: string) {
+    setQuery(value);
+    if (announceTimer.current) clearTimeout(announceTimer.current);
+    announceTimer.current = setTimeout(() => setAnnounce(resultsStatus(rows.filter((r) => matchesQuery(r.s.profile.name, value)).length)), 500);
+  }
+
+  function clearSearch() {
+    refocusSearch.current = true;
+    changeQuery("");
+  }
+
+  // Durante a busca a fila some (ela fica acima do campo). Se o campo com foco saiu da tela por isso, ele volta.
+  // Depois de "Limpar busca", o foco volta ao campo já com a fila de volta no lugar.
+  useLayoutEffect(() => {
+    if (refocusSearch.current) {
+      refocusSearch.current = false;
+      searchRef.current?.focus();
+      return;
+    }
+    const box = searchBoxRef.current;
+    if (searching && box && box.contains(document.activeElement)) box.scrollIntoView({ block: "nearest", behavior: "instant" });
+  }, [searching]);
 
   function dismissWelcome() {
     setWelcome(false);
@@ -313,12 +383,13 @@ function Alunos() {
             <div className="px-1">
               {/* Modo local: o personal só vê o treino que o aluno mandou. "Sem treinar" só vale na nuvem. */}
               <dt className="text-xs text-steel">{local ? "Sem notícias" : "Sem treinar"}</dt>
-              <dd className={cx("num plate-type text-2xl", quietCount > 0 && "text-plate-red")}>{quietCount}</dd>
+              <dd className="num plate-type text-2xl text-iron">{quietCount}</dd>
             </div>
           </dl>
 
-          {/* Fila enxuta: até 3 nomes e "e mais N", um "Chamar" por nome (em linha própria no celular) e "Ver todos" para a lista. */}
-          {queue.shown.length ? (
+          {/* Fila enxuta: até 3 nomes e "e mais N", um "Chamar" por nome (em linha própria no celular) e "Ver todos" para a lista.
+              Some durante a busca: o resultado da busca é a lista. */}
+          {queue.shown.length && !searching ? (
             <section aria-labelledby={QUEUE_TITLE_ID} className="rounded-[var(--radius-ficha)] border border-plate-yellow/60 bg-plate-yellow/12 px-3.5 py-3 text-[0.9375rem] text-iron">
               <h2 id={QUEUE_TITLE_ID}>
                 <strong>{namesList(queueNames, queue.rest)}</strong> {queue.shown.length + queue.rest > 1 ? "precisam" : "precisa"} de uma mensagem.
@@ -332,7 +403,7 @@ function Alunos() {
                     <li key={r.s.profile.id} className="flex flex-col gap-2 py-2.5 last:pb-0.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                       <p className="min-w-0 text-sm leading-snug">
                         <span className="font-semibold">{name}</span>
-                        <span className="text-steel"> · {reasonLabel(reason, { lastSessionAt: r.s.lastSessionAt, daysLeft }, repo.mode)}</span>
+                        <span className="text-steel"> · {reasonLabel(reason, { lastSessionAt: r.s.lastSessionAt, daysLeft, daysWithoutNews: r.newsDays }, repo.mode)}</span>
                       </p>
                       <a
                         href={waLink(contactMessage(reason, r.s.profile.name, daysLeft), r.s.profile.phone)}
@@ -349,7 +420,7 @@ function Alunos() {
                 })}
               </ul>
               {queue.rest > 0 ? (
-                <a href={`#${LIST_ID}`} onClick={() => setQuery("")} className="mt-1 inline-flex min-h-11 items-center text-sm font-semibold text-plate-blue-ink underline underline-offset-2 hover:text-iron">
+                <a href={`#${LIST_ID}`} className="mt-1 inline-flex min-h-11 items-center text-sm font-semibold text-plate-blue-ink underline underline-offset-2 hover:text-iron">
                   Ver todos
                 </a>
               ) : null}
@@ -358,10 +429,13 @@ function Alunos() {
 
           {/* Destino do "Ver todos": a lista já vem ordenada por urgência. scroll-mt: o cabeçalho fixo do celular não cobre o topo. */}
           <div id={LIST_ID} className="scroll-mt-20 space-y-5">
-            {students.length > 6 ? (
-              <div className="relative">
+            {listTools ? (
+              <div ref={searchBoxRef} className="relative scroll-mt-20">
                 <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-steel" aria-hidden />
-                <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar aluno" aria-label="Buscar aluno" className="pl-9" />
+                <Input ref={searchRef} value={query} onChange={(e) => changeQuery(e.target.value)} placeholder="Buscar aluno" aria-label="Buscar aluno" className="pl-9" />
+                <p role="status" className="sr-only">
+                  {announce}
+                </p>
               </div>
             ) : null}
 
@@ -372,7 +446,12 @@ function Alunos() {
                 ))}
               </ul>
             ) : (
-              <p className="rounded-[8px] border border-dashed border-rule-strong px-4 py-8 text-center text-steel">Nenhum aluno com “{query}”.</p>
+              <div className="rounded-[8px] border border-dashed border-rule-strong px-4 py-6 text-center">
+                <p className="text-steel">Nenhum aluno com “{query.trim()}”.</p>
+                <Button variant="ghost" onClick={clearSearch} className="mt-2">
+                  Limpar busca
+                </Button>
+              </div>
             )}
           </div>
 
@@ -426,13 +505,21 @@ function Alunos() {
 }
 
 /**
- * Linha do aluno (um único Link, sem botões dentro). Semana de segunda a domingo e a meta da ficha ativa ou do
- * perfil: o mesmo "2 de 3" do Hoje do aluno. Parado: "Sem notícias há 9 dias · último treino recebido em 13/11".
+ * Linha do aluno (um único Link, sem botões dentro), nesta ordem (U4 §3.4):
+ *  1. nome e o selo "exemplo";
+ *  2. pendência, com ícone e sem corte (quebra em até 2 linhas): "Sem ficha ativa", "Sem notícias há 9 dias · …",
+ *     "Ficha vencida há 5 dias", "Ficha vence em 3 dias";
+ *  3. semana de segunda a domingo e a meta da ficha ativa ou do perfil (o mesmo "2 de 3" do Hoje do aluno) e o
+ *     último retorno, que sai quando a pendência é "sem notícias" (ela já diz);
+ *  4. ficha, com o estado ANTES do nome: o corte cai no nome, nunca em "Ficha vence em 2 dias".
+ * O peso (a partir de sm) vem depois de tudo isso, em cinza normal.
  */
 function StudentRow({ row, mode }: { row: Row; mode: "local" | "supabase" }) {
-  const { s, week, goal, quiet, validity } = row;
+  const { s, week, goal, top, validity } = row;
   const last = s.lastSessionAt ? relativeDay(s.lastSessionAt) : mode === "local" ? "nada recebido ainda" : "nenhum treino ainda";
-  const summary = [week === null ? null : `${week}${goal ? ` de ${goal}` : ""} na semana`, quiet ? null : last].filter(Boolean).join(" · ");
+  const summary = [week === null ? null : `${week}${goal ? ` de ${goal}` : ""} na semana`, top === "sem_noticias" ? null : last].filter(Boolean).join(" · ");
+  const ficha = programLine({ programName: s.activeProgram?.name ?? null, goalLabel: s.profile.goal ? GOAL_LABEL[s.profile.goal] : null, validity, top });
+  const Icon = top ? REASON_ICON[top] : null;
   return (
     <li>
       <Link href={`/alunos/${s.profile.id}`} className="flex items-center gap-3 rounded-[8px] border border-rule bg-paper px-3 py-3 hover:border-iron sm:px-4">
@@ -442,26 +529,33 @@ function StudentRow({ row, mode }: { row: Row; mode: "local" | "supabase" }) {
             <span className="truncate font-bold">{s.profile.name}</span>
             {s.profile.sample ? <Badge className="shrink-0">exemplo</Badge> : null}
           </span>
-          <span className="block truncate text-sm text-steel">
-            {s.activeProgram ? (
-              <>
-                {s.activeProgram.name}
-                {validity && validity.state !== "ok" ? <span className={cx("font-semibold", validity.state === "expired" ? "text-plate-red-ink" : "text-iron")}> · {validity.label}</span> : null}
-              </>
-            ) : (
-              <>
-                <span className="font-semibold text-plate-red-ink">Sem ficha</span>
-                {s.profile.goal ? ` · ${GOAL_LABEL[s.profile.goal]}` : ""}
-              </>
-            )}
-          </span>
+          {top && Icon ? (
+            // Ícone na linha do texto (não numa coluna à parte): a 2ª linha usa a largura toda e
+            // "Sem notícias há 12 dias · último treino recebido em 11/11" cabe em 2 linhas a 360 px.
+            <span data-pendencia={top} className="num block text-sm font-semibold leading-snug text-iron">
+              <Icon className="mr-1.5 inline-block size-4 align-[-3px] text-warn-ink" aria-hidden />
+              {pendingText(top, { lastSessionAt: s.lastSessionAt, daysWithoutNews: row.newsDays, validity }, mode)}
+            </span>
+          ) : null}
           {summary ? <span className="num block text-sm text-steel">{summary}</span> : null}
-          {quiet ? <span className="num block text-sm font-semibold leading-snug text-iron">{newsLabel(s.lastSessionAt, mode)}</span> : null}
+          {ficha ? (
+            <span data-ficha className="flex min-w-0 items-baseline text-sm text-steel">
+              {ficha.state ? (
+                <span data-ficha-estado className="num max-w-full shrink-0 font-semibold text-iron">
+                  {ficha.state}
+                </span>
+              ) : null}
+              <span className="min-w-0 truncate">
+                {ficha.state ? " · " : ""}
+                {ficha.name}
+              </span>
+            </span>
+          ) : null}
         </span>
         {s.latestWeightKg ? (
-          <span className="hidden text-right text-sm sm:block">
-            <span className="num block font-semibold">{fmtNum(s.latestWeightKg)} kg</span>
-            <span className="num block text-steel">{s.weightDelta28d ? `${s.weightDelta28d > 0 ? "+" : "−"}${fmtNum(Math.abs(s.weightDelta28d))} em 28 dias` : "peso atual"}</span>
+          <span className="hidden text-right text-sm font-normal text-steel sm:block">
+            <span className="num block">{fmtNum(s.latestWeightKg)} kg</span>
+            <span className="num block">{s.weightDelta28d ? `${s.weightDelta28d > 0 ? "+" : "−"}${fmtNum(Math.abs(s.weightDelta28d))} em 28 dias` : "peso atual"}</span>
           </span>
         ) : null}
         <ChevronRight className="size-5 shrink-0 text-steel" aria-hidden />

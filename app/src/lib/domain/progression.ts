@@ -519,19 +519,6 @@ export function e1rmSeries(sessions: Session[], exerciseId: string): { date: str
   return out;
 }
 
-/** Exercícios registrados, ordenados pela frequência (os mais treinados primeiro). */
-export function trackedExercises(sessions: Session[]): { exerciseId: string; name: string; count: number }[] {
-  const map = new Map<string, { exerciseId: string; name: string; count: number }>();
-  for (const s of sessions)
-    for (const l of s.exercises) {
-      if (!completedSets(l).some((x) => (x.loadKg ?? 0) > 0)) continue;
-      const cur = map.get(l.exerciseId) ?? { exerciseId: l.exerciseId, name: l.name, count: 0 };
-      cur.count++;
-      map.set(l.exerciseId, cur);
-    }
-  return [...map.values()].sort((a, b) => b.count - a.count);
-}
-
 /** Início da semana (segunda-feira) em ISO yyyy-mm-dd. */
 export function weekStart(iso: string): string {
   const d = new Date(iso.length === 10 ? iso + "T12:00:00" : iso);

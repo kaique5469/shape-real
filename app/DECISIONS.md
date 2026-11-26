@@ -166,7 +166,8 @@ partir de 360 continuam como na entrada de 22/11).
 
 A mesma data aparece igual para o personal e para o aluno ("versão de 10/11") e cabe a 360 px. Hora em HH:MM no fuso
 do aparelho (`fmtTime`). Impressão com "Válida até DD/MM/AAAA" (`validityEnd`, a mesma conta de `programValidity`).
-As telas antigas com "20 de nov" não mudam nesta rodada.
+As telas antigas com "20 de nov" não mudam nesta rodada. O modelo continua impresso com "Validade: N semanas": as
+cópias contam a validade da própria criação, e uma data a partir da criação do modelo seria falsa.
 
 ## 2026-11-23 — Teste de uso de cor com lista PENDENTE
 
@@ -174,8 +175,8 @@ As telas antigas com "20 de nov" não mudam nesta rodada.
 PENDENTE explícita dos arquivos ainda não convertidos, cada um com o item que o converte. Cada item tira o seu
 arquivo; o teste falha se uma entrada ficar sobrando. Ficam pendentes com motivo ao fim desta rodada: os arquivos do
 U7c (página do aluno, /receber, colar link, envio por texto da ficha, app no celular e cadastro do aluno), que vão
-com a rodada do questionário, e o "52,5" da ilustração do /entrar, sem dono nesta rodada (troca de classe para
-`text-brand`, sem mudança visual).
+com a rodada do questionário. O "52,5" da ilustração do /entrar, que estava sem dono, foi convertido na integração
+(`text-brand` + `data-brand`, mesmo hex, sem mudança visual) e saiu da lista.
 
 ## 2026-11-23 — "Salvar e enviar" rejeitado; um controle de envio por vez
 
@@ -190,3 +191,112 @@ fechadas no typecheck (`StrictEventProps`): chave ou valor fora da categoria nã
 ganham as chaves novas por contrato (`EXTRA_PROPS` e os tipos de categoria em `analytics.ts`), sem mudar a assinatura
 de quem já chama. Só contagens, booleanos e categorias; nunca nome, telefone, carga, texto digitado ou dado de saúde,
 nem derivado (por isso o `score` de `diet_analyzed` é descartado na saída).
+
+## 2026-11-23 — Treino não enviado: "Você ainda não enviou este treino para Rafael."
+
+A tabela da U2 dizia "Este treino ainda não foi enviado para Rafael.". O texto casa com a guarda contra "enviado para"
+(testes e aceite da própria U2), que existe para nenhum estado afirmar entrega. A frase em primeira pessoa diz o mesmo
+sem a forma proibida.
+
+## 2026-11-23 — Situação do envio da ficha: o que pede ação vem primeiro
+
+No detalhe (D) do envio da ficha, a ordem é: dieta mudou, dieta ainda não foi, eco antigo e, por último, "A
+confirmação aparece quando…". A U2 punha o eco antigo e a confirmação antes da dieta. A linha da página do aluno é
+sempre uma das linhas do diálogo; com a ficha em dia e a dieta não, ela mostra a linha da dieta, e não a manchete
+("Mensagem com a ficha atual copiada…" com a dieta nova ainda não enviada seria falso).
+
+`ficha_link_sent.situacao`: `nunca` = nada do que vai no link tinha ido; `repetido` = tudo já tinha ido (inclui
+`confirmado`); `mudou` = algo mudou ou entrou depois do último envio; `sem_info` = conteúdo anterior ao registro.
+
+`useFichaLink(student, enabled, opts?)` é a peça da anamnese (§8.6) com o mesmo nome e a mesma chamada de dois
+argumentos; o 3º, opcional (`{ where, version }`), leva a medição e refaz o link depois de salvar. Sem
+`program.sharedAt`: o toque grava só o registro `sr:sent:{aluno}:ficha`.
+
+## 2026-11-23 — Eco da versão: só com o mesmo personal e o mesmo aluno
+
+O eco (`ficha` no pacote de treinos) só é gravado em `/receber` quando o personal do pacote é o deste aparelho e o
+aluno do pacote é o escolhido no painel. Escolher outro aluno à mão gravaria a versão da ficha de outra pessoa. O
+"veio com a versão antiga" (`staleEcho`) vale para o item da manchete: a ficha, ou a dieta quando o aluno não tem
+ficha. Treino igual ao que já está no painel (`sameSession`, que trata `null` como campo ausente) não é gravado de
+novo e conta como "já estava no painel", nunca como "atualizado". Com um treino só, o título de `/receber` fica no
+singular ("Este treino já está no painel de Juliana").
+
+## 2026-11-23 — Editor: a barra depois de salvar não fecha com um envio feito por ela
+
+Envio pela barra: o botão sai da barra, no lugar da frase aparece o estado do toque ("Mensagem copiada às 09:41…") e
+o botão do painel volta. Sem diálogo, fechar a barra apagaria a única confirmação perto do toque, e fechar durante o
+clique desconectaria a âncora antes de o navegador abrir o WhatsApp. A barra fecha na próxima alteração e em
+"Fechar resumo". Na barra, "Copiar" fica só com o ícone abaixo de 640 px (nome acessível "Copiar mensagem"), para a
+barra da chegada do gerador ficar com 190 px ou menos. O envio do editor usa o rótulo da anamnese, "Enviar link no
+WhatsApp" (os aceites da U5 diziam "Enviar para o celular de Juliana"), e o texto pelo WhatsApp vira o secundário
+"Mandar como texto" em "Outras formas": um verde só no painel.
+
+## 2026-11-23 — Relatório e gráficos: "Melhor", sem "+0%" e eixo legível
+
+O relatório mostra Antes e Melhor (a melhor marca válida do período), com o título "Exercícios que melhoraram" e
+"não melhorou" no lugar de "manteve a carga", que era falso para quem caiu. Quando o % arredonda para 0 num exercício
+que melhorou, aparece a diferença em kg ou reps ("+0,2 kg"); "+5 reps" usa o mesmo destaque do "+17%". Nos gráficos,
+o vão mínimo de 56 px entre rótulos do eixo X conta sobre a área entre o primeiro e o último ponto (contar sobre a
+largura inteira encostava rótulos a 640 px); o gráfico deixa a página rolar sob o dedo (`touch-pan-y`) e um toque
+mostra o valor. `evolution_compare_shown.suspect` = alguma marca suspeita no exercício, não só a última. O atalho
+"Comentar com {Nome} no WhatsApp" no cartão fica adiado com a observação do personal: seria a quinta entrada de
+WhatsApp do personal sem evidência de pedido, e a medição que o reabriria já existe sem botão novo.
+
+## 2026-11-23 — Desvios da spec nesta rodada (integração)
+
+Registro único dos desvios que as trilhas fizeram e a integração conferiu. Cada um tem teste ou conferência no
+navegador; os que já têm entrada própria acima não se repetem aqui.
+
+**Sessão.** O selo de recorde no ✓ feito é desenhado na própria sessão (`data-record`, `bg-record`, troféu branco),
+sem variante nova no `RecordMark`: a variante `icon` poria troféu vermelho sobre o verde (1,09:1). O hover da série
+pendente escurece o fundo, não a borda (borda `iron` é o sinal de "preenchida"). A rolagem depois do ✓ que abre outro
+exercício vai até a 1ª série pendente dele, não necessariamente a 1ª. `remocao_cancelada` conta qualquer fechamento
+sem confirmar (Manter, X, Esc, fundo). Acima de 999: o campo volta ao valor que tinha quando recebeu o foco (o "303"
+do meio também não foi querido), o aviso aparece já ao digitar e some na próxima edição da linha; `selectAllSoon`
+seleciona de novo no 1º `mouseup` depois do foco, porque só o `setTimeout(0)` deixava "3035" no toque.
+`workout_resumed` sai em todo rascunho reaberto. No resumo, a nuvem e o "Ver como aluno" mostram só "Treino
+concluído" (nunca "salvo neste …"); a ficha só é regravada quando alguma carga muda, e exercício repetido no treino
+leva a maior carga feita. O ícone de "Semana N seguida" continua `plate-yellow` (decoração no escuro, sem token). O
+plano B do teclado do iPhone (`visualViewport`) só entra com evidência de aparelho real.
+
+**Envio.** `SendToCoach` fixa os treinos ao abrir o diálogo e avisa `onSent(via, at)`; a faixa do Hoje e o botão do
+Histórico continuam montados depois do toque, para a cópia não fechar o diálogo no meio. "Excluir treino" usa
+`text-danger!` (no CSS gerado, o `text-iron` do ghost viria depois). `useFichaDelivery` mora em `use-ficha-link.ts`
+(reexportado por `transfer-share.tsx`). O botão "Avisar … que recebi" e o recibo ficam para a próxima rodada, como a
+spec manda. Os links reais de antes da U2c estão colados em `transfer.test.ts` (abrem com `TRANSFER_VERSION` 1).
+
+**Dieta.** "Para mudar, fale com Rafael." e "Se Rafael mandar…" no lugar de "ele": o aparelho não sabe o gênero do
+personal. A nota do painel é "Texto e PDF não atualizam o app de Juliana." (o painel também imprime). "Sem mudança" é
+medido pelas refeições (50 → 250 → 50 não marca ajuste). "Ver como aluno" e a nuvem nunca gravam `adjustedAt`
+(mesma regra da ficha). Na edição do plano próprio, "Cancelar" com alterações pergunta "Descartar as alterações?".
+`section_viewed` da dieta vai sem `proxima` (a próxima refeição é a U3d, adiada). O painel de envio da dieta é
+próprio (`SendDietPanel`) e não usa o `SendFichaLink` do editor: aquele só habilita com ficha ativa e bloquearia aluno
+só com dieta; os dois usam o mesmo `useFichaLink` e os mesmos textos. Só macros abaixo da meta: "Abaixo das metas em
+proteína." (a forma curta só depois de "Acima das metas em …").
+
+**Ficha e editor.** A assinatura do rascunho usa a unidade gravada para exercício próprio (`custom_*`): a biblioteca
+dele chega depois da página e não pode invalidar o rascunho. Toda ficha com `adjustedAt` sai sem a assinatura do
+personal; a linha "Ajustada em …" só na ficha recebida. Ficha recebida inativa não diz "passa a valer no lugar
+desta" (a nova substitui a ativa). Ficha inativa vence "aluno de exemplo" no próximo passo da barra. Fechar a barra
+leva o foco ao contêiner dela; "Tornar ativa" fecha a barra. O diálogo de envio da página do aluno manteve a abertura
+("no celular dela/dele").
+
+**Evolução e relatório.** O caso "3×12, 3×17, 3×15 → melhor nenhuma" da U6 §5.2 contradiz a R-9: vale a R-9 (3×17 é
+a melhor marca). O relatório olha o histórico até o fim do período; sem nenhuma linha, só "Nenhum exercício com carga
+melhorou no período.". O eixo X do gráfico de barras também usa o vão de 56 px (a 360 px, 4 das 8 semanas têm
+rótulo; o toque mostra cada uma) e a legenda do ponto em foco passou a dd/mm. Com um registro só, o cartão usa o título
+da R-14 e "Primeiro registro · dd/mm". `trackedExercises` saiu de `progression.ts` (sem uso).
+
+**Fila do personal.** O ícone da pendência fica na linha do texto (numa coluna à parte, "Sem notícias há 12 dias ·
+último treino recebido em 11/11" ia a 3 linhas a 360 px). `programLine`, `topReason` e `pendingText` ficam no lugar de
+`attentionOf`/`reasonText` da U4 §4; a U4b pode absorvê-los. A caixa da fila continua `plate-yellow`/`plate-blue-ink`
+até a U4b. Uma busca antiga não filtra a lista quando o campo de busca não aparece (menos de 7 alunos).
+
+**Acabamento.** A caixa de cópia atrasada usa os tokens de atenção (`warn-line`, `warn-surface`, ícone `warn-ink`); em
+Conta, a linha curta vale em qualquer largura. Selo BETA e faixa de demonstração em `warn-fill` (mesmo hex). Os chips
+de músculo das preferências e o botão da faixa de demonstração ganharam 44 px no toque, fora da lista do aceite A8. A
+barra de progresso e o selo de exercício completo da sessão continuam verdes cheios (`bg-done`, já eram verdes).
+
+**Fica para a rodada do questionário (U7c).** `program-generator.tsx` continua com `sticky bottom-20` (o grep do aceite
+U8 A6 ainda encontra essa linha), e o selo "N recordes" da página do aluno continua `bg-plate-red` sem `data-record`:
+os dois arquivos são reescritos pela anamnese.

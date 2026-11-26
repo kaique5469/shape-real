@@ -110,7 +110,8 @@ export function SystemChooser({ prefs, set }: { prefs: TrainingPrefs; set: (p: P
           >
             <span className="flex items-baseline justify-between gap-2">
               <span className="plate-type text-lg">{s.short}</span>
-              {s.id === suggested ? <span className={cx("rounded px-1.5 py-0.5 text-[0.6875rem] font-bold", active ? "bg-plate-red text-white" : "bg-plate-red/10 text-plate-red-ink")}>Sugerido</span> : null}
+              {/* "Sugerido" é informação (U7 R5): azul no cartão claro; no cartão ativo (iron), chalk com texto iron. */}
+              {s.id === suggested ? <span className={cx("rounded px-1.5 py-0.5 text-[0.6875rem] font-bold", active ? "bg-chalk text-iron" : "bg-info-surface text-info-ink")}>Sugerido</span> : null}
             </span>
             <span className={cx("mt-1 block text-[0.8125rem]", active ? "text-chalk/75" : "text-steel")}>{s.bestFor}</span>
           </button>
@@ -134,7 +135,7 @@ export function LimitsPicker({ prefs, set }: { prefs: TrainingPrefs; set: (p: Pa
                 type="button"
                 aria-pressed={on}
                 onClick={() => set({ emphasis: on ? prefs.emphasis.filter((x) => x !== g) : [...prefs.emphasis, g].slice(-3) })}
-                className={cx("h-10 rounded-full border px-3.5 text-sm font-semibold", on ? "border-iron bg-iron text-chalk" : "border-rule-strong bg-paper hover:border-iron")}
+                className={cx("h-10 rounded-full border px-3.5 text-sm font-semibold pointer-coarse:h-11", on ? "border-iron bg-iron text-chalk" : "border-rule-strong bg-paper hover:border-iron")}
               >
                 {GROUP_LABEL[g]}
               </button>

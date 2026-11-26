@@ -1,7 +1,7 @@
 import type { Profile, Program } from "./types";
 
 /**
- * De quem é a ficha aberta no editor e o que isso muda (U5a; os textos do cabeçalho e da barra entram na U5b).
+ * De quem é a ficha aberta no editor e o que isso muda (U5a), e os textos do cabeçalho e da barra depois de salvar (U5b).
  * Puro: sem React e sem `@/lib/hooks`. Datas entram já formatadas por uma função passada por quem chama.
  */
 
@@ -80,6 +80,138 @@ export function programAdjustedNote(p: Pick<Program, "adjustedAt">, coachFullNam
   if (!p.adjustedAt) return null;
   const name = usableName(coachFullName);
   return `Ajustada em ${day(p.adjustedAt)} a partir ${name ? `da ficha de ${name}` : "da ficha do seu personal"}.`;
+}
+
+// ---- U5b: cabeçalho e fechamento do editor ------------------------------------------------------------
+
+/** O que o cabeçalho e a barra depois de salvar precisam saber da ficha aberta. Nomes já no primeiro nome. */
+export interface FichaContextInput {
+  kind: FichaKind;
+  mode: AppMode;
+  program: Pick<Program, "active" | "adjustedAt">;
+  /** Aluno dono da ficha (`aluno`) ou o próprio usuário (`como_aluno`); null quando não carregou. */
+  studentFirst: string | null;
+  /** Quem montou a ficha `recebida` (`fichaCoach().first`); null quando o app não sabe. */
+  coachFirst: string | null;
+  /** Quem montou é o personal atual (`fichaCoach().current`). */
+  currentCoach: boolean;
+}
+
+const firstOf = (name: string | null | undefined): string | null => usableName(name)?.split(/\s+/)[0] ?? null;
+
+/** Nota de ficha inativa (vale para o cabeçalho e para o próximo passo da barra). */
+function inactiveNote(kind: FichaKind, studentFirst: string | null): string | null {
+  if (kind === "aluno") {
+    const s = firstOf(studentFirst);
+    return s ? `Inativa: ${s} continua com a ficha ativa até você tocar em “Tornar ativa”.` : "Inativa: a ficha ativa continua valendo até você tocar em “Tornar ativa”.";
+  }
+  if (kind === "propria") return "Inativa: sua ficha ativa continua valendo até você tocar em “Tornar ativa”.";
+  return null;
+}
+
+/**
+ * Título (`h1`) e nota do cabeçalho do editor (U5 §3.2). A nota é a primeira que se aplicar; null = sem nota.
+ * Sem pronome para o personal ou para o aluno (o app não sabe o gênero). `day` formata a data curta ("24/11").
+ * Ficha recebida inativa ou de um personal que não é o atual: sem "Se Rafael mandar uma ficha nova, ela passa a
+ * valer no lugar desta" (a ficha nova substitui a ativa, não esta).
+ */
+export function fichaContextText(i: FichaContextInput, day: (iso: string) => string): { title: string; note: string | null } {
+  const s = firstOf(i.studentFirst);
+  const c = firstOf(i.coachFirst);
+  switch (i.kind) {
+    case "aluno":
+      return { title: s ? `Ficha de ${s}` : "Ficha do aluno", note: i.program.active ? null : inactiveNote("aluno", s) };
+    case "modelo":
+      return { title: "Modelo de ficha", note: "Aplicar a um aluno cria uma cópia. Mudar o modelo depois não muda as cópias já criadas." };
+    case "propria":
+      return { title: "Sua ficha", note: i.program.active ? null : inactiveNote("propria", s) };
+    case "como_aluno":
+      return { title: s ? `Ficha de ${s}` : "Ficha do aluno", note: `O que você mudar aqui muda a ficha ${s ? `de ${s}` : "do aluno"} neste aparelho.` };
+    case "recebida": {
+      const title = c ? `Ficha montada por ${c}` : "Ficha montada pelo seu personal";
+      // Na nuvem a ficha é a mesma linha para os dois lados: nada a dizer aqui.
+      if (i.mode !== "local") return { title, note: null };
+      const who = c ?? "o seu personal";
+      const first = i.program.adjustedAt
+        ? `Você ajustou esta ficha em ${day(i.program.adjustedAt)}. Os ajustes ficam só neste celular e não aparecem para ${who}.`
+        : `O que você mudar aqui fica só neste celular e não aparece para ${who}.`;
+      const replaces = i.currentCoach && i.program.active ? ` Se ${who} mandar uma ficha nova, ela passa a valer no lugar desta.` : "";
+      return { title, note: first + replaces };
+    }
+  }
+}
+
+/** A linha de envio (manchete M da U2b) aparece no cabeçalho? Só ficha ativa de aluno real, no modo local, sem alteração pendente. */
+export function showEditorDeliveryLine(i: { kind: FichaKind; mode: AppMode; sample: boolean; active: boolean; dirty: boolean }): boolean {
+  return i.kind === "aluno" && i.mode === "local" && !i.sample && i.active && !i.dirty;
+}
+
+/** Dá para mandar o link desta ficha agora (`program_edited.send_ready` e o botão da barra): aluno real, modo local, ficha ativa com exercícios. */
+export function sendReady(i: { kind: FichaKind; mode: AppMode; sample: boolean; active: boolean; hasExercises: boolean }): boolean {
+  return i.kind === "aluno" && i.mode === "local" && !i.sample && i.active && i.hasExercises;
+}
+
+/** Título da barra depois de salvar (U5 §3.6). "Neste celular" é o vocabulário do aluno com personal. */
+export function postSaveTitle(kind: FichaKind, mode: AppMode, opts: { fromGenerator?: boolean } = {}): string {
+  if (opts.fromGenerator) return mode === "local" ? "Ficha nova salva neste aparelho" : "Ficha nova salva";
+  if (mode !== "local") return kind === "modelo" ? "Modelo salvo" : "Ficha salva";
+  if (kind === "modelo") return "Modelo salvo neste aparelho";
+  if (kind === "recebida") return "Ficha salva neste celular";
+  return "Ficha salva neste aparelho";
+}
+
+/**
+ * Próximo passo da barra depois de salvar (U5 §3.6): o envio OU uma frase, nunca os dois; null = nada.
+ * Ficha inativa diz que está inativa antes de qualquer coisa (é o que decide o que o aluno vê).
+ */
+export function postSaveNextStep(i: FichaContextInput & { sample: boolean; hasExercises: boolean }): { send: true } | { text: string } | null {
+  const s = firstOf(i.studentFirst);
+  switch (i.kind) {
+    case "aluno":
+      if (!i.program.active) return { text: inactiveNote("aluno", s)! };
+      if (i.sample) return null;
+      if (i.mode !== "local") return { text: s ? `A versão nova já está no app de ${s}.` : "A versão nova já está no app do aluno." };
+      if (!i.hasExercises) return { text: "Adicione exercícios antes de enviar." };
+      return { send: true };
+    case "modelo":
+      return { text: "As cópias já criadas a partir deste modelo não mudam." };
+    case "propria":
+      return { text: i.program.active ? "A ficha já aparece em Hoje." : inactiveNote("propria", s)! };
+    case "recebida": {
+      if (i.mode !== "local" || !i.currentCoach || !i.program.active) return null;
+      const who = firstOf(i.coachFirst) ?? "o seu personal";
+      return { text: `Estas mudanças não aparecem para ${who}. Se ${who} mandar uma ficha nova, ela passa a valer no lugar desta.` };
+    }
+    case "como_aluno":
+      return null;
+  }
+}
+
+/**
+ * Chegada do gerador (`?enviada=1`, U5 A7): a barra com o envio e a frase dela (aluno real, modo local, ficha
+ * ativa com exercícios) ou uma frase no topo. Inativa e aluno de exemplo: o texto de antes.
+ */
+export function newFichaMessage(i: FichaContextInput & { sample: boolean; hasExercises: boolean }): { bar: true; text: string } | { text: string } {
+  if (sendReady({ ...i, active: i.program.active })) return { bar: true, text: "Revise se quiser e envie quando estiver pronta." };
+  if (!i.program.active && i.kind !== "modelo") return { text: "Ficha criada, ainda inativa: a ficha atual continua valendo até você tocar em “Tornar ativa”." };
+  const s = firstOf(i.studentFirst);
+  if (i.kind === "aluno" && i.mode !== "local") return { text: s ? `Ficha salva e ativa. Ela já está no app de ${s}.` : "Ficha salva e ativa. Ela já está no app do aluno." };
+  if (i.kind === "aluno" && !i.sample && !i.hasExercises) return { text: "Ficha salva e ativa. Adicione exercícios antes de enviar." };
+  return { text: "Ficha salva e ativa. Revise os detalhes e envie pelo WhatsApp ou imprima." };
+}
+
+/** `program_edited.tela`: "larga" a partir de 1024 px. */
+export function editorWidth(px: number): "estreita" | "larga" {
+  return px >= 1024 ? "larga" : "estreita";
+}
+
+/** `program_edited.duracao`: tempo desde que o editor abriu, em faixas. */
+export function editDuration(ms: number): "<1min" | "1-3min" | "3-10min" | "10min+" {
+  const min = ms / 60_000;
+  if (!(min >= 1)) return "<1min";
+  if (min < 3) return "1-3min";
+  if (min < 10) return "3-10min";
+  return "10min+";
 }
 
 /**

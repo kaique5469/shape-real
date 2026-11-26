@@ -2,31 +2,36 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { Check, Trophy } from "lucide-react";
+import { Check, CheckCheck, Trophy } from "lucide-react";
 import { Logo } from "@/components/brand";
 import { ColarNoAppCard } from "@/components/colar-link";
 import { isIosBrowser } from "@/components/pwa";
 import { Alert, Button, LinkButton, Select, Skeleton } from "@/components/ui";
 import { reportError, track } from "@/lib/analytics";
 import { localRepo, useApp } from "@/lib/app-context";
+import { receivePreview, receiveResult, seriesText } from "@/lib/domain/delivery";
 import { firstName } from "@/lib/domain/format";
 import { completedSets } from "@/lib/domain/progression";
 import { parsePacket, type TreinosPacket } from "@/lib/domain/transfer";
 import type { StudentSummary } from "@/lib/domain/types";
 import { cameFromPaste, packedFromHash, unpackData } from "@/lib/share-link";
-import { importTreinos } from "@/lib/transfer-client";
+import { importTreinos, receivedFichaVersao } from "@/lib/transfer-client";
 
-/** Link que o aluno manda ao personal: leva os treinos feitos para o painel do personal. */
+/**
+ * Link que o aluno manda ao personal: leva os treinos feitos para o painel do personal. Antes de registrar, diz quais
+ * treinos já estão no painel (pelo id); depois, separa novo, atualizado (mudou) e "já estava no painel" (U2d).
+ * O eco da versão da ficha que veio no link é gravado ao registrar (U2c, `importTreinos` com `coachId`).
+ */
 export default function ReceberPage() {
   const { ready, user, repo, mode, returnTo, returnToOwner } = useApp();
-  const router = useRouter();
   const [packet, setPacket] = useState<TreinosPacket | null>(null);
   const [state, setState] = useState<"lendo" | "pronto" | "invalido">("lendo");
   const [students, setStudents] = useState<StudentSummary[] | null>(null);
   const [target, setTarget] = useState<string>("");
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState<{ added: number; updated: number; mirrored: number; studentId: string } | null>(null);
+  const [done, setDone] = useState<{ added: number; updated: number; same: number; mirrored: number; studentId: string } | null>(null);
+  /** Ids dos treinos que o aluno escolhido já tem no painel (U2d: "No painel", "já estão no painel"). */
+  const [present, setPresent] = useState<{ studentId: string; ids: Set<string> } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   /** Veio pelo campo "Colar link" (dentro do app) e não pelo toque no link do WhatsApp. */
   const [viaPaste, setViaPaste] = useState(false);
@@ -93,13 +98,41 @@ export default function ReceberPage() {
     })();
   }, [packet, user, repo, returnTo]);
 
+  // Quais treinos do link o aluno escolhido já tem no painel (pelo id), para não chamar de novo o que não é.
+  useEffect(() => {
+    if (!target || mode !== "local" || done) return;
+    let alive = true;
+    repo
+      .listSessions(target)
+      .then((list) => {
+        if (alive) setPresent({ studentId: target, ids: new Set(list.map((s) => s.id)) });
+      })
+      .catch(() => {
+        if (alive) setPresent(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [target, repo, mode, done]);
+
   async function register() {
     if (!packet || !target) return;
     setBusy(true);
     setErr(null);
     try {
-      const r = await importTreinos(packet, target);
-      track("treinos_link_received", { sessions: packet.sessions.length, added: r.added, matched: target === packet.studentRef, mirrored: r.mirrored, via_paste: viaPaste, ios_browser: iosBrowser });
+      // O eco da versão da ficha (U2c) só é gravado com o personal deste aparelho.
+      const r = await importTreinos(packet, target, { coachId: user?.id });
+      const fichaVersao = await receivedFichaVersao(packet, target, user?.id).catch(() => "sem_info" as const);
+      track("treinos_link_received", {
+        sessions: packet.sessions.length,
+        added: r.added,
+        same: r.same,
+        matched: target === packet.studentRef,
+        mirrored: r.mirrored,
+        ficha_versao: fichaVersao,
+        via_paste: viaPaste,
+        ios_browser: iosBrowser,
+      });
       setDone({ ...r, studentId: target });
     } catch (e) {
       reportError(e, "link:receber-treinos");
@@ -112,6 +145,11 @@ export default function ReceberPage() {
   const sessions = packet ? [...packet.sessions].sort((a, b) => a.startedAt.localeCompare(b.startedAt)) : [];
   const first = packet ? firstName(packet.studentName) : "";
   const known = students?.some((s) => s.profile.id === packet?.studentRef);
+  // Nome do aluno como está no painel deste personal (o do link pode estar escrito de outro jeito).
+  const nameOf = (id: string) => firstName(students?.find((s) => s.profile.id === id)?.profile.name ?? packet?.studentName ?? "");
+  const inPanel = present && present.studentId === target ? present.ids : null;
+  const preview = receivePreview(sessions.length, inPanel ? sessions.filter((s) => inPanel.has(s.id)).length : null, nameOf(target));
+  const result = done ? receiveResult(done, nameOf(done.studentId)) : null;
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-md flex-col px-5 py-8">
@@ -127,25 +165,24 @@ export default function ReceberPage() {
         ) : state === "invalido" || !packet ? (
           <div className="space-y-4">
             <h1 className="plate-type text-[1.9rem] leading-tight">Este link não abriu</h1>
-            <p className="text-steel">Ele pode ter sido cortado ao copiar. Peça ao aluno para tocar de novo em “Enviar ao personal”.</p>
+            <p className="text-steel">Ele pode ter sido cortado ao copiar. Peça ao aluno para enviar de novo pelo Histórico do app.</p>
             <LinkButton href="/alunos" variant="secondary">
               Ir para o painel
             </LinkButton>
           </div>
-        ) : done ? (
+        ) : done && result ? (
           <div className="space-y-5">
             <div className="grid size-12 place-items-center rounded-full bg-plate-green text-white">
               <Check className="size-6" aria-hidden />
             </div>
-            <h1 className="plate-type text-[2rem] leading-[1.05]">Treinos de {first} registrados.</h1>
+            <h1 className="plate-type text-[2rem] leading-[1.05]">{result.title}</h1>
             <p className="text-steel">
-              {done.added === 1 ? "1 treino novo" : `${done.added} treinos novos`}
-              {done.updated ? ` e ${done.updated === 1 ? "1 atualizado" : `${done.updated} atualizados`}` : ""}. Frequência, cargas e o relatório de evolução já contam com eles.
-              {done.mirrored ? ` A ficha já mostra as cargas que ${first} fez, e o próximo envio leva essas cargas.` : ""}
+              {result.body}
+              {done.mirrored ? ` A ficha já mostra as cargas que ${nameOf(done.studentId)} fez, e o próximo envio leva essas cargas.` : ""}
             </p>
             <div className="flex flex-col gap-2">
               <LinkButton href={`/alunos/${done.studentId}?aba=historico`} size="lg" className="w-full">
-                Ver o histórico de {first}
+                Ver o histórico de {nameOf(done.studentId)}
               </LinkButton>
               <LinkButton href="/alunos" variant="ghost" className="w-full">
                 Voltar aos alunos
@@ -157,9 +194,8 @@ export default function ReceberPage() {
             {showAppCard ? <ColarNoAppCard /> : null}
             <div>
               <p className="text-sm font-semibold text-steel">Enviado por {packet.studentName}</p>
-              <h1 className="plate-type mt-1 text-[2rem] leading-[1.05]">
-                {sessions.length === 1 ? "1 treino" : `${sessions.length} treinos`} para registrar
-              </h1>
+              <h1 className="plate-type mt-1 text-[2rem] leading-[1.05]">{preview.title}</h1>
+              {preview.line ? <p className="mt-1.5 text-steel">{preview.line}</p> : null}
             </div>
             <ul className="ruled rounded-[var(--radius-ficha)] border border-rule bg-paper text-[0.9375rem]">
               {sessions.slice(-8).map((s) => (
@@ -167,8 +203,16 @@ export default function ReceberPage() {
                   <span className="plate-type grid h-9 min-w-9 place-items-center rounded bg-iron px-1.5 text-chalk">{s.dayKey ?? "L"}</span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-semibold">{s.dayTitle || (s.dayKey ? `Treino ${s.dayKey}` : "Treino livre")}</span>
-                    <span className="num block text-sm text-steel">
-                      {new Date(s.startedAt).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" })} · {s.exercises.reduce((a, e) => a + completedSets(e).length, 0)} séries
+                    <span className="flex flex-wrap items-center gap-x-2 text-sm text-steel">
+                      <span className="num">
+                        {new Date(s.startedAt).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" })} · {seriesText(s.exercises.reduce((a, e) => a + completedSets(e).length, 0))}
+                      </span>
+                      {inPanel?.has(s.id) ? (
+                        <span className="inline-flex items-center gap-1" data-no-painel>
+                          <CheckCheck className="size-[1.05em] shrink-0" aria-hidden />
+                          No painel
+                        </span>
+                      ) : null}
                     </span>
                   </span>
                   {s.prs.length ? <Trophy className="size-4 shrink-0 text-plate-red" aria-label="recorde" /> : null}
@@ -209,7 +253,7 @@ export default function ReceberPage() {
                 ) : null}
                 {err ? <Alert tone="error">{err}</Alert> : null}
                 <Button size="lg" className="w-full" loading={busy} disabled={!target} onClick={register}>
-                  Registrar no painel{known ? ` de ${first}` : ""}
+                  {preview.allPresent ? "Registrar de novo" : `Registrar no painel${known ? ` de ${first}` : ""}`}
                 </Button>
                 <p className="text-sm text-steel">Treinos que já estavam registrados são atualizados, não duplicados.</p>
               </div>

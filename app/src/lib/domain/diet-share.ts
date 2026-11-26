@@ -45,8 +45,10 @@ export function macroLine(t: MacroTargets): string {
  * Dieta em texto simples, no formato que funciona no WhatsApp (*negrito* com asteriscos, sem emoji):
  * metas do dia, uma refeição por bloco com porções em gramas e medida caseira, o total do cardápio (a soma do
  * plano, não o que a pessoa comeu), orientações e a assinatura do personal ("Nome · CREF …").
+ * `adjustedNote` (U3 R5): cardápio ajustado no aparelho do aluno. Sai sem a assinatura do personal e termina com a
+ * linha do ajuste ("Ajustado em 24/11 a partir do cardápio de Rafael Nunes."): o personal não assinou esse conteúdo.
  */
-export function dietToText(diet: DietPlan, opts: { studentName?: string; coachName?: string; coachCref?: string } = {}): string {
+export function dietToText(diet: DietPlan, opts: { studentName?: string; coachName?: string; coachCref?: string; adjustedNote?: string | null } = {}): string {
   const out: string[] = [`*${opts.studentName ? `Plano alimentar — ${opts.studentName}` : diet.name.trim() || "Plano alimentar"}*`];
   out.push(`Metas do dia: ${macroLine(diet.targets)}`);
 
@@ -60,8 +62,10 @@ export function dietToText(diet: DietPlan, opts: { studentName?: string; coachNa
 
   if (diet.meals.some((m) => m.items.length)) out.push("", `*Total do cardápio*: ${macroLine(dietTotals(diet))}`);
   if (diet.notes?.trim()) out.push("", "*Orientações*", diet.notes.trim());
-  const signature = coachSignature({ name: opts.coachName, cref: opts.coachCref });
-  if (signature) out.push("", signature);
+  const note = opts.adjustedNote?.trim();
+  const signature = note ? null : coachSignature({ name: opts.coachName, cref: opts.coachCref });
+  if (note) out.push("", note);
+  else if (signature) out.push("", signature);
   return out.join("\n");
 }
 

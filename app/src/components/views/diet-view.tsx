@@ -4,39 +4,49 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Check, CircleAlert, Copy, IdCard, MessageCircle, MoreHorizontal, Plus, Printer, Replace, Search, Sparkles, Trash2, Wand2, X } from "lucide-react";
 import { shareNames } from "@/components/program/program-share";
+import { DeliveryLine, StatusRegion } from "@/components/delivery-status";
 import { ActionSheet, Alert, Button, Dialog, Empty, Field, IconButton, Input, Panel, Select, Skeleton, Textarea, cx, type SheetAction } from "@/components/ui";
-import { PlanVsTargets } from "@/components/views/diet-read";
+import { DietRead, NotesRead, PlanVsTargets } from "@/components/views/diet-read";
 import { useApp } from "@/lib/app-context";
 import { OfflineError, aiAvailable, aiDietAnalyze, aiDietGenerate, useAI, type DietAnalysis } from "@/lib/ai/client";
 import { COACH_IDENTITY_HINT, needsCoachIdentity } from "@/lib/data/demo";
-import { MACRO_LABEL, MACRO_ORDER, itemsBand } from "@/lib/domain/diet-plan";
+import {
+  MACRO_LABEL,
+  MACRO_ORDER,
+  adjustedNote,
+  adjustingText,
+  adjustingTitle,
+  canAdjust,
+  dietOrigin,
+  dietScreen,
+  itemsBand,
+  mealsChanged,
+  originLine,
+  screenMode,
+  usePlanAction,
+  type DietOrigin,
+  type DietScreen,
+} from "@/lib/domain/diet-plan";
 import { dietToText, householdMeasure, macroLine, parseDietBody, type DietBodyInput } from "@/lib/domain/diet-share";
 import { normalize } from "@/lib/domain/exercises";
 import { allFoods, getFood, type Food } from "@/lib/domain/foods";
-import { firstName, waLink, waPhone } from "@/lib/domain/format";
+import { SOLO_TESTER_ID } from "@/lib/domain/ficha-context";
+import { firstName, fmtDayMonth, waLink, waPhone } from "@/lib/domain/format";
 import { uid } from "@/lib/domain/ids";
 import { ACTIVITY_LABEL, analyzeDietText, buildDietTemplate, dietTotals, itemFromFood, sumItems, targetsForProfile } from "@/lib/domain/nutrition";
 import { coachSignature, signerFor } from "@/lib/domain/program-share";
+import { fichaDeliveryLines, prepStatusText, type PrepVia } from "@/lib/domain/delivery";
 import { consentConfirmed } from "@/lib/domain/transfer";
-import { fmtDate } from "@/lib/hooks";
+import { fmtDate, selectAllSoon } from "@/lib/hooks";
 import { reportError, track, type DietAnalyzedProps } from "@/lib/analytics";
+import { useFichaDelivery, useFichaLink } from "@/lib/use-ficha-link";
 import type { ActivityLevel, DietItem, DietPlan, MacroTargets, Meal, Profile } from "@/lib/domain/types";
 
 const CRN_KEY = "sr:crn";
 const int = (v: number) => Math.round(v).toLocaleString("pt-BR");
 const countItems = (meals: Meal[]) => meals.reduce((n, m) => n + m.items.length, 0);
-
-/**
- * Seleciona todo o valor agora e de novo no próximo tique (o Safari do iPhone pode pôr o cursor no fim depois
- * do foco). Mesmo contrato do `selectAllSoon` da U8 (src/lib/hooks.ts); troque por ele quando existir lá.
- */
-function selectAllSoon(el: HTMLInputElement | HTMLTextAreaElement) {
-  const value = el.value;
-  el.select();
-  setTimeout(() => {
-    if (document.activeElement === el && el.value === value) el.setSelectionRange(0, el.value.length);
-  }, 0);
-}
+/** "24/11/2026" (impressão). */
+const fmtFullDate = (iso: string) => fmtDate(iso, { day: "2-digit", month: "2-digit", year: "numeric" });
 
 /** Recalcula um item para uma nova quantidade (pelo alimento da base, ou proporcional quando não há). */
 function resizeItem(item: DietItem, grams: number): DietItem {
@@ -66,10 +76,19 @@ function readDraft(editorId: string, ownerId: string): DietPlan | null {
   }
 }
 
-export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coach" }) {
-  const { repo, user, mode: dataMode, accessToken } = useApp();
+/**
+ * `onDeliveryChange` (página do aluno, no personal): chamado depois de salvar a dieta e depois de um toque de envio no
+ * painel daqui, para quem mostra a situação do envio fora desta tela reler o aparelho.
+ */
+export function DietView({ owner, mode, onDeliveryChange }: { owner: Profile; mode: "self" | "coach"; onDeliveryChange?: () => void }) {
+  const { repo, user, mode: dataMode, accessToken, returnTo } = useApp();
   const ai = useAI(dataMode === "supabase");
   const [diet, setDiet] = useState<DietPlan | null>(null);
+  /** Última versão lida do repositório ou acabada de gravar (a leitura e o "sem mudança" comparam com ela). */
+  const [saved, setSaved] = useState<DietPlan | null>(null);
+  /** Aluno: tocou em "Ajustar cardápio" / "Editar dieta" (a edição dura até salvar ou cancelar). */
+  const [editing, setEditing] = useState(false);
+  const [askDiscard, setAskDiscard] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -88,15 +107,38 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
   const [crnSeen, setCrnSeen] = useState(true);
   const [restored, setRestored] = useState(false);
   const [dropMeal, setDropMeal] = useState<Meal | null>(null);
+  /** Sobe a cada "Salvar dieta" do personal: o link do painel de envio é refeito com a versão nova. */
+  const [savedCount, setSavedCount] = useState(0);
   const ready = useRef(false);
+  /** Foco depois da troca de tela (U3 §3.4): botão que abriu a edição, título do alerta do ajuste ou título das metas. */
+  const focusNext = useRef<"opener" | "alert" | "targets" | null>(null);
+  const openerRef = useRef<HTMLButtonElement>(null);
+  const alertHeadRef = useRef<HTMLHeadingElement>(null);
+  const targetsRef = useRef<HTMLDivElement>(null);
+  const msgRef = useRef<HTMLDivElement>(null);
+  const viewed = useRef(false);
 
   const computed = useMemo(() => targetsForProfile(owner), [owner]);
   const who = firstName(owner.name);
   const coach = mode === "coach";
+  // "Ver como aluno": o personal vê o app como o aluno. O modo de teste "aluno sem personal" também liga returnTo e fica de fora.
+  const byCoach = Boolean(returnTo) && user?.id !== SOLO_TESTER_ID;
+  // De quem é o plano aberto (R2), no aparelho de quem segue a dieta.
+  const origin: DietOrigin | null = !coach && diet ? dietOrigin(diet, owner.id, { remoteCoach: user?.remoteCoach, returnTo }) : null;
+  const screen = dietScreen({ mode, editing, dirty, saved, hasDraftOrDiet: Boolean(diet), origin });
+  const reading = screen === "leitura" || screen === "leitura_metas";
+  const adjusting = screen === "ajuste";
+  const texts = origin && origin.kind === "personal" ? adjustingText(origin) : null;
+  // R5: cardápio ajustado neste aparelho sai sem "Nome · CREF" e com a linha do ajuste (dd/mm no texto; DD/MM/AAAA no papel).
+  const noteText = origin ? adjustedNote(origin, fmtDayMonth) : null;
+  const notePrint = origin ? adjustedNote(origin, fmtFullDate) : null;
   // Assinatura "Nome · CREF …": o personal logado ou, no celular do aluno, o personal que mandou a dieta.
-  const signer = signerFor(user, coach ? user?.id : diet?.createdBy);
+  const signer = noteText ? null : signerFor(user, coach ? user?.id : diet?.createdBy);
   const signature = coachSignature(signer);
-  const textOpts = { ...shareNames(user, coach ? owner : null), coachName: signer?.name, coachCref: signer?.cref };
+  const textOpts = { ...shareNames(user, coach ? owner : null), coachName: signer?.name, coachCref: signer?.cref, adjustedNote: noteText };
+  const planAction = usePlanAction(mode, diet, owner.id);
+  // Personal, modo local, aluno real: o envio principal é o link que atualiza o app do aluno (U2 R7).
+  const linkPanel = coach && dataMode === "local" && !owner.sample;
 
   useEffect(() => {
     let alive = true;
@@ -106,6 +148,8 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
       .getDiet(owner.id)
       .then((d) => {
         if (!alive) return;
+        setSaved(d);
+        setEditing(false);
         // Edição que não chegou a ser salva (troca de aba, menu, voltar do aparelho): volta como estava.
         const draft = readDraft(user!.id, owner.id);
         if (draft) {
@@ -153,6 +197,43 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [diet, dirty, owner.id, user?.id]);
 
+  // Uma vez por montagem, no aparelho de quem segue a dieta: em que estado a tela abriu (só categorias).
+  useEffect(() => {
+    if (coach || loading || loadErr || viewed.current) return;
+    viewed.current = true;
+    track("section_viewed", { area: "dieta", modo: screenMode(screen as Exclude<DietScreen, "coach">), origem: origin?.kind ?? "nenhum", by_coach: byCoach });
+  }, [coach, loading, loadErr, screen, origin?.kind, byCoach]);
+
+  // Foco depois de abrir ou fechar a edição (o elemento só existe depois de a tela trocar).
+  useEffect(() => {
+    const f = focusNext.current;
+    if (!f) return;
+    focusNext.current = null;
+    if (f === "alert") return alertHeadRef.current?.focus();
+    if (f === "targets") {
+      const h = targetsRef.current?.querySelector<HTMLElement>("h2");
+      if (h) {
+        h.tabIndex = -1;
+        h.focus();
+      }
+      return;
+    }
+    (openerRef.current ?? msgRef.current)?.focus();
+  });
+
+  /** Fecha a edição do aluno e devolve o foco ao botão que a abriu. */
+  function leaveEditing(next: DietPlan | null) {
+    setEditing(false);
+    setAskDiscard(false);
+    if (next) {
+      setSaved(next);
+      setDiet(next);
+    }
+    setDirty(false);
+    setRestored(false);
+    focusNext.current = "opener";
+  }
+
   async function discard() {
     try {
       sessionStorage.removeItem(dietDraftKey(user!.id, owner.id));
@@ -160,11 +241,31 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
     setRestored(false);
     setMsg(null);
     setDirty(false);
+    setEditing(false);
+    setAskDiscard(false);
     try {
-      setDiet(await repo.getDiet(owner.id));
+      const d = await repo.getDiet(owner.id);
+      if (!coach) focusNext.current = "opener";
+      setSaved(d);
+      setDiet(d);
     } catch (e) {
       setMsg({ tone: "error", text: e instanceof Error ? e.message : "Não foi possível recarregar a dieta." });
     }
+  }
+
+  /** "Ajustar cardápio" (plano do personal) ou "Editar dieta" (próprio). */
+  function startEditing() {
+    if (!origin) return;
+    setMsg(null);
+    setEditing(true);
+    focusNext.current = origin.kind === "personal" ? "alert" : "targets";
+    track("diet_adjust_started", { origem: origin.kind });
+  }
+
+  /** "Cancelar" da barra: sem alterações volta à leitura; com alterações, pergunta antes de descartar. */
+  function cancelEditing() {
+    if (dirty) setAskDiscard(true);
+    else leaveEditing(null);
   }
 
   const targets: MacroTargets | null = diet?.targets ?? draftTargets ?? (computed ? { kcal: computed.kcal, proteinG: computed.proteinG, carbsG: computed.carbsG, fatG: computed.fatG } : null);
@@ -206,18 +307,50 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
 
   async function save() {
     if (!diet) return;
+    // Aluno, cardápio do personal (R3, R4): só as refeições mudam. Sem mudança, só volta à leitura, sem gravar nada
+    // (senão "ajustado por você" e a falta da assinatura afirmariam um ajuste que não houve).
+    if (adjusting && saved && !mealsChanged(diet.meals, saved.meals)) return leaveEditing(saved);
+    if (!coach && !adjusting && editing && !dirty) return leaveEditing(saved);
     setSaving(true);
     try {
-      const saved = await repo.saveDiet({ ...diet, name: diet.name.trim() || (coach ? `Plano alimentar de ${who}` : "Minha dieta"), createdBy: coach ? user!.id : diet.createdBy || user!.id });
-      setDiet(saved);
-      setDirty(false);
-      setRestored(false);
-      const dietItems = saved.meals.flatMap((m) => m.items);
-      track("diet_saved", { where: mode, meals: saved.meals.length, items: dietItems.length, custom_items: dietItems.filter((i) => i.foodId?.startsWith("custom_")).length, has_notes: Boolean(saved.notes?.trim()) });
-      setMsg({
-        tone: "done",
-        text: !coach ? "Dieta salva." : repo.capabilities.invites ? `Dieta salva. ${who} já vê no app; use os botões abaixo para enviar pelo WhatsApp.` : `Dieta salva. Use os botões abaixo para enviar a ${who} pelo WhatsApp.`,
+      let next: DietPlan;
+      if (adjusting) {
+        const base = saved ?? diet;
+        // "Ver como aluno" nunca marca ajuste (quem edita é o próprio personal); na nuvem o plano é a mesma linha dos dois lados.
+        const mark = dataMode === "local" && !byCoach;
+        next = { ...base, meals: diet.meals, createdBy: base.createdBy, ...(mark ? { adjustedAt: new Date().toISOString() } : {}) };
+      } else {
+        next = { ...diet, name: diet.name.trim() || (coach ? `Plano alimentar de ${who}` : "Minha dieta"), createdBy: coach ? user!.id : diet.createdBy || user!.id };
+      }
+      const result = await repo.saveDiet(next);
+      const dietItems = result.meals.flatMap((m) => m.items);
+      track("diet_saved", {
+        where: mode,
+        meals: result.meals.length,
+        items: dietItems.length,
+        custom_items: dietItems.filter((i) => i.foodId?.startsWith("custom_")).length,
+        has_notes: Boolean(result.notes?.trim()),
+        ...(origin ? { origem: origin.kind } : {}),
       });
+      if (coach) {
+        setSaved(result);
+        setDiet(result);
+        setDirty(false);
+        setRestored(false);
+        setSavedCount((n) => n + 1);
+        onDeliveryChange?.();
+        setMsg({
+          tone: "done",
+          text: linkPanel
+            ? `Dieta salva neste aparelho. Para ${who} receber, toque em Enviar link no WhatsApp.`
+            : repo.capabilities.invites
+              ? `Dieta salva. ${who} já vê no app; use os botões abaixo para enviar pelo WhatsApp.`
+              : `Dieta salva. Use os botões abaixo para enviar a ${who} pelo WhatsApp.`,
+        });
+      } else {
+        leaveEditing(result);
+        setMsg({ tone: "done", text: adjusting && texts ? texts.saved : dataMode === "local" ? "Dieta salva neste aparelho." : "Dieta salva." });
+      }
     } catch (e) {
       reportError(e, "dieta:salvar");
       setMsg({ tone: "error", text: e instanceof Error ? e.message : "Não foi possível salvar. Tente de novo." });
@@ -301,8 +434,14 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
     ];
   };
 
+  // Compartilhar: o personal sempre; o aluno só na leitura de um cardápio com itens (é a versão salva).
+  const canShare = coach || screen === "leitura";
   const share = diet && hasItems ? dietToText(diet, textOpts) : "";
-  const analyzer = targets ? <Analyzer owner={owner} targets={targets} coach={coach} aiOn={ai.enabled} onUse={(meals) => (hasItems ? setPendingPlan(meals) : usePlan(meals))} /> : null;
+  const analyzer = targets ? (
+    <Analyzer owner={owner} targets={targets} coach={coach} aiOn={ai.enabled} useLabel={planAction === "usar" ? "Usar como cardápio" : planAction === "usar_meu" ? "Usar como meu cardápio" : null} onUse={(meals) => (hasItems ? setPendingPlan(meals) : usePlan(meals))} />
+  ) : null;
+  // Barra fixa de salvar: personal com alterações; aluno durante a edição (com "Cancelar").
+  const showBar = Boolean(diet) && (coach ? dirty : adjusting || (screen === "edicao_propria" && (editing || dirty)));
 
   return (
     <div className="space-y-5">
@@ -327,14 +466,31 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
         </Alert>
       ) : null}
 
-      {targets ? (
-        <PlanVsTargets
-          className="no-print"
-          targets={targets}
-          totals={hasItems ? totals : null}
-          editTargets={() => setTargetsOpen(true)}
-          tdeeLine={computed ? `Gasto diário estimado${coach ? ` de ${who}` : ""}: ${int(computed.tdee)} kcal.` : null}
-        />
+      {/* Ajuste do cardápio do personal no aparelho do aluno (B): o que muda e onde fica. */}
+      {adjusting && origin ? (
+        <Alert tone="info" className="no-print">
+          <h2 ref={alertHeadRef} tabIndex={-1} className="font-bold">
+            {adjustingTitle(origin)}
+          </h2>
+          {texts ? <p className="mt-1">{texts.alert}</p> : null}
+        </Alert>
+      ) : null}
+
+      {reading && diet && origin ? (
+        <div className="no-print space-y-5">
+          <DietRead diet={diet} origin={origin} screen={screen as "leitura" | "leitura_metas"} canAdjust={canAdjust(screen, byCoach)} onAdjust={startEditing} adjustButtonRef={openerRef} />
+        </div>
+      ) : targets ? (
+        <div ref={targetsRef}>
+          <PlanVsTargets
+            className="no-print"
+            targets={targets}
+            totals={hasItems ? totals : null}
+            editTargets={adjusting ? undefined : () => setTargetsOpen(true)}
+            lockedNote={adjusting && texts ? texts.locked : undefined}
+            tdeeLine={computed ? `Gasto diário estimado${coach ? ` de ${who}` : ""}: ${int(computed.tdee)} kcal.` : null}
+          />
+        </div>
       ) : (
         <Panel title="Metas do dia" className="no-print">
           {coach ? (
@@ -357,22 +513,29 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
 
       <div className="no-print space-y-3">
         {!diet && msg ? <Alert tone={msg.tone}>{msg.text}</Alert> : null}
-        {diet ? (
+        {reading ? null : diet ? (
           <section id="cardapio" className="space-y-3" aria-label="Cardápio">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
               <div className="min-w-0 flex-1">
-                <input
-                  aria-label="Nome do plano alimentar"
-                  value={diet.name}
-                  onChange={(e) => change((d) => ({ ...d, name: e.target.value }))}
-                  maxLength={60}
-                  className="h-11 w-full min-w-0 rounded border border-transparent bg-transparent text-lg font-bold hover:border-rule focus:border-iron focus:outline-none"
-                />
-                {diet.createdBy && diet.createdBy !== owner.id && !coach ? <p className="text-sm text-steel">Enviada pelo seu personal · atualizada em {fmtDate(diet.updatedAt)}</p> : null}
+                {adjusting ? (
+                  // R4: no ajuste, o nome do plano é do personal e não tem campo.
+                  <p className="text-lg font-bold">{diet.name.trim() || "Plano alimentar"}</p>
+                ) : (
+                  <input
+                    aria-label="Nome do plano alimentar"
+                    value={diet.name}
+                    onChange={(e) => change((d) => ({ ...d, name: e.target.value }))}
+                    maxLength={60}
+                    className="h-11 w-full min-w-0 rounded border border-transparent bg-transparent text-lg font-bold hover:border-rule focus:border-iron focus:outline-none"
+                  />
+                )}
+                {origin && origin.kind === "personal" ? <p className="text-sm text-steel">{originLine(origin, fmtDayMonth)}</p> : null}
               </div>
-              <Button variant="secondary" size="sm" className="self-start" icon={ai.enabled ? <Sparkles className="size-4" /> : <Wand2 className="size-4" />} onClick={() => setGenOpen(true)} disabled={!targets}>
-                {hasItems ? (ai.enabled ? "Gerar outro com IA" : "Montar outro automático") : ai.enabled ? "Gerar cardápio com IA" : "Montar cardápio automático"}
-              </Button>
+              {adjusting ? null : (
+                <Button variant="secondary" size="sm" className="self-start" icon={ai.enabled ? <Sparkles className="size-4" /> : <Wand2 className="size-4" />} onClick={() => setGenOpen(true)} disabled={!targets}>
+                  {hasItems ? (ai.enabled ? "Gerar outro com IA" : "Montar outro automático") : ai.enabled ? "Gerar cardápio com IA" : "Montar cardápio automático"}
+                </Button>
+              )}
             </div>
 
             {diet.meals.map((meal) => {
@@ -440,9 +603,14 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
               Adicionar refeição
             </Button>
 
-            <Field label="Orientações gerais" hint={coach ? "Água, substituições, pré e pós-treino. Vai junto no texto do WhatsApp." : "Água, substituições, lembretes para você."}>
-              <Textarea value={diet.notes ?? ""} onChange={(e) => change((d) => ({ ...d, notes: e.target.value }))} rows={3} maxLength={800} placeholder="Ex.: 35 ml de água por kg. Pode trocar arroz por batata ou macarrão na mesma quantidade." />
-            </Field>
+            {adjusting && origin ? (
+              // R4: as orientações são do personal; no ajuste, só leitura.
+              <NotesRead notes={diet.notes} origin={origin} />
+            ) : (
+              <Field label="Orientações gerais" hint={coach ? "Água, substituições, pré e pós-treino. Vai junto no texto do WhatsApp." : "Água, substituições, lembretes para você."}>
+                <Textarea value={diet.notes ?? ""} onChange={(e) => change((d) => ({ ...d, notes: e.target.value }))} rows={3} maxLength={800} placeholder="Ex.: 35 ml de água por kg. Pode trocar arroz por batata ou macarrão na mesma quantidade." />
+              </Field>
+            )}
           </section>
         ) : (
           <Empty
@@ -473,8 +641,12 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
           />
         )}
 
-        {diet && msg ? <Alert tone={msg.tone}>{msg.text}</Alert> : null}
-        {diet && restored && dirty ? (
+        {diet && msg ? (
+          <div ref={msgRef} tabIndex={-1} className="focus:outline-none">
+            <Alert tone={msg.tone}>{msg.text}</Alert>
+          </div>
+        ) : null}
+        {coach && diet && restored && dirty ? (
           <button type="button" onClick={() => void discard()} className="min-h-11 text-sm font-semibold text-steel underline hover:text-iron">
             Descartar essas alterações e voltar à versão salva
           </button>
@@ -483,7 +655,24 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
         {/* Aluno: o analisador vem depois do cardápio, sempre no mesmo lugar da árvore (com ou sem dieta, não perde o texto). */}
         {!coach ? analyzer : null}
 
-        {diet ? (
+        {diet && linkPanel ? (
+          <SendDietPanel
+            student={owner}
+            dirty={dirty}
+            version={savedCount}
+            identityHint={needsCoachIdentity(user)}
+            textHref={dirty || !hasItems ? undefined : waLink(share, owner.phone)}
+            hasItems={hasItems}
+            copied={copied}
+            onTextWhatsApp={() => track("diet_shared", { via: "whatsapp", direct: Boolean(waPhone(owner.phone)) })}
+            onCopyText={copyText}
+            onPrint={() => {
+              track("diet_shared", { via: "print" });
+              window.print();
+            }}
+            onSent={onDeliveryChange}
+          />
+        ) : diet && canShare ? (
           <Panel title={coach ? `Enviar para ${who}` : "Compartilhar"}>
             {coach && needsCoachIdentity(user) ? (
               <Link href="/conta" className="mb-2 flex min-h-11 items-center gap-2 text-sm font-semibold underline">
@@ -523,15 +712,36 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
           </Panel>
         ) : null}
 
-        {diet && dirty ? (
-          <div className="sticky bottom-nav-safe z-10 flex items-center justify-end gap-3 lg:bottom-4">
-            <span className="rounded bg-warn-fill px-2 py-1 text-sm font-semibold text-iron">Alterações não salvas</span>
+        {showBar ? (
+          <div className="sticky bottom-nav-safe z-10 flex flex-wrap items-center justify-end gap-2 lg:bottom-4">
+            {dirty ? (
+              <span className="flex w-full justify-end sm:w-auto">
+                <span className="rounded bg-warn-fill px-2 py-1 text-sm font-semibold text-iron">Alterações não salvas</span>
+              </span>
+            ) : null}
+            {coach ? null : (
+              <Button variant="secondary" size="lg" onClick={cancelEditing} disabled={saving} className="shadow-lift">
+                Cancelar
+              </Button>
+            )}
             <Button size="lg" onClick={save} loading={saving} className="shadow-lift">
-              Salvar dieta
+              {adjusting ? "Salvar ajustes" : "Salvar dieta"}
             </Button>
           </div>
         ) : null}
       </div>
+
+      <Dialog open={askDiscard} onClose={() => setAskDiscard(false)} title={adjusting ? "Descartar os ajustes?" : "Descartar as alterações?"}>
+        <p className="text-[0.9375rem] text-steel">{adjusting ? "O que você mudou agora não fica salvo. O cardápio volta a ser o de antes." : "O que você mudou agora não fica salvo. A dieta volta a ser a de antes."}</p>
+        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button variant="secondary" onClick={() => setAskDiscard(false)}>
+            {adjusting ? "Continuar ajustando" : "Continuar editando"}
+          </Button>
+          <Button variant="danger" icon={<Trash2 className="size-4" />} onClick={() => void discard()}>
+            {adjusting ? "Descartar ajustes" : "Descartar alterações"}
+          </Button>
+        </div>
+      </Dialog>
 
       <Dialog open={Boolean(dropMeal)} onClose={() => setDropMeal(null)} title="Excluir esta refeição?">
         <p className="text-[0.9375rem] text-steel">
@@ -554,12 +764,12 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
         </div>
       </Dialog>
 
-      {/* Versão de impressão */}
+      {/* Versão de impressão (a versão salva: o aluno só imprime na leitura; o personal, sem alterações pendentes). */}
       {diet && hasItems ? (
         <div className="hidden print:block">
           <header className="mb-4 border-b-2 border-iron pb-2">
             <h1 className="plate-type text-2xl">{coach ? `Plano alimentar — ${owner.name}` : diet.name}</h1>
-            {signature ? <p className="text-sm font-semibold">{signature}</p> : null}
+            {notePrint ? <p className="text-sm font-semibold">{notePrint}</p> : signature ? <p className="text-sm font-semibold">{signature}</p> : null}
             <p className="num text-sm">Metas do dia: {macroLine(diet.targets)}</p>
           </header>
           {diet.meals
@@ -673,6 +883,144 @@ export function DietView({ owner, mode }: { owner: Profile; mode: "self" | "coac
         }}
       />
     </div>
+  );
+}
+
+/**
+ * Painel "Enviar para {aluno}" da aba Dieta (personal, modo local, aluno real; U3a com U2 R7). A ação principal é o
+ * link que atualiza o app do aluno (`useFichaLink`, o mesmo do "Enviar para o celular" da página do aluno): o link e
+ * a mensagem ficam prontos ANTES do toque, e o toque grava o registro único do envio (`sr:sent:{aluno}:ficha`). Acima
+ * dos botões, as linhas M/D da situação do envio; depois do toque, o que o aparelho viu ("Envio iniciado às 14:02…"),
+ * nunca que a mensagem saiu ou chegou. Texto e PDF ficam em "Outras formas": eles não atualizam o app do aluno.
+ */
+function SendDietPanel({
+  student,
+  dirty,
+  version,
+  identityHint,
+  textHref,
+  hasItems,
+  copied,
+  onTextWhatsApp,
+  onCopyText,
+  onPrint,
+  onSent,
+}: {
+  student: Profile;
+  dirty: boolean;
+  version: number;
+  identityHint: boolean;
+  textHref: string | undefined;
+  hasItems: boolean;
+  copied: boolean;
+  onTextWhatsApp: () => void;
+  onCopyText: () => void;
+  onPrint: () => void;
+  /** Depois de um toque de envio (o registro já foi gravado). */
+  onSent?: () => void;
+}) {
+  const first = firstName(student.name);
+  const [tick, setTick] = useState(0);
+  const [msgCopied, setMsgCopied] = useState(false);
+  // Com alterações não salvas, o link levaria a versão antiga: só monta depois de salvar.
+  const { estado, erro, toque, aoEnviar } = useFichaLink(student, !dirty, { where: "dieta", version });
+  // `version` (salvamentos) e `tick` (toques aqui) só sobem: a soma muda sempre que um dos dois muda.
+  const delivery = useFichaDelivery(student, version + tick);
+  const lines = delivery ? fichaDeliveryLines(delivery, first) : null;
+  const empty = Boolean(estado && !estado.programa && !estado.dieta);
+  const off = dirty || !estado || empty;
+
+  function sent(via: PrepVia) {
+    if (!aoEnviar(via)) return;
+    setTick((n) => n + 1);
+    onSent?.();
+  }
+
+  return (
+    <Panel title={`Enviar para ${first}`}>
+      {identityHint ? (
+        <Link href="/conta" className="mb-2 flex min-h-11 items-center gap-2 text-sm font-semibold underline">
+          <IdCard className="size-4 shrink-0" aria-hidden /> {COACH_IDENTITY_HINT}
+        </Link>
+      ) : null}
+      {dirty ? (
+        <p className="mb-3 text-sm text-steel">Salve as alterações para enviar a versão nova.</p>
+      ) : empty ? (
+        <p className="mb-3 text-sm text-steel">Monte a ficha ou o cardápio de {first} antes de enviar.</p>
+      ) : lines?.dialog.length ? (
+        <div className="mb-3 space-y-1 text-sm">
+          <DeliveryLine icon={lines.dialogIcon ?? "pendente"}>{lines.dialog[0]}</DeliveryLine>
+          {lines.dialog[1] ? <p className="pl-[calc(1.05em+0.375rem)] text-steel">{lines.dialog[1]}</p> : null}
+        </div>
+      ) : null}
+      {erro ? (
+        <Alert tone="error" className="mb-3">
+          {erro}
+        </Alert>
+      ) : null}
+      <div className="flex flex-wrap gap-2">
+        <a
+          href={off ? undefined : waLink(estado!.texto, student.phone)}
+          aria-disabled={off}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={() => !off && sent("whatsapp")}
+          className={cx(
+            "inline-flex h-11 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-[6px] bg-plate-green px-4 text-[0.9375rem] font-semibold text-white hover:bg-plate-green-ink",
+            off && "pointer-events-none opacity-50",
+          )}
+        >
+          <MessageCircle className="size-4" aria-hidden /> Enviar link no WhatsApp
+        </a>
+        <Button
+          variant="secondary"
+          className="flex-1 whitespace-nowrap"
+          disabled={off}
+          icon={msgCopied ? <Check className="size-4" /> : <Copy className="size-4" />}
+          onClick={async () => {
+            if (!estado) return;
+            try {
+              await navigator.clipboard.writeText(estado.texto);
+              setMsgCopied(true);
+              sent("copy");
+              setTimeout(() => setMsgCopied(false), 2000);
+            } catch {
+              /* sem área de transferência: o botão do WhatsApp continua */
+            }
+          }}
+        >
+          {msgCopied ? "Copiado" : "Copiar mensagem"}
+        </Button>
+      </div>
+      {/* Montada junto com os botões, antes de qualquer toque; só o texto muda. */}
+      <StatusRegion className="mt-2" text={toque ? prepStatusText(toque.via, toque.at, first, "personal") : null} icon={toque?.via === "copy" ? "copia" : "whatsapp"} />
+
+      <div className="mt-4 border-t border-rule pt-3">
+        <h3 className="text-sm font-bold">Outras formas</h3>
+        <p className="text-sm text-steel">Texto e PDF não atualizam o app de {first}.</p>
+        <div className="mt-2 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+          <a
+            href={textHref}
+            aria-disabled={!textHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => textHref && onTextWhatsApp()}
+            className={cx(
+              "col-span-2 inline-flex h-11 items-center justify-center gap-2 rounded-[var(--radius-ficha)] border border-rule-strong bg-paper px-4 text-[0.9375rem] font-semibold text-iron hover:border-iron",
+              !textHref && "pointer-events-none opacity-50",
+            )}
+          >
+            <MessageCircle className="size-4" aria-hidden /> Texto no WhatsApp
+          </a>
+          <Button variant="secondary" disabled={dirty || !hasItems} onClick={onCopyText} icon={copied ? <Check className="size-4" /> : <Copy className="size-4" />}>
+            {copied ? "Copiado" : "Copiar texto"}
+          </Button>
+          <Button variant="secondary" disabled={dirty || !hasItems} icon={<Printer className="size-4" />} onClick={onPrint}>
+            Imprimir / PDF
+          </Button>
+        </div>
+      </div>
+    </Panel>
   );
 }
 
@@ -1101,7 +1449,11 @@ function CreateFood({ initialName, onCancel, onCreated }: { initialName: string;
   );
 }
 
-function Analyzer({ owner, targets, coach, aiOn, onUse }: { owner: Profile; targets: MacroTargets; coach: boolean; aiOn: boolean; onUse: (meals: Meal[]) => void }) {
+/**
+ * "Conferir o que comi" (aluno) / "Analisar o que {aluno} comeu" (personal). `useLabel` (R12): "Usar como cardápio"
+ * (personal), "Usar como meu cardápio" (plano próprio ou sem plano) ou null (plano do personal, no aparelho do aluno).
+ */
+function Analyzer({ owner, targets, coach, aiOn, useLabel, onUse }: { owner: Profile; targets: MacroTargets; coach: boolean; aiOn: boolean; useLabel: string | null; onUse: (meals: Meal[]) => void }) {
   const { user, accessToken, mode: dataMode } = useApp();
   const [open, setOpen] = useState(!coach);
   const [text, setText] = useState("");
@@ -1231,9 +1583,9 @@ function Analyzer({ owner, targets, coach, aiOn, onUse }: { owner: Profile; targ
                   Não reconheci: <strong>{res.unknown.join("; ")}</strong>. Tente com a quantidade e o nome do alimento, ou crie o alimento ao montar o cardápio.
                 </Alert>
               ) : null}
-              {recognized.length ? (
+              {recognized.length && useLabel ? (
                 <Button variant="secondary" size="sm" onClick={() => onUse(recognized)}>
-                  Usar como cardápio
+                  {useLabel}
                 </Button>
               ) : null}
             </div>

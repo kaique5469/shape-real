@@ -1,3 +1,4 @@
+import type { UnmarkBand } from "@/lib/analytics";
 import type { Exercise, ExerciseLog, Program, Session } from "@/lib/domain/types";
 import { getExercise, unitOf } from "@/lib/domain/exercises";
 import { uid } from "@/lib/domain/ids";
@@ -30,6 +31,11 @@ export interface WorkoutDraft {
    * rascunhos de antes da U1d (a tela usa a heurística de sempre). Nunca é podado: guarda também quem saiu.
    */
   links?: Record<string, string>;
+  /**
+   * Exercício que estava aberto na tela (uid do registro): a retomada (recarregar, o iOS fechar o app) volta nele.
+   * Ausente em rascunhos antigos e com todos os exercícios fechados (abre o 1º com série pendente).
+   */
+  openUid?: string;
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
@@ -65,7 +71,18 @@ export function parseDraft(raw: string | null | undefined): WorkoutDraft | null 
   const out: WorkoutDraft = { session, suggestions, restSec };
   if (rest) out.rest = rest;
   if (links) out.links = links;
+  if (typeof data.openUid === "string" && data.openUid) out.openUid = data.openUid;
   return out;
+}
+
+/**
+ * Exercício a abrir ao retomar um rascunho: o que estava aberto (`openUid`), se ainda está no treino; senão o 1º com
+ * série pendente (a regra de sempre); senão o 1º exercício; sem exercícios, null.
+ */
+export function resumeOpenUid(session: Pick<Session, "exercises">, openUid?: string): string | null {
+  const all = session.exercises;
+  if (openUid && all.some((e) => e.uid === openUid)) return openUid;
+  return all.find((e) => e.sets.some((s) => !s.done))?.uid ?? all[0]?.uid ?? null;
 }
 
 /** `links` do rascunho: só pares string → string; ausente ou sem formato de mapa → undefined (rascunho antigo). */
@@ -129,6 +146,37 @@ export function buildDraft(userId: string, program: Program | null, dayKey: stri
     suggestions,
     restSec,
     links: assignLinks(day?.key ?? "livre", exercises),
+  };
+}
+
+/**
+ * Troca o exercício do registro `targetUid` só neste treino (aparelho ocupado). O `uid` continua (o grupo de bi-set e a
+ * posição também). Mesma unidade: mantém o número de séries, a faixa e a técnica; outra unidade: prescrição padrão
+ * (`defaultPlan`) com a técnica de antes. As séries recomeçam vazias, com a carga sugerida para o novo exercício. A
+ * observação do personal para o exercício trocado é descartada (não vale para o substituto). A ficha não muda.
+ * Devolve o mesmo rascunho se o registro não existir.
+ */
+export function swapInDraft(draft: WorkoutDraft, targetUid: string, pick: Pick<Exercise, "id" | "name" | "compound">, history: Session[]): WorkoutDraft {
+  const cur = draft.session.exercises.find((x) => x.uid === targetUid);
+  if (!cur) return draft;
+  const unit = unitOf(pick.id);
+  const sameUnit = (cur.unit ?? "reps") === unit;
+  const planned = sameUnit && cur.planned ? { ...cur.planned, loadKg: null, notes: undefined } : { ...defaultPlan(pick), technique: cur.planned?.technique };
+  const sug = unit === "reps" ? suggestFromHistory(history, planned, pick.id) : null;
+  const load = unit === "min" ? null : (sug?.loadKg ?? null);
+  const suggestions = { ...draft.suggestions };
+  if (sug) suggestions[targetUid] = sug;
+  else delete suggestions[targetUid];
+  const length = Math.max(1, sameUnit ? cur.sets.length : planned.sets);
+  return {
+    ...draft,
+    suggestions,
+    session: {
+      ...draft.session,
+      exercises: draft.session.exercises.map((x) =>
+        x.uid === targetUid ? { ...x, exerciseId: pick.id, name: pick.name, unit, planned, sets: Array.from({ length }, () => ({ loadKg: load, reps: null, done: false })) } : x,
+      ),
+    },
   };
 }
 
@@ -213,6 +261,12 @@ export type RestDelayBand = "0-15s" | "15-60s" | "60s+";
 export function restDelayBand(overSec: number): RestDelayBand {
   const s = Number.isFinite(overSec) ? Math.max(0, overSec) : 0;
   return s < 15 ? "0-15s" : s < 60 ? "15-60s" : "60s+";
+}
+
+/** Faixa do tempo entre marcar e desmarcar uma série (evento serie_desmarcada; nunca o valor exato). */
+export function unmarkBand(sinceSec: number): UnmarkBand {
+  const s = Number.isFinite(sinceSec) ? Math.max(0, sinceSec) : 0;
+  return s <= 10 ? "ate_10s" : s <= 60 ? "10_60s" : "mais_60s";
 }
 
 /** Tipos de sugestão medidos no evento carga_sugerida_editada. */

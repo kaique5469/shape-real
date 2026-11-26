@@ -71,14 +71,14 @@ export default function PainelLayout({ children }: { children: ReactNode }) {
       {!focus && isTester ? <TesterStrip /> : null}
       {!focus ? <ActingStrip /> : null}
       {isDemo && !isTester ? (
-        <div className="no-print flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-plate-yellow px-4 py-2 text-center text-sm font-semibold text-iron">
+        <div className="no-print flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-warn-fill px-4 py-2 text-center text-sm font-semibold text-iron">
           Demonstração com dados fictícios.
           <button
             onClick={async () => {
               await signOut();
               router.push("/entrar?modo=criar");
             }}
-            className="underline underline-offset-2"
+            className="inline-flex items-center underline underline-offset-2 pointer-coarse:-my-2 pointer-coarse:min-h-11"
           >
             Criar minha conta grátis
           </button>
@@ -117,12 +117,14 @@ export default function PainelLayout({ children }: { children: ReactNode }) {
 
           <div className="min-w-0">
             <header className="no-print sticky top-0 z-20 flex h-14 items-center justify-between border-b border-rule bg-chalk/90 px-4 backdrop-blur lg:hidden">
-              <Link href={nav[0]!.href}>
+              {/* Alvo de 44 px (U8 3.5): o logo é link para o início. */}
+              <Link href={nav[0]!.href} className="inline-flex min-h-11 items-center">
                 <Logo />
               </Link>
               <span className="max-w-[45%] truncate text-sm font-semibold text-steel">{user.name.split(" ")[0]}</span>
             </header>
-            <main className="mx-auto max-w-5xl px-4 pb-28 pt-6 lg:px-8 lg:pb-12 lg:pt-10">{children}</main>
+            {/* Fim do conteúdo acima da navegação inferior também com a área segura do iPhone (U8 3.3). */}
+            <main className="mx-auto max-w-5xl px-4 pb-[calc(7rem+env(safe-area-inset-bottom))] pt-6 lg:px-8 lg:pb-12 lg:pt-10">{children}</main>
           </div>
 
           <nav

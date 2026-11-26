@@ -1,10 +1,27 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useId, type ReactNode, type Ref } from "react";
 import { Pencil } from "lucide-react";
-import { Panel, cx } from "@/components/ui";
-import { MACRO_LABEL, MACRO_ORDER, comparePlan, diffSrText, fmtDiff, fmtInt, fmtMacro, planSummary, type MacroKey } from "@/lib/domain/diet-plan";
-import type { MacroTargets } from "@/lib/domain/types";
+import { Button, Panel, cx } from "@/components/ui";
+import {
+  MACRO_LABEL,
+  MACRO_ORDER,
+  comparePlan,
+  diffSrText,
+  fmtDiff,
+  fmtInt,
+  fmtMacro,
+  metasOnlyText,
+  originLine,
+  planSummary,
+  targetsSourceLine,
+  type DietOrigin,
+  type MacroKey,
+} from "@/lib/domain/diet-plan";
+import { dietItemText, macroLine } from "@/lib/domain/diet-share";
+import { fmtDayMonth } from "@/lib/domain/format";
+import { dietTotals, sumItems } from "@/lib/domain/nutrition";
+import type { DietPlan, MacroTargets, Meal } from "@/lib/domain/types";
 
 /**
  * Peças de leitura da Dieta (U3). Todo número de dieta fica dentro de `data-area="dieta-numeros"` e só usa
@@ -150,5 +167,116 @@ export function PlanVsTargets({
         {tdeeLine ? <p className="mt-3 text-xs text-steel">{tdeeLine}</p> : null}
       </div>
     </Panel>
+  );
+}
+
+/** "Orientações de Rafael" | "Orientações do personal" | "Suas orientações". */
+function notesTitle(origin: DietOrigin): string {
+  if (origin.kind === "proprio") return "Suas orientações";
+  return origin.coachFirstName ? `Orientações de ${origin.coachFirstName}` : "Orientações do personal";
+}
+
+/** Orientações só para leitura (some quando vazias). Também usado no ajuste, onde elas não são editáveis (R4). */
+export function NotesRead({ notes, origin, className }: { notes?: string; origin: DietOrigin; className?: string }) {
+  const id = useId();
+  if (!notes?.trim()) return null;
+  return (
+    <section aria-labelledby={id} className={className}>
+      <h3 id={id} className="text-[0.9375rem] font-bold">
+        {notesTitle(origin)}
+      </h3>
+      <p className="mt-1 whitespace-pre-wrap text-[0.9375rem] text-iron">{notes.trim()}</p>
+    </section>
+  );
+}
+
+/** Uma refeição só para leitura: nome em h3, horário em <time>, itens com gramas e medida caseira e o subtotal. */
+function MealRead({ meal }: { meal: Meal }) {
+  const id = useId();
+  const t = sumItems(meal.items);
+  return (
+    <section aria-labelledby={id} className="overflow-hidden rounded-[8px] border border-rule bg-paper">
+      <div className="flex items-baseline justify-between gap-3 border-b border-rule bg-chalk px-4 py-2.5">
+        <h3 id={id} className="min-w-0 text-base font-bold">
+          {meal.name.trim() || "Refeição"}
+        </h3>
+        {meal.time ? (
+          <time dateTime={meal.time} className="num shrink-0 text-sm text-steel">
+            {meal.time}
+          </time>
+        ) : null}
+      </div>
+      <ul className="ruled">
+        {meal.items.map((i) => (
+          <li key={i.uid} className="px-4 py-2 text-[0.9375rem]">
+            {dietItemText(i)}
+          </li>
+        ))}
+      </ul>
+      <p className="num border-t border-rule px-4 py-2 text-sm text-steel">
+        {fmtInt(t.kcal)} kcal · {fmtInt(t.proteinG)} g de proteína
+      </p>
+    </section>
+  );
+}
+
+/**
+ * Dieta só para leitura no aparelho de quem segue o plano (U3b, estados `leitura` e `leitura_metas`): as metas do
+ * dia, o cardápio com a origem, o total em uma linha (sem comparação com as metas: no plano do personal, isso seria
+ * o app avaliando a prescrição) e as orientações. O botão "Ajustar cardápio" (plano do personal) ou "Editar dieta"
+ * (próprio) só aparece com `canAdjust`. Nenhum campo editável: a sequência de Tab passa só pelo botão.
+ */
+export function DietRead({
+  diet,
+  origin,
+  screen,
+  canAdjust,
+  onAdjust,
+  adjustButtonRef,
+}: {
+  diet: DietPlan;
+  origin: DietOrigin;
+  screen: "leitura" | "leitura_metas";
+  canAdjust: boolean;
+  onAdjust: () => void;
+  adjustButtonRef?: Ref<HTMLButtonElement>;
+}) {
+  const headId = useId();
+  const meals = diet.meals.filter((m) => m.items.length);
+  return (
+    <>
+      <Panel title="Metas do dia">
+        <TargetsList targets={diet.targets} sourceLine={targetsSourceLine(origin)} />
+      </Panel>
+
+      <section id="cardapio" aria-labelledby={headId} className="space-y-3">
+        <div>
+          <h2 id={headId} className="text-lg font-bold">
+            Cardápio do dia
+          </h2>
+          <p className="text-sm text-steel">{originLine(origin, fmtDayMonth)}</p>
+        </div>
+        <div data-area="dieta-numeros" className="space-y-3">
+          {screen === "leitura" ? (
+            <>
+              {meals.map((m) => (
+                <MealRead key={m.uid} meal={m} />
+              ))}
+              <p className="num text-[0.9375rem] text-iron">
+                <span className="font-bold">Total do cardápio:</span> {macroLine(dietTotals(diet))}
+              </p>
+            </>
+          ) : (
+            <p className="text-[0.9375rem] text-steel">{metasOnlyText(diet)}</p>
+          )}
+        </div>
+        <NotesRead notes={diet.notes} origin={origin} />
+        {canAdjust ? (
+          <Button ref={adjustButtonRef} variant="secondary" icon={<Pencil className="size-4" />} onClick={onAdjust} className="w-full sm:w-auto">
+            {origin.kind === "personal" ? "Ajustar cardápio" : "Editar dieta"}
+          </Button>
+        ) : null}
+      </section>
+    </>
   );
 }

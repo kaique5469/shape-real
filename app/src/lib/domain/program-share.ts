@@ -63,7 +63,7 @@ export function programToText(program: Program, opts: { studentName?: string; st
 
 /** Cópia independente da ficha (novos ids), para duplicar, aplicar a um aluno ou salvar como modelo. */
 export function cloneProgram(program: Program, patch: Partial<Program> = {}, now = new Date().toISOString()): Program {
-  return {
+  const copy: Program = {
     ...program,
     id: uid(),
     createdAt: now,
@@ -71,6 +71,9 @@ export function cloneProgram(program: Program, patch: Partial<Program> = {}, now
     days: program.days.map((d) => ({ ...d, focus: [...d.focus], exercises: d.exercises.map((e) => ({ ...e, uid: uid() })) })),
     ...patch,
   };
+  // A cópia é uma ficha nova de quem copiou: o ajuste da original (U5 A3) não vem junto.
+  if (!("adjustedAt" in patch)) delete copy.adjustedAt;
+  return copy;
 }
 
 /** Séries diretas por grupo muscular em uma volta completa da ficha (compostos contam para o grupo principal). */

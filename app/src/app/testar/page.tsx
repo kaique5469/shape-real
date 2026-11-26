@@ -52,7 +52,8 @@ function Testar() {
         ) : (
           <div className="mt-8" role="status" aria-live="polite">
             <div className="mx-auto h-1.5 w-40 overflow-hidden rounded-full bg-chalk-2">
-              <div className="h-full w-1/2 animate-[slide_1.1s_ease-in-out_infinite] rounded-full bg-plate-red" />
+              {/* Barra de carregamento: identidade, não estado (U7 R1). */}
+              <div data-brand className="h-full w-1/2 animate-[slide_1.1s_ease-in-out_infinite] rounded-full bg-brand" />
             </div>
             <p className="mt-5 text-lg font-bold">Preparando seu ambiente de teste…</p>
             <p className="mt-1 text-sm text-steel">Sem cadastro. Seus dados ficam só neste aparelho.</p>

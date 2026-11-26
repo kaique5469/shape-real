@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { reportError } from "@/lib/analytics";
 import { calendarDaysSince, sessionsThisWeek, weeklyGoal } from "@/lib/domain/attention";
 import { crefLabel } from "@/lib/domain/cref";
 import { getExercise } from "@/lib/domain/exercises";
 import { firstName, waLink, waPhone } from "@/lib/domain/format";
 import { RETURN_AFTER_DAYS, bestSet, completedSets, fmtMark, recordSetOf } from "@/lib/domain/progression";
+import { revealAfterResize, scrollDeltaToReveal } from "@/lib/domain/session-flow";
 import type { ExerciseLog, Profile, Program, Session, SetLog } from "@/lib/domain/types";
 
 /** Carrega dados assíncronos com estados de carregamento/erro e recarga manual. */
@@ -44,6 +45,101 @@ export function nextDayKey(program: Program, sessions: Session[]): string {
   if (!last) return program.days[0]?.key ?? "A";
   const i = program.days.findIndex((d) => d.key === last.dayKey);
   return program.days[(i + 1) % program.days.length]?.key ?? program.days[0]!.key;
+}
+
+// ---- Campos no celular (U8a) -------------------------------------------------------
+
+/**
+ * Seleciona todo o texto do campo agora e de novo logo depois: o Safari do iPhone pode pôr o cursor no fim depois do
+ * foco (o toque termina depois do `focus`), e aí "35" digitado sobre "30" viraria "3035". A seleção é refeita no
+ * próximo tique e no 1º `mouseup` depois do foco (até 1 s; na hora, depois dos ouvintes do próprio campo, e de novo no
+ * tique seguinte), só se o campo continua em foco e ninguém digitou nada.
+ * Use em campos `inputMode` (texto): em `type="number"` o setSelectionRange lança.
+ */
+export function selectAllSoon(el: HTMLInputElement | HTMLTextAreaElement): void {
+  const value = el.value;
+  const again = () => {
+    if (typeof document === "undefined" || document.activeElement !== el || el.value !== value) return;
+    try {
+      el.setSelectionRange(0, el.value.length);
+    } catch {
+      /* campo que não aceita seleção */
+    }
+  };
+  try {
+    el.select();
+  } catch {
+    /* idem */
+  }
+  setTimeout(again, 0);
+  // No toque, o mouseup chega depois do foco e pode levar o cursor para o fim. Ouvido na janela (fase de bolha): roda
+  // depois de quem ouve no próprio campo; o tique seguinte cobre o cursor posto pela ação padrão do navegador.
+  const onUp = () => {
+    window.removeEventListener("mouseup", onUp);
+    again();
+    setTimeout(again, 0);
+  };
+  window.addEventListener("mouseup", onUp);
+  setTimeout(() => window.removeEventListener("mouseup", onUp), 1000);
+}
+
+/**
+ * Teclado abrindo sobre a linha em foco (U8 §3.2b). Nos navegadores que encolhem a página quando o teclado abre, o
+ * campo tocado pode ficar atrás do rodapé fixo; o `scroll-padding` só resolve a troca de campo com o teclado já
+ * aberto. Aqui: no foco de um campo dentro de `main`, guarda a altura da janela; quando ela encolhe pelo menos
+ * KEYBOARD_MIN_SHRINK e a pessoa não arrastou a tela, rola na hora (sem animação) o mínimo para a linha da série
+ * (`li[data-set]`, com carga, reps e ✓) ou o próprio campo (anotação) caber entre o cabeçalho e o rodapé, com 8 px
+ * de folga: a mesma área da rolagem depois do ✓ (scrollDeltaToReveal). Sem teclado que encolhe a página (Safari do
+ * iPhone, Chrome com `resizes-visual`), não há `resize` e nada acontece.
+ */
+export function useKeepFocusedRowVisible(opts: {
+  main: RefObject<HTMLElement | null>;
+  header: RefObject<HTMLElement | null>;
+  footer: RefObject<HTMLElement | null>;
+  enabled: boolean;
+}): void {
+  const { main, header, footer, enabled } = opts;
+  useEffect(() => {
+    const root = main.current;
+    if (!enabled || !root || typeof window === "undefined") return;
+    let field: HTMLElement | null = null;
+    let heightAtFocus = window.innerHeight;
+    let dragged = false;
+    let raf = 0;
+    const onFocusIn = (e: FocusEvent) => {
+      const t = e.target;
+      if (!(t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement)) return;
+      field = t;
+      heightAtFocus = window.innerHeight;
+      dragged = false;
+    };
+    const onTouchMove = () => {
+      dragged = true;
+    };
+    const reveal = () => {
+      raf = 0;
+      const el = field;
+      const fieldFocused = Boolean(el && document.activeElement === el && root.contains(el));
+      if (!el || !revealAfterResize({ heightAtFocus, height: window.innerHeight, fieldFocused, dragged })) return;
+      const head = header.current?.getBoundingClientRect();
+      const foot = footer.current?.getBoundingClientRect();
+      const row = (el.closest("li[data-set]") ?? el).getBoundingClientRect();
+      const delta = scrollDeltaToReveal({ top: row.top, bottom: row.bottom }, { top: (head?.bottom ?? 0) + 8, bottom: (foot?.top ?? window.innerHeight) - 8 });
+      if (Math.abs(delta) >= 2) window.scrollBy({ top: delta, behavior: "instant" });
+    };
+    const onResize = () => {
+      if (!raf) raf = requestAnimationFrame(reveal);
+    };
+    root.addEventListener("focusin", onFocusIn);
+    window.addEventListener("touchmove", onTouchMove, { passive: true });
+    window.addEventListener("resize", onResize);
+    return () => {
+      root.removeEventListener("focusin", onFocusIn);
+      window.removeEventListener("touchmove", onTouchMove);
+      window.removeEventListener("resize", onResize);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [main, header, footer, enabled]);
 }
 
 export function relativeDay(iso: string | null, now = new Date()): string {

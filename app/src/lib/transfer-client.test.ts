@@ -109,7 +109,7 @@ describe("recebimento dos treinos no aparelho do personal", () => {
     await seedCoachDevice();
     const packet = buildTreinosPacket({ student: { ...student, id: "aluno-local" }, coachId: "c1", studentRef: "s1", sessions: [treino("t1", "2026-11-05T18:00:00Z", 42.5)] });
     const r = await importTreinos(packet, "s1");
-    expect(r).toEqual({ added: 1, updated: 0, mirrored: 1 });
+    expect(r).toEqual({ added: 1, updated: 0, same: 0, mirrored: 1 });
     expect(await supinoLoad("s1")).toBe(42.5);
     // Copiar a carga não conta como edição da ficha.
     expect((await localRepo.getProgram("p1"))?.updatedAt).toBe(program.updatedAt);
@@ -129,7 +129,8 @@ describe("recebimento dos treinos no aparelho do personal", () => {
     const p = (await localRepo.getProgram("p1"))!;
     await localRepo.saveProgram({ ...p, days: [{ ...p.days[0]!, exercises: [{ ...p.days[0]!.exercises[0]!, loadKg: 37.5 }, p.days[0]!.exercises[1]!] }] });
     const again = await importTreinos(packet, "s1");
-    expect(again).toEqual({ added: 0, updated: 1, mirrored: 0 });
+    // O mesmo link de novo: nada mudou no treino, então ele "já estava no painel" (não é "atualizado").
+    expect(again).toEqual({ added: 0, updated: 0, same: 1, mirrored: 0 });
     expect(await supinoLoad("s1")).toBe(37.5);
   });
 
@@ -380,5 +381,151 @@ describe("registro de envio (UX0)", () => {
     delivery.markSessionsPrepared("a9", ["t1"], "copy");
     delivery.clearDeliveryKeys("a9");
     expect(storage.keys().filter((k) => k.startsWith("sr:sent:a9"))).toEqual([]);
+  });
+});
+
+describe("situação do envio da ficha no aparelho do personal (U2b)", () => {
+  const versions = async (id: string) => {
+    const p = (await localRepo.listPrograms(id)).find((x) => x.active);
+    return { programAt: p?.updatedAt ?? null, dietAt: null };
+  };
+
+  it("ficha de antes do registro: nada é afirmado; a 1ª leitura grava o marcador @desde", async () => {
+    await seedCoachDevice();
+    expect(storage.getItem("sr:sent:@desde")).toBeNull();
+    expect(delivery.readFichaDelivery("s1", await versions("s1")).program).toEqual({ kind: "desconhecido" });
+    expect(storage.getItem("sr:sent:@desde")).toBeTruthy();
+  });
+
+  it("toque grava as versões que foram; editar e salvar a ficha depois → 'mudou'; finalizar treino e copiar carga não mudam", async () => {
+    await seedCoachDevice();
+    delivery.markFichaPrepared("s1", { at: "2026-11-20T17:02:00.000Z", via: "copy", ...(await versions("s1")) });
+    expect(delivery.readFichaDelivery("s1", await versions("s1")).program).toEqual({ kind: "enviado", at: "2026-11-20T17:02:00.000Z", via: "copy" });
+    // Copiar a carga do aluno (receber treinos) grava com keepUpdatedAt: continua a mesma versão.
+    await importTreinos(buildTreinosPacket({ student, coachId: "c1", studentRef: "s1", sessions: [treino("t1", "2026-11-21T10:00:00Z", 45, "s1")] }), "s1");
+    expect(delivery.readFichaDelivery("s1", await versions("s1")).program.kind).toBe("enviado");
+    // Edição de verdade (o editor grava sem a opção).
+    const p = (await localRepo.listPrograms("s1")).find((x) => x.active)!;
+    await localRepo.saveProgram({ ...p, name: "ABC Hipertrofia 2" });
+    expect(delivery.readFichaDelivery("s1", await versions("s1")).program).toEqual({ kind: "mudou", sentAt: "2026-11-20T17:02:00.000Z", studentVersion: null });
+  });
+
+  it("aluno com ficha montada depois do marcador e nunca enviada → 'ainda não foi para o app'", async () => {
+    delivery.deliveryTrackingSince("2026-11-01T00:00:00.000Z");
+    await seedCoachDevice();
+    await localRepo.saveProgram({ ...program, id: "p2", ownerId: "s1" });
+    expect(delivery.readFichaDelivery("s1", await versions("s1")).program).toEqual({ kind: "nao_enviado" });
+  });
+});
+
+describe("/receber: novo, atualizado e já no painel (U2d)", () => {
+  it("o mesmo pacote de novo → { added: 0, updated: 0, same: 1, mirrored: 0 }, sem regravar", async () => {
+    await seedCoachDevice();
+    const packet = buildTreinosPacket({ student, coachId: "c1", studentRef: "s1", sessions: [treino("t1", "2026-11-05T18:00:00Z", 42.5)] });
+    expect(await importTreinos(packet, "s1")).toEqual({ added: 1, updated: 0, same: 0, mirrored: 1 });
+    expect(await importTreinos(packet, "s1")).toEqual({ added: 0, updated: 0, same: 1, mirrored: 0 });
+    // Pelo link (nulos tirados, ordem de chaves do JSON) continua igual.
+    const viaLink = JSON.parse(JSON.stringify(packet, (_k, v) => (v === null ? undefined : v)));
+    expect(await importTreinos(viaLink, "s1")).toEqual({ added: 0, updated: 0, same: 1, mirrored: 0 });
+    expect(await localRepo.listSessions("s1")).toHaveLength(1);
+  });
+
+  it("anotação mudada → updated 1; um treino novo junto → added 1", async () => {
+    await seedCoachDevice();
+    const t1 = treino("t1", "2026-11-05T18:00:00Z", 42.5);
+    await importTreinos(buildTreinosPacket({ student, coachId: "c1", studentRef: "s1", sessions: [t1] }), "s1");
+    const r = await importTreinos(buildTreinosPacket({ student, coachId: "c1", studentRef: "s1", sessions: [{ ...t1, note: "ombro ok" }, treino("t2", "2026-11-07T18:00:00Z", 42.5)] }), "s1");
+    expect(r).toMatchObject({ added: 1, updated: 1, same: 0 });
+    expect((await localRepo.listSessions("s1")).find((s) => s.id === "t1")?.note).toBe("ombro ok");
+  });
+});
+
+describe("eco da versão da ficha (U2c)", async () => {
+  const { receivedFichaVersao, fichaVersionsOf } = await import("./transfer-client");
+  const fichaPk = (p: Program = program, d: Parameters<typeof buildFichaPacket>[0]["diet"] = null) => buildFichaPacket({ coach, student, program: p, diet: d, customExercises: [remada], customFoods: [] });
+  const diet = { id: "d1", ownerId: "s1", createdBy: "c1", name: "Plano", targets: { kcal: 1650, proteinG: 120, carbsG: 180, fatG: 50 }, meals: [{ uid: "m1", name: "Café", items: [{ uid: "i1", name: "Ovo", grams: 50, kcal: 70, proteinG: 6, carbsG: 0, fatG: 5 }] }], updatedAt: "2026-11-02T10:00:00.000Z" };
+
+  describe("importFicha grava remoteCoach.recebido (aparelho do aluno)", () => {
+    it("a versão vem do pacote, antes de a ficha ser gravada com a hora local", async () => {
+      const aluna = await importFicha(fichaPk(program, diet), null);
+      expect(aluna.remoteCoach?.recebido).toEqual({ programAt: program.updatedAt, dietAt: diet.updatedAt });
+      expect((await localRepo.getProfile(aluna.id))?.remoteCoach?.recebido).toEqual({ programAt: program.updatedAt, dietAt: diet.updatedAt });
+      // A ficha local ganhou a hora da importação; a versão guardada é a do personal.
+      expect((await localRepo.getProgram("p1"))?.updatedAt).not.toBe(program.updatedAt);
+    });
+
+    it("pacote sem dieta mantém o dietAt anterior com o mesmo personal", async () => {
+      const aluna = await importFicha(fichaPk(program, diet), null);
+      const again = await importFicha(fichaPk({ ...program, updatedAt: "2026-11-12T10:00:00.000Z" }), aluna);
+      expect(again.remoteCoach?.recebido).toEqual({ programAt: "2026-11-12T10:00:00.000Z", dietAt: diet.updatedAt });
+    });
+
+    it("ficha de outro personal zera o que não veio", async () => {
+      const aluna = await importFicha(fichaPk(program, diet), null);
+      const outro = buildFichaPacket({ coach: { ...coach, id: "c9", name: "Camila Souza" }, student, program: { ...program, id: "p9", updatedAt: "2026-11-15T10:00:00.000Z" }, diet: null, customExercises: [remada], customFoods: [] });
+      const depois = await importFicha(outro, aluna);
+      expect(depois.remoteCoach).toMatchObject({ id: "c9", recebido: { programAt: "2026-11-15T10:00:00.000Z" } });
+      expect(depois.remoteCoach?.recebido).not.toHaveProperty("dietAt");
+    });
+  });
+
+  describe("importTreinos grava o eco (aparelho do personal)", () => {
+    const echo = { programAt: program.updatedAt };
+    const pk = (over: { ficha?: { programAt?: string; dietAt?: string }; coachId?: string; studentRef?: string; now?: string } = {}) =>
+      buildTreinosPacket({ student, coachId: over.coachId ?? "c1", studentRef: over.studentRef ?? "s1", sessions: [treino("t1", "2026-11-05T18:00:00Z", 40)], ficha: "ficha" in over ? over.ficha : echo, now: new Date(over.now ?? "2026-11-22T10:00:00.000Z") });
+
+    it("só com packet.ficha, o personal deste aparelho (coachId) e o mesmo aluno", async () => {
+      await seedCoachDevice();
+      await importTreinos(pk(), "s1"); // sem coachId: não grava
+      expect(delivery.fichaAckOf("s1")).toBeNull();
+      await importTreinos(pk(), "s1", { coachId: "c2" }); // outro personal
+      expect(delivery.fichaAckOf("s1")).toBeNull();
+      await importTreinos(pk({ ficha: undefined }), "s1", { coachId: "c1" }); // link antigo, sem eco
+      expect(delivery.fichaAckOf("s1")).toBeNull();
+      await importTreinos(pk({ studentRef: "outro-aluno" }), "s1", { coachId: "c1" }); // aluno escolhido à mão
+      expect(delivery.fichaAckOf("s1")).toBeNull();
+      await importTreinos(pk(), "s1", { coachId: "c1" });
+      expect(delivery.fichaAckOf("s1")).toMatchObject({ programAt: program.updatedAt, treinosSentAt: "2026-11-22T10:00:00.000Z" });
+      expect(delivery.fichaAckOf("s1")).not.toHaveProperty("dietAt");
+    });
+
+    it("um pacote antigo (mais velho) registrado depois não faz o eco voltar atrás", async () => {
+      await seedCoachDevice();
+      await importTreinos(pk({ ficha: { programAt: "2026-11-20T10:00:00.000Z" }, now: "2026-11-23T10:00:00.000Z" }), "s1", { coachId: "c1" });
+      await importTreinos(pk({ ficha: { programAt: "2026-11-01T10:00:00.000Z" }, now: "2026-11-18T10:00:00.000Z" }), "s1", { coachId: "c1" });
+      expect(delivery.fichaAckOf("s1")?.programAt).toBe("2026-11-20T10:00:00.000Z");
+    });
+
+    it("de ponta a ponta: copiar, aluna salva e manda o treino, registrar → 'está com a ficha atual'; editar → 'mudou'", async () => {
+      // Personal copia a mensagem (registro único com as versões que foram).
+      await seedCoachDevice();
+      const versions = await fichaVersionsOf("s1");
+      expect(versions).toEqual({ programAt: program.updatedAt, dietAt: null });
+      delivery.markFichaPrepared("s1", { at: "2026-11-20T17:02:00.000Z", via: "copy", ...versions });
+      const ficha = fichaPk((await localRepo.listPrograms("s1")).find((p) => p.active)!);
+      const coachDevice = JSON.stringify([...storage.keys()].map((k) => [k, storage.getItem(k)]));
+
+      // Aparelho da aluna: abre o link e manda um treino; o pacote leva a versão que chegou.
+      storage.clear();
+      const aluna = await importFicha(ficha, null);
+      const treinos = buildTreinosPacket({ student: aluna, coachId: aluna.remoteCoach!.id, studentRef: aluna.remoteCoach!.studentRef, sessions: [treino("t9", "2026-11-21T18:00:00Z", 40, aluna.id)], ficha: aluna.remoteCoach!.recebido });
+      expect(treinos.ficha).toEqual({ programAt: program.updatedAt });
+
+      // De volta ao personal: registra em /receber.
+      storage.clear();
+      for (const [k, v] of JSON.parse(coachDevice) as [string, string][]) storage.setItem(k, v);
+      expect(await receivedFichaVersao(treinos, "s1", "c1")).toBe("atual");
+      await importTreinos(treinos, "s1", { coachId: "c1" });
+      const d = delivery.readFichaDelivery("s1", await fichaVersionsOf("s1"));
+      expect(d.program).toMatchObject({ kind: "confirmado" });
+
+      // O personal edita e salva: deixa de estar confirmado.
+      const p = (await localRepo.listPrograms("s1")).find((x) => x.active)!;
+      await localRepo.saveProgram({ ...p, name: "ABC Hipertrofia 2" });
+      expect(delivery.readFichaDelivery("s1", await fichaVersionsOf("s1")).program).toEqual({ kind: "mudou", sentAt: "2026-11-20T17:02:00.000Z", studentVersion: program.updatedAt });
+      expect(await receivedFichaVersao(treinos, "s1", "c1")).toBe("anterior");
+      expect(await receivedFichaVersao(treinos, "s1", "c2")).toBe("sem_info");
+      expect(await receivedFichaVersao({ ...treinos, ficha: undefined }, "s1", "c1")).toBe("sem_info");
+    });
   });
 });

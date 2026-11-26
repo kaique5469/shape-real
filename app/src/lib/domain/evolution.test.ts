@@ -1,18 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { simulateSessions } from "@/lib/data/demo";
+import { generateProgram, type GenerateInput } from "./generator";
 import {
   bestMarkOf,
   compareMarks,
   comparisonDates,
+  comparisonLabels,
   deltaLine,
   exerciseMarks,
   exerciseProgress,
   markDeltaPct,
+  progressExercises,
   progressKind,
   sessionMark,
   strengthIndicator,
   type ExerciseProgress,
 } from "./evolution";
-import type { ExerciseLog, SetLog, Session, Unit } from "./types";
+import type { ExerciseLog, Goal, Level, MuscleGroup, SetLog, Session, SystemId, Unit } from "./types";
 
 // Datas montadas no fuso do aparelho: o teste vale em qualquer fuso (a data da marca é o dia local).
 const day = (d: number, month = 10, hour = 18) => new Date(2026, month, d, hour, 0).toISOString();
@@ -346,5 +350,97 @@ describe("registros considerados (R-1, R-4) e datas", () => {
     expect(comparisonDates("2026-10-19", "2026-11-20")).toEqual({ first: "19/10", last: "20/11" });
     expect(comparisonDates("2025-12-20", "2026-01-08")).toEqual({ first: "20/12/25", last: "08/01/26" });
     expect(comparisonDates("2026-09-12")).toEqual({ first: "12/09", last: null });
+  });
+});
+
+describe("ordem do seletor (R-15)", () => {
+  const ids = (sessions: Session[]) => progressExercises(sessions).map((o) => o.exerciseId);
+
+  it("contagem: o exercício com mais treinos vem primeiro, e a contagem bate com as marcas", () => {
+    const sessions = [
+      session(day(1), [log("rosca_direta_barra", [[14, 10]]), log("supino_reto_barra", [[40, 8]])]),
+      session(day(2), [log("supino_reto_barra", [[42.5, 8]])]),
+    ];
+    expect(progressExercises(sessions)).toEqual([
+      { exerciseId: "supino_reto_barra", name: "supino_reto_barra", count: 2, kind: "forca" },
+      { exerciseId: "rosca_direta_barra", name: "rosca_direta_barra", count: 1, kind: "forca" },
+    ]);
+  });
+
+  it("empate na contagem: força antes de peso do corpo, tempo e graviton", () => {
+    const sessions = [
+      session(day(1), [log("barra_fixa", [[0, 6]]), log("prancha", [[0, 45]], { unit: "seg" }), log("supino_reto_barra", [[40, 8]])]),
+      session(day(2), [log("barra_fixa", [[0, 7]]), log("prancha", [[0, 50]], { unit: "seg" }), log("supino_reto_barra", [[40, 9]])]),
+    ];
+    expect(ids(sessions)[0]).toBe("supino_reto_barra");
+  });
+
+  it("empate na contagem e no tipo: a marca mais recente primeiro; no mesmo treino, a posição", () => {
+    const sessions = [
+      session(day(1), [log("supino_reto_barra", [[40, 8]])]),
+      session(day(2), [log("agachamento_livre", [[60, 8]]), log("remada_curvada_barra", [[30, 10]])]),
+    ];
+    expect(ids(sessions)).toEqual(["agachamento_livre", "remada_curvada_barra", "supino_reto_barra"]);
+  });
+
+  it("empate total: o id decide; aeróbio em minutos e exercício sem série feita ficam fora", () => {
+    const sessions = [
+      session(day(1), [log("supino_reto_barra", [[40, 8]])]),
+      session(day(1, 10, 19), [log("agachamento_livre", [[60, 8]])]),
+      session(day(2), [log("esteira_caminhada", [[0, 30]], { unit: "min" }), { ...log("leg_press_45", [[100, 10]]), sets: [{ loadKg: 100, reps: 10, done: false }] }]),
+    ];
+    expect(ids(sessions)).toEqual(["agachamento_livre", "supino_reto_barra"]);
+  });
+
+  it("marca suspeita conta no \"(N treinos)\"", () => {
+    const p = progressExercises(series("agachamento_smith", [[20, 10], [20, 11], [200, 10]]));
+    expect(p[0]!.count).toBe(3);
+  });
+
+  describe("dados do /testar com relógio fixo (23/11/2026, 10h)", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    // As mesmas fichas e simulações de seedTester (src/lib/data/demo.ts). Hora local: o resultado vale em qualquer fuso.
+    const SAMPLES: { name: string; sex: "M" | "F"; goal: Goal; level: Level; system: SystemId; days: number; weeks: number; seed: number; skip: number; emphasis?: MuscleGroup[]; stopDaysAgo?: number; first: string }[] = [
+      { name: "Juliana", sex: "F", goal: "emagrecimento", level: "intermediario", system: "abcd_inferiores", days: 4, weeks: 6, seed: 11, skip: 0.08, emphasis: ["gluteos"], first: "Stiff com barra" },
+      { name: "Marcos", sex: "M", goal: "forca", level: "avancado", system: "forca_5x5", days: 3, weeks: 6, seed: 23, skip: 0.05, first: "Agachamento livre" },
+      { name: "Beatriz", sex: "F", goal: "hipertrofia", level: "iniciante", system: "fullbody", days: 3, weeks: 5, seed: 37, skip: 0.45, stopDaysAgo: 9, first: "Stiff com halteres" },
+    ];
+
+    for (const s of SAMPLES) {
+      it(`${s.name}: o primeiro do seletor é ${s.first}`, () => {
+        vi.useFakeTimers({ now: new Date(2026, 10, 23, 10, 0) });
+        const input: GenerateInput = { goal: s.goal, level: s.level, daysPerWeek: s.days, sessionMinutes: 60, equipment: "academia", system: s.system, seed: s.seed, emphasis: s.emphasis };
+        const program = generateProgram(input, { ownerId: s.name, createdBy: "teste-personal" });
+        const factor = (s.sex === "F" ? 0.55 : 1) * (s.level === "iniciante" ? 0.7 : s.level === "avancado" ? 1.25 : 1);
+        let sessions = simulateSessions(s.name, program, s.weeks, s.days, s.seed, s.skip, factor);
+        if (s.stopDaysAgo) sessions = sessions.filter((x) => new Date(x.startedAt).getTime() <= Date.now() - s.stopDaysAgo! * 86_400_000);
+        const options = progressExercises(sessions);
+        expect(options[0]!.name).toBe(s.first);
+        expect(options[0]!.kind).toBe("forca");
+      });
+    }
+  });
+});
+
+describe("rótulos do cartão (R-14)", () => {
+  it("aluno com a última marca a 14 dias: \"Antes e agora\"", () => {
+    expect(comparisonLabels(false, "2026-11-09", "2026-11-23")).toEqual({ title: "Antes e agora", before: "Antes", after: "Agora" });
+    expect(comparisonLabels(false, "2026-11-23", "2026-11-23").title).toBe("Antes e agora");
+  });
+
+  it("aluno com a última marca a 15 dias: \"Primeiro e último registro\"", () => {
+    expect(comparisonLabels(false, "2026-11-08", "2026-11-23")).toEqual({ title: "Primeiro e último registro", before: "Primeiro", after: "Último" });
+  });
+
+  it("personal: sempre \"Primeiro e último registro\", mesmo com marca de hoje", () => {
+    expect(comparisonLabels(true, "2026-11-23", "2026-11-23").title).toBe("Primeiro e último registro");
+  });
+
+  it("conta dias de calendário, inclusive na virada do ano e do horário de verão", () => {
+    expect(comparisonLabels(false, "2025-12-20", "2026-01-03").title).toBe("Antes e agora");
+    expect(comparisonLabels(false, "2025-12-19", "2026-01-03").title).toBe("Primeiro e último registro");
   });
 });

@@ -5,10 +5,21 @@ import type { SetLog } from "./types";
  * e pergunta a restPhase em que ponto está a cada tique do relógio. Tempos em milissegundos desde a época (Date.now()).
  */
 
+/** Uma série do treino: o registro (uid) e o índice da série nele. */
+export interface SetRef {
+  logUid: string;
+  index: number;
+}
+
 /** Descanso em andamento: termina em `until` (ms); `total` é a duração pedida, em segundos. */
 export interface RestTimer {
   until: number;
   total: number;
+  /**
+   * Série que iniciou este descanso (U1 §3.3): desmarcar ou remover essa série cancela o descanso; um descanso
+   * iniciado por outra série continua. Ausente em rascunhos antigos (aí nada cancela o descanso).
+   */
+  from?: SetRef;
 }
 
 /** Até quanto tempo depois do fim o bipe e a vibração ainda fazem sentido (nada de apitar atrasado ao voltar de outro app). */
@@ -42,23 +53,58 @@ export function restPhase(rest: RestTimer | null | undefined, now: number): Rest
   return { phase: "ended", overSec: Math.floor(over / 1000), justEnded: over <= REST_ALERT_WINDOW_MS };
 }
 
-/** Lê o descanso salvo no rascunho; rascunhos antigos (sem o campo) ou corrompidos dão null. */
+/** `from` gravado: uid não vazio e índice inteiro ≥ 0; qualquer outra coisa é descartada. */
+function parseSetRef(value: unknown): SetRef | null {
+  if (!value || typeof value !== "object") return null;
+  const { logUid, index } = value as { logUid?: unknown; index?: unknown };
+  if (typeof logUid !== "string" || !logUid || typeof index !== "number" || !Number.isInteger(index) || index < 0) return null;
+  return { logUid, index };
+}
+
+/**
+ * Lê o descanso salvo no rascunho; rascunhos antigos (sem o campo) ou corrompidos dão null. Um `from` inválido é
+ * descartado sem perder o descanso (ele só deixa de ser cancelado ao desmarcar).
+ */
 export function restFromDraft(value: unknown): RestTimer | null {
   if (!value || typeof value !== "object") return null;
-  const { until, total } = value as { until?: unknown; total?: unknown };
+  const { until, total, from } = value as { until?: unknown; total?: unknown; from?: unknown };
   if (typeof until !== "number" || !Number.isFinite(until) || typeof total !== "number" || !Number.isFinite(total) || total < 0) return null;
-  return { until, total };
+  const ref = parseSetRef(from);
+  return ref ? { until, total, from: ref } : { until, total };
 }
 
-/** Novo descanso de `totalSec` segundos a partir de agora; null se não houver descanso (0 s). */
-export function startRest(totalSec: number, now: number): RestTimer | null {
-  return totalSec > 0 ? { until: now + totalSec * 1000, total: totalSec } : null;
+/** Novo descanso de `totalSec` segundos a partir de agora, iniciado pela série `from`; null se não houver descanso (0 s). */
+export function startRest(totalSec: number, now: number, from?: SetRef): RestTimer | null {
+  if (!(totalSec > 0)) return null;
+  const rest: RestTimer = { until: now + totalSec * 1000, total: totalSec };
+  if (from) rest.from = { logUid: from.logUid, index: from.index };
+  return rest;
 }
 
-/** "−15s" / "+15s": desloca o fim (nunca para antes de agora) e ajusta o total na mesma medida. */
+/** "−15s" / "+15s": desloca o fim (nunca para antes de agora) e ajusta o total na mesma medida. A série de origem continua. */
 export function shiftRest(rest: RestTimer, deltaSec: number, now: number): RestTimer {
   const until = Math.max(now, rest.until + deltaSec * 1000);
-  return { until, total: Math.max(0, rest.total + Math.round((until - rest.until) / 1000)) };
+  const out: RestTimer = { until, total: Math.max(0, rest.total + Math.round((until - rest.until) / 1000)) };
+  if (rest.from) out.from = rest.from;
+  return out;
+}
+
+/**
+ * Desmarcar a série `mark`: o descanso (contando ou na barra de fim) que ela iniciou é cancelado (null); um descanso
+ * iniciado por outra série, ou sem série de origem (rascunho antigo), continua igual.
+ */
+export function restAfterUnmark(rest: RestTimer | null, mark: SetRef): RestTimer | null {
+  if (!rest?.from) return rest;
+  return rest.from.logUid === mark.logUid && rest.from.index === mark.index ? null : rest;
+}
+
+/**
+ * Remoção de séries do registro `logUid`, que fica com `newLength` séries (0 = o exercício saiu do treino): o descanso
+ * iniciado por uma série que saiu é cancelado; os demais continuam.
+ */
+export function restAfterRemove(rest: RestTimer | null, logUid: string, newLength: number): RestTimer | null {
+  if (!rest?.from) return rest;
+  return rest.from.logUid === logUid && rest.from.index >= newLength ? null : rest;
 }
 
 type SetsOf = { uid: string; sets: ReadonlyArray<Pick<SetLog, "done">> };
@@ -68,12 +114,12 @@ type SetsOf = { uid: string; sets: ReadonlyArray<Pick<SetLog, "done">> };
  * marcadas fora de ordem). `marking` é a série que acabou de ser marcada e ainda aparece como não feita no estado
  * (o setState não aplicou). Sem séries pendentes, não se inicia descanso depois da última série.
  */
-export function anySetPending(exercises: ReadonlyArray<SetsOf>, marking?: { logUid: string; index: number }): boolean {
+export function anySetPending(exercises: ReadonlyArray<SetsOf>, marking?: SetRef): boolean {
   return exercises.some((e) => e.sets.some((s, i) => !s.done && !(marking && e.uid === marking.logUid && i === marking.index)));
 }
 
 /** Inicia descanso depois desta série? Só com descanso configurado (> 0 s) e alguma série ainda por fazer. */
-export function shouldStartRest(exercises: ReadonlyArray<SetsOf>, marking: { logUid: string; index: number }, restSec: number): boolean {
+export function shouldStartRest(exercises: ReadonlyArray<SetsOf>, marking: SetRef, restSec: number): boolean {
   return restSec > 0 && anySetPending(exercises, marking);
 }
 

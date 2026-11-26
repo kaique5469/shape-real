@@ -7,6 +7,7 @@ import { Button, Dialog, Field, Textarea } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
 import { waLink } from "@/lib/domain/format";
 import { track } from "@/lib/analytics";
+import { SOLO_TESTER_ID } from "@/lib/domain/ficha-context";
 
 const TOPICS = ["Montar ficha", "IA", "Treino do aluno", "Dieta", "Evolução", "Visual", "Outro"] as const;
 
@@ -14,12 +15,12 @@ const TOPICS = ["Montar ficha", "IA", "Treino do aluno", "Dieta", "Evolução", 
 export function TesterStrip() {
   const [open, setOpen] = useState(false);
   return (
-    <div className="no-print flex items-center justify-between gap-3 bg-iron px-4 py-1.5 text-chalk">
+    <div data-surface="dark" className="no-print flex items-center justify-between gap-3 bg-iron px-4 py-1.5 text-chalk">
       <p className="min-w-0 truncate text-[0.8125rem]">
         <span className="font-bold text-plate-yellow">Versão de teste</span>
         <span className="text-chalk/70"> · dados salvos só neste aparelho</span>
       </p>
-      <button onClick={() => setOpen(true)} className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-[6px] bg-chalk px-3 text-[0.8125rem] font-bold text-iron hover:bg-white">
+      <button onClick={() => setOpen(true)} className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-[6px] bg-chalk px-3 pointer-coarse:h-11 text-[0.8125rem] font-bold text-iron hover:bg-white">
         <MessageSquareText className="size-4" aria-hidden /> Dar feedback
       </button>
       <FeedbackDialog open={open} onClose={() => setOpen(false)} />
@@ -70,7 +71,7 @@ export function FeedbackDialog({ open, onClose }: { open: boolean; onClose: () =
                   type="button"
                   aria-pressed={topic === t}
                   onClick={() => setTopic(t)}
-                  className={`h-10 rounded-full border px-3.5 text-sm font-semibold ${topic === t ? "border-iron bg-iron text-chalk" : "border-rule-strong bg-paper hover:border-iron"}`}
+                  className={`h-10 rounded-full border px-3.5 text-sm font-semibold pointer-coarse:min-h-11 ${topic === t ? "border-iron bg-iron text-chalk" : "border-rule-strong bg-paper hover:border-iron"}`}
                 >
                   {t}
                 </button>
@@ -112,7 +113,7 @@ export function ActingStrip() {
   const router = useRouter();
   if (!returnTo || !user) return null;
   const viewingId = user.id;
-  const solo = user.id === "teste-solo";
+  const solo = user.id === SOLO_TESTER_ID;
   return (
     <div className="no-print flex items-center justify-between gap-3 bg-plate-yellow px-4 py-1.5 text-iron">
       <p className="min-w-0 truncate text-[0.8125rem] font-semibold">{solo ? "Modo aluno sem personal" : `Vendo como ${user.name.trim().split(/\s+/)[0]}`}</p>
@@ -121,7 +122,7 @@ export function ActingStrip() {
           const back = await returnToOwner();
           router.push(back?.role === "coach" && !solo ? `/alunos/${viewingId}` : "/alunos");
         }}
-        className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-[6px] bg-iron px-3 text-[0.8125rem] font-bold text-chalk hover:bg-iron-2"
+        className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-[6px] bg-iron px-3 pointer-coarse:h-11 text-[0.8125rem] font-bold text-chalk hover:bg-iron-2"
       >
         <ArrowLeft className="size-4" aria-hidden /> Voltar ao painel
       </button>

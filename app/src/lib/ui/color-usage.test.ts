@@ -19,25 +19,6 @@ import { describe, expect, it } from "vitest";
 type Rule = "a" | "b" | "c" | "d" | "e" | "f";
 
 const PENDENTE: Record<string, { regras: Rule[]; item: string }> = {
-  // Sessão e resumo: faixa ao vivo, Timer, sugestão "aumentar", lista do resumo e Badge repetido (U7s); ✓ do recorde (U1a).
-  "app/(painel)/sessao/page.tsx": { regras: ["a", "b"], item: "U7s + U1a" },
-  // Telas sem outro dono.
-  "app/(painel)/hoje/page.tsx": { regras: ["a"], item: "U7b" },
-  "app/testar/page.tsx": { regras: ["a"], item: "U7b" },
-  "components/backup-reminder.tsx": { regras: ["a"], item: "U7b" },
-  "components/brand.tsx": { regras: ["a"], item: "U7b" },
-  "components/ficha.tsx": { regras: ["a"], item: "U7b" },
-  "components/preferences.tsx": { regras: ["a"], item: "U7b" },
-  "components/program/program-list.tsx": { regras: ["a"], item: "U7b" },
-  // Itens que já mexem no arquivo.
-  "app/(painel)/alunos/page.tsx": { regras: ["a"], item: "U4a" },
-  "components/exercise-picker.tsx": { regras: ["a"], item: "U1c" },
-  "components/program/program-editor.tsx": { regras: ["a"], item: "U5b" },
-  "components/views/diet-view.tsx": { regras: ["a"], item: "U3a" },
-  "components/views/history-view.tsx": { regras: ["a"], item: "U2a" },
-  "components/views/report-view.tsx": { regras: ["a"], item: "U6a" },
-  "components/charts.tsx": { regras: ["a"], item: "U6b" },
-  "components/views/evolution-view.tsx": { regras: ["a"], item: "U6c" },
   // U7c (arquivos da anamnese) foi para a rodada do questionário: ficam pendentes com motivo em DECISIONS.md.
   "app/(painel)/alunos/[id]/page.tsx": { regras: ["a"], item: "U7c (próxima rodada)" },
   "app/receber/page.tsx": { regras: ["a"], item: "U7c (próxima rodada)" },
@@ -45,8 +26,6 @@ const PENDENTE: Record<string, { regras: Rule[]; item: string }> = {
   "components/program/program-share.tsx": { regras: ["a"], item: "U7c (próxima rodada)" },
   "components/pwa.tsx": { regras: ["a"], item: "U7c (próxima rodada)" },
   "components/student-form.tsx": { regras: ["a"], item: "U7c (próxima rodada)" },
-  // Sem dono nesta rodada: o "52,5" da ilustração do /entrar é identidade (text-plate-red → text-brand + data-brand).
-  "app/entrar/page.tsx": { regras: ["a"], item: "sem dono (costura)" },
 };
 
 const SRC = fileURLToPath(new URL("../../", import.meta.url));

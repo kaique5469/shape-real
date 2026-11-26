@@ -3,24 +3,42 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, Copy, IdCard, MoreHorizontal, MoveLeft, MoveRight, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, Copy, IdCard, MoreHorizontal, MoveLeft, MoveRight, Plus, Trash2, TriangleAlert } from "lucide-react";
 import { ExercisePicker } from "@/components/exercise-picker";
 import { FichaDay } from "@/components/ficha";
+import { EditorDeliveryLine, FichaContextHeader, FichaStatusLine, PanelDeliveryLines } from "@/components/program/editor-context";
+import { PostSaveBar, SendFichaLink } from "@/components/program/save-summary";
 import { ProgramShare, shareNames } from "@/components/program/program-share";
-import { ActionSheet, Alert, Badge, Button, Dialog, Field, IconButton, Input, Panel, Select, Skeleton, Textarea, cx } from "@/components/ui";
+import { ActionSheet, Alert, Button, Dialog, Field, IconButton, Input, Panel, Select, Skeleton, Textarea, cx } from "@/components/ui";
 import { reportError, track } from "@/lib/analytics";
 import { useApp } from "@/lib/app-context";
 import { COACH_IDENTITY_HINT, needsCoachIdentity } from "@/lib/data/demo";
+import { prepStatusText, type DeliveryIcon, type PrepVia } from "@/lib/domain/delivery";
 import { GROUP_LABEL, getExercise, unitOf } from "@/lib/domain/exercises";
-import { fichaCoach, fichaKind, programAdjustedNote, shouldMarkAdjusted, type FichaKind } from "@/lib/domain/ficha-context";
-import { firstName, fmtLoad, fmtRest, fmtScheme, programValidity, validityEnd } from "@/lib/domain/format";
+import {
+  editDuration,
+  editorWidth,
+  fichaCoach,
+  fichaContextText,
+  fichaKind,
+  newFichaMessage,
+  postSaveNextStep,
+  postSaveTitle,
+  programAdjustedNote,
+  sendReady,
+  shouldMarkAdjusted,
+  showEditorDeliveryLine,
+  type FichaContextInput,
+  type FichaKind,
+} from "@/lib/domain/ficha-context";
+import { firstName, fmtDayMonth, fmtLoad, fmtRest, fmtScheme, programValidity, validityEnd } from "@/lib/domain/format";
 import { GOAL_LABEL, LEVEL_LABEL, TECHNIQUE_LABEL, buildPlanned, estimateDayMinutes, repScheme } from "@/lib/domain/generator";
 import { uid } from "@/lib/domain/ids";
 import { PLANS } from "@/lib/domain/plans";
 import { coachSignature, nextDayKey, programSetsPerGroup, signerFor, techniqueText } from "@/lib/domain/program-share";
 import { draftToRestore, parseFichaDraft, programForSave, programSignature, type FichaDraft } from "@/lib/domain/program-signature";
 import { getSystem } from "@/lib/domain/systems";
-import { fmtDate } from "@/lib/hooks";
+import { fmtDate, selectAllSoon } from "@/lib/hooks";
 import type { Exercise, Goal, Level, PlannedExercise, Profile, Program, Technique, Unit, WorkoutDay } from "@/lib/domain/types";
 
 const RESTS = [0, 30, 45, 60, 75, 90, 120, 150, 180, 240, 300];
@@ -39,28 +57,48 @@ interface Props {
   back?: { href: string; label: string };
 }
 
+/** Barra depois de salvar (e na chegada do gerador): título, frase do próximo passo e, no lugar da frase, o envio. */
+interface PostSave {
+  title: string;
+  text: string | null;
+  /** Frase que é estado de um envio feito pela barra (ícone do canal). */
+  textIcon?: DeliveryIcon;
+  send: boolean;
+}
+
+const hasExercises = (p: Program) => p.days.some((x) => x.exercises.length > 0);
+
 export function ProgramEditor({ programId, onSaved, student, back }: Props) {
   const { repo, user, plan, mode, returnTo } = useApp();
   const router = useRouter();
   const [program, setProgram] = useState<Program | null>(null);
-  // Última versão lida ou gravada no repositório: base do rascunho (baseSig) e da diferença ao salvar.
+  // Última versão lida ou gravada no repositório: base do rascunho (baseSig) e do "não salvo" (assinaturas diferentes).
   const [base, setBase] = useState<Program | null>(null);
-  // Perfil local de quem montou uma ficha recebida, quando não é o personal atual (nome na impressão).
+  // Perfil local de quem montou uma ficha recebida, quando não é o personal atual (nome no cabeçalho e na impressão).
   const [creator, setCreator] = useState<Profile | null>(null);
   const [day, setDay] = useState(0);
-  const [dirty, setDirty] = useState(false);
   const [openEx, setOpenEx] = useState<string | null>(null);
   const [picker, setPicker] = useState<{ replace?: string } | null>(null);
   const [dayMenu, setDayMenu] = useState(false);
   const [confirmDay, setConfirmDay] = useState(false);
   // Destino pedido enquanto havia alterações não salvas (null = ninguém pediu para sair).
   const [leave, setLeave] = useState<string | null>(null);
+  // "Sair sem salvar": as alterações continuam na tela até a navegação terminar, mas sem proteção nem rascunho.
+  const [discarded, setDiscarded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ tone: "done" | "error" | "info"; text: string } | null>(null);
   const [restored, setRestored] = useState(false);
+  const [postSave, setPostSave] = useState<PostSave | null>(null);
+  // Contadores: foco no título da barra; salvamentos (remonta o envio da barra e refaz o link); releitura do envio.
+  const [focusTitle, setFocusTitle] = useState(0);
+  const [saveCount, setSaveCount] = useState(0);
+  const [deliveryVersion, setDeliveryVersion] = useState(0);
+  const [openedAt] = useState(() => Date.now());
   const ready = useRef(false);
   const [notFound, setNotFound] = useState(false);
   const autoPrint = useRef(false);
+  const saveBar = useRef<HTMLDivElement>(null);
+  const barAction = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let alive = true;
@@ -77,15 +115,30 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
         const draft = draftToRestore(readDraft(user?.id ?? "", programId), p);
         if (draft) {
           setProgram(draft);
-          setDirty(true);
           setRestored(true);
           setMsg({ tone: "info", text: "Recuperamos as alterações que você ainda não tinha salvado." });
         } else {
           setProgram(p);
-          const inactive = !p.active && !(user?.role === "coach" && p.ownerId === user.id);
-          if (q.get("enviada")) setMsg({ tone: "done", text: inactive ? "Ficha criada, ainda inativa: a ficha atual continua valendo até você tocar em “Tornar ativa”." : "Ficha salva e ativa. Revise os detalhes e envie pelo WhatsApp ou imprima." });
-          else if (q.get("salva"))
+          if (q.get("enviada")) {
+            // Chegada do gerador: com aluno real, a barra já abre com o envio (visível sem rolar); senão, uma frase.
+            const k: FichaKind = user ? fichaKind({ viewer: user, program: p, returnTo }) : "propria";
+            const real = Boolean(student && !student.sample);
+            const m = newFichaMessage({
+              kind: k,
+              mode,
+              program: p,
+              studentFirst: student ? firstName(student.name) : null,
+              coachFirst: null,
+              currentCoach: false,
+              sample: !real,
+              hasExercises: hasExercises(p),
+            });
+            if ("bar" in m) setPostSave({ title: postSaveTitle(k, mode, { fromGenerator: true }), text: m.text, send: true });
+            else setMsg({ tone: "done", text: m.text });
+          } else if (q.get("salva")) {
+            const inactive = !p.active && !(user?.role === "coach" && p.ownerId === user.id);
             setMsg({ tone: "done", text: user?.role === "coach" ? "Modelo salvo. Monte os treinos e depois aplique a um aluno." : inactive ? "Ficha criada, ainda inativa: sua ficha atual continua valendo até você tocar em “Tornar ativa”." : "Ficha salva e ativa. Ela já aparece em Hoje." });
+          }
           autoPrint.current = Boolean(q.get("imprimir"));
         }
         ready.current = true;
@@ -106,8 +159,14 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
     }
   }, [program]);
 
+  // Assinatura da versão de onde a edição partiu: vai junto no rascunho e decide o "não salvo".
+  const baseSig = useMemo(() => (base ? programSignature(base) : undefined), [base]);
+  // "Não salvo" = diferença real de conteúdo (mudar e voltar ao valor de antes não conta).
+  const dirty = useMemo(() => Boolean(program && baseSig !== undefined && programSignature(program) !== baseSig), [program, baseSig]);
+  const guard = dirty && !discarded;
+
   useEffect(() => {
-    if (!dirty) return;
+    if (!guard) return;
     const unload = (e: BeforeUnloadEvent) => e.preventDefault();
     // Qualquer link do app (menu inferior, logo, voltar) pergunta antes de sair com alterações pendentes.
     const click = (e: MouseEvent) => {
@@ -126,22 +185,19 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
       window.removeEventListener("beforeunload", unload);
       document.removeEventListener("click", click, true);
     };
-  }, [dirty]);
-
-  // Assinatura da versão de onde a edição partiu: vai junto no rascunho.
-  const baseSig = useMemo(() => (base ? programSignature(base) : undefined), [base]);
+  }, [guard]);
 
   // Guarda o que está em edição enquanto não for salvo (cobre o "voltar" do aparelho e a recarga).
   useEffect(() => {
     if (!ready.current) return;
     try {
-      const draft: FichaDraft | null = dirty && program ? { program, ...(baseSig ? { baseSig } : {}) } : null;
+      const draft: FichaDraft | null = guard && program ? { program, ...(baseSig ? { baseSig } : {}) } : null;
       if (draft) sessionStorage.setItem(fichaDraftKey(user?.id ?? "", programId), JSON.stringify(draft));
       else sessionStorage.removeItem(fichaDraftKey(user?.id ?? "", programId));
     } catch {
       /* sem espaço ou modo privado: segue só em memória */
     }
-  }, [program, dirty, baseSig, programId, user?.id]);
+  }, [program, guard, baseSig, programId, user?.id]);
 
   // Ficha recebida de um personal que não é o atual: o nome vem do perfil local dele (gravado quando o link chegou).
   const createdBy = program?.createdBy;
@@ -169,7 +225,6 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
   async function discard() {
     dropDraft();
     setRestored(false);
-    setDirty(false);
     setMsg(null);
     const fresh = await repo.getProgram(programId).catch(() => null);
     if (fresh) {
@@ -206,9 +261,14 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
   const validity = programValidity(program.createdAt, program.durationWeeks);
   const names = shareNames(user, student);
   const kind: FichaKind = user ? fichaKind({ viewer: user, program, returnTo }) : "propria";
+  const realStudent = Boolean(student && !student.sample);
+  const studentFirst = kind === "como_aluno" ? (user ? firstName(user.name) : null) : student ? firstName(student.name) : null;
+  const coach = fichaCoach({ createdBy: program.createdBy, remoteCoach: user?.remoteCoach, creator });
+  const contextOf = (p: Pick<Program, "active" | "adjustedAt">): FichaContextInput => ({ kind, mode, program: p, studentFirst, coachFirst: coach.first, currentCoach: coach.current });
+  const context = fichaContextText(contextOf(program), fmtDayMonth);
   const fmtFull = (iso: string) => fmtDate(iso, { day: "2-digit", month: "2-digit", year: "numeric" });
   // Ficha do personal ajustada no aparelho do aluno: sai sem a assinatura dele, com "Ajustada em … a partir da ficha de …".
-  const adjustedNote = kind === "recebida" ? programAdjustedNote(program, fichaCoach({ createdBy: program.createdBy, remoteCoach: user?.remoteCoach, creator }).full, fmtFull) : null;
+  const adjustedNote = kind === "recebida" ? programAdjustedNote(program, coach.full, fmtFull) : null;
   // Assinatura "Nome · CREF …" da ficha impressa: o personal logado ou, no celular do aluno, o personal que enviou a
   // ficha. Conteúdo alterado no aparelho do aluno (adjustedAt) nunca leva nome nem CREF do personal.
   const signature = program.adjustedAt ? undefined : coachSignature(signerFor(user, program.createdBy));
@@ -219,11 +279,17 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
       ? `Validade: ${program.durationWeeks} semanas`
       : `Válida até ${fmtFull(validityEnd(program.createdAt, program.durationWeeks).toISOString())}`
     : null;
+  const barOpen = !dirty && postSave !== null;
+  // Um botão de envio por vez: com a barra mostrando o envio, o painel do fim mostra só as linhas e "Outras formas".
+  const barSends = barOpen && Boolean(postSave?.send) && realStudent;
+  // Painel com o link do app: ficha de aluno real, no modo local (modelo, ficha própria, exemplo e nuvem: como antes).
+  const linkPanel = kind === "aluno" && mode === "local" && realStudent && student ? student : null;
 
   const change = (fn: (p: Program) => Program) => {
     setProgram((p) => (p ? fn(p) : p));
-    setDirty(true);
     setMsg(null);
+    // A barra depois de salvar fica até a próxima alteração (aí volta a de "não salvo").
+    setPostSave(null);
   };
   const changeDays = (fn: (days: WorkoutDay[]) => WorkoutDay[]) => change((p) => ({ ...p, days: fn(p.days) }));
   const patchDay = (patch: Partial<WorkoutDay>) => changeDays((days) => days.map((x, i) => (i === index ? { ...x, ...patch } : x)));
@@ -273,6 +339,8 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
 
   async function save(): Promise<boolean> {
     if (!program) return false;
+    // Sem diferença da versão gravada, nada é gravado (a data de edição só muda com conteúdo).
+    if (!dirty) return true;
     const fail = (text: string) => {
       setMsg({ tone: "error", text });
       return false;
@@ -282,6 +350,8 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
     const keys = program.days.map((x) => x.key.trim().toUpperCase());
     if (keys.some((k) => !k)) return fail("Todo treino precisa de uma letra ou nome curto (A, B, Push…).");
     if (new Set(keys).size !== keys.length) return fail("Dois treinos estão com a mesma letra. Use letras diferentes para cada um.");
+    // O "Salvar ficha" some ao salvar: se o foco estava nele, vai para o título da barra (não para o body).
+    const focusWasOnSave = Boolean(saveBar.current?.contains(document.activeElement));
     setSaving(true);
     try {
       // Ficha recebida do personal, no modo local, com diferença: grava adjustedAt e mantém createdBy.
@@ -289,9 +359,12 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
       const saved = await repo.saveProgram(clean);
       setProgram(saved);
       setBase(saved);
-      setDirty(false);
       setRestored(false);
+      setMsg(null);
+      setSaveCount((n) => n + 1);
+      setDeliveryVersion((n) => n + 1);
       const planned = saved.days.flatMap((x) => x.exercises);
+      const withExercises = planned.length > 0;
       track("program_edited", {
         days: saved.days.length,
         exercises: planned.length,
@@ -302,19 +375,13 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
         has_validity: Boolean(saved.durationWeeks),
         system: saved.system,
         kind,
+        send_ready: sendReady({ kind, mode, sample: !realStudent, active: saved.active, hasExercises: withExercises }),
+        tela: editorWidth(window.innerWidth),
+        duracao: editDuration(Date.now() - openedAt),
       });
-      const whoSees = student ? firstName(student.name) : "O aluno";
-      setMsg({
-        tone: "done",
-        text:
-          !saved.active && !template
-            ? `Ficha salva, ainda inativa: ${isCoachEditing ? `${whoSees} continua com a ficha atual` : "sua ficha atual continua valendo"} até você tocar em “Tornar ativa”.`
-            : !isCoachEditing
-              ? "Ficha salva."
-              : repo.capabilities.invites
-                ? `Ficha salva. ${whoSees} já vê a versão nova no app.`
-                : `Ficha salva. Envie a versão nova a ${whoSees} pelo WhatsApp ou imprima.`,
-      });
+      const next = postSaveNextStep({ ...contextOf(saved), sample: !realStudent, hasExercises: withExercises });
+      setPostSave({ title: postSaveTitle(kind, mode), text: next && "text" in next ? next.text : null, send: Boolean(next && "send" in next) });
+      if (focusWasOnSave) setFocusTitle((n) => n + 1);
       onSaved?.(saved);
       return true;
     } catch (e) {
@@ -331,6 +398,9 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
       await repo.setActiveProgram(program!.ownerId, program!.id);
       setProgram((p) => (p ? { ...p, active: true } : p));
       setBase((b) => (b ? { ...b, active: true } : b));
+      // O próximo passo da barra falava da ficha inativa: deixa de valer.
+      setPostSave(null);
+      setDeliveryVersion((n) => n + 1);
       setMsg({ tone: "done", text: "Esta é a ficha ativa agora." });
     } catch (e) {
       reportError(e, "ficha:ativar");
@@ -338,12 +408,58 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
     }
   }
 
+  /** Envio feito pela barra: a linha de envio é relida e a barra troca o envio pelo estado do toque. */
+  function barSent(via: PrepVia, at: string) {
+    setDeliveryVersion((n) => n + 1);
+    const focusWasInBar = Boolean(barAction.current?.contains(document.activeElement));
+    // Depois do clique: a âncora do WhatsApp precisa continuar montada até o navegador abrir o link.
+    setTimeout(() => {
+      setPostSave((s) => (s ? { ...s, text: prepStatusText(via, at, studentFirst ?? "o aluno", "personal"), textIcon: via === "copy" ? "copia" : "whatsapp", send: false } : s));
+      if (focusWasInBar) setFocusTitle((n) => n + 1);
+    }, 0);
+  }
+
   const recent = program.days.flatMap((x) => x.exercises.map((e) => e.exerciseId)).filter((id, i, all) => all.indexOf(id) === i);
   const empty = program.days.every((x) => !x.exercises.length);
+  const shareTitle = student ? `Enviar para ${firstName(student.name)}` : template ? "Compartilhar modelo" : "Compartilhar ficha";
+  const shareProps = { program, student, canExport: PLANS[plan].export, onPrint: () => window.print(), disabled: dirty || empty };
+  const programShare = <ProgramShare {...shareProps} />;
+  const pendingNote = dirty ? (
+    <p className="mb-3 text-sm text-steel">Salve as alterações para compartilhar a versão nova.</p>
+  ) : empty ? (
+    <p className="mb-3 text-sm text-steel">Adicione exercícios antes de enviar.</p>
+  ) : null;
 
   return (
     <div className="space-y-5">
       {backLink}
+
+      <FichaContextHeader
+        title={context.title}
+        status={
+          <FichaStatusLine
+            badge={template ? "modelo" : program.active ? "ativa" : "inativa"}
+            system={getSystem(program.system).name}
+            validity={template ? null : validity}
+            onActivate={!program.active && !template ? () => void activate() : undefined}
+          />
+        }
+        note={context.note}
+        delivery={
+          student && showEditorDeliveryLine({ kind, mode, sample: !realStudent, active: program.active, dirty }) ? <EditorDeliveryLine student={student} version={deliveryVersion} /> : null
+        }
+      />
+
+      {msg && !(dirty && msg.tone === "error") ? (
+        <Alert tone={msg.tone} className="no-print">
+          {msg.text}
+        </Alert>
+      ) : null}
+      {restored && dirty ? (
+        <button type="button" onClick={() => void discard()} className="no-print min-h-11 text-sm font-semibold text-steel underline hover:text-iron">
+          Descartar essas alterações e voltar à versão salva
+        </button>
+      ) : null}
 
       <div className="no-print space-y-3">
         <Field label={template ? "Nome do modelo" : "Nome da ficha"}>
@@ -379,28 +495,7 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
             </Select>
           </Field>
         </div>
-        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-steel">
-          {template ? <Badge>Modelo</Badge> : program.active ? <Badge tone="done">Ativa</Badge> : <Badge>Inativa</Badge>}
-          <span>{[student ? `Ficha de ${student.name}` : null, getSystem(program.system).name].filter(Boolean).join(" · ")}</span>
-          {validity && !template ? <span className={cx("font-semibold", validity.state === "expired" ? "text-plate-red-ink" : "text-iron")}>{validity.label}</span> : null}
-          {!program.active && !template ? (
-            <button type="button" onClick={activate} className="min-h-9 font-semibold text-iron underline">
-              Tornar ativa
-            </button>
-          ) : null}
-        </p>
       </div>
-
-      {msg && !(dirty && msg.tone === "error") ? (
-        <Alert tone={msg.tone} className="no-print">
-          {msg.text}
-        </Alert>
-      ) : null}
-      {restored && dirty ? (
-        <button type="button" onClick={() => void discard()} className="no-print min-h-11 text-sm font-semibold text-steel underline hover:text-iron">
-          Descartar essas alterações e voltar à versão salva
-        </button>
-      ) : null}
 
       <div className="no-print -mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0" role="tablist" aria-label="Treinos da ficha">
         {program.days.map((x, i) => (
@@ -471,10 +566,10 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
                       <ChevronDown className={cx("mt-1 size-4 shrink-0 text-steel transition-transform", open && "rotate-180")} aria-hidden />
                     </button>
                     <div className="flex shrink-0 items-center pr-1">
-                      <IconButton label={`Subir ${e.name}`} disabled={i === 0} onClick={() => changeList((l) => swap(l, i, i - 1))} className="w-10">
+                      <IconButton label={`Subir ${e.name}`} disabled={i === 0} onClick={() => changeList((l) => swap(l, i, i - 1))}>
                         <ArrowUp className="size-4" />
                       </IconButton>
-                      <IconButton label={`Descer ${e.name}`} disabled={i === d.exercises.length - 1} onClick={() => changeList((l) => swap(l, i, i + 1))} className="w-10">
+                      <IconButton label={`Descer ${e.name}`} disabled={i === d.exercises.length - 1} onClick={() => changeList((l) => swap(l, i, i + 1))}>
                         <ArrowDown className="size-4" />
                       </IconButton>
                     </div>
@@ -535,17 +630,18 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
                         <span className="col-head mb-1 block text-steel">Observação para o aluno</span>
                         <Input value={e.notes ?? ""} onChange={(ev) => changeEx(e.uid, { notes: ev.target.value || undefined })} placeholder="Cadência, pegada, amplitude, ajuste do banco…" maxLength={160} />
                       </label>
+                      {/* 44 px de altura; "Remover" fica no lugar, com ícone e contorno (destrutivo nunca cheio), sem diálogo: a remoção é parte de uma edição ainda não salva. */}
                       <div className="grid grid-cols-3 gap-2">
-                        <Button size="sm" variant="secondary" className="px-1" onClick={() => setPicker({ replace: e.uid })}>
+                        <Button variant="secondary" className="px-1!" onClick={() => setPicker({ replace: e.uid })}>
                           Trocar
                         </Button>
-                        <Button size="sm" variant="secondary" className="px-1" onClick={() => changeList((l) => [...l.slice(0, i + 1), { ...e, uid: uid() }, ...l.slice(i + 1)])}>
+                        <Button variant="secondary" className="px-1!" onClick={() => changeList((l) => [...l.slice(0, i + 1), { ...e, uid: uid() }, ...l.slice(i + 1)])}>
                           Duplicar
                         </Button>
                         <Button
-                          size="sm"
                           variant="danger"
-                          className="px-1"
+                          className="gap-1.5! px-1!"
+                          icon={<Trash2 className="size-4 shrink-0" aria-hidden />}
                           onClick={() => {
                             changeList((l) => l.filter((x) => x.uid !== e.uid));
                             setOpenEx(null);
@@ -584,14 +680,36 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
         <Textarea value={program.notes ?? ""} onChange={(e) => change((p) => ({ ...p, notes: e.target.value }))} rows={3} maxLength={800} placeholder="Aquecimento, progressão de carga, cardio, dias de descanso…" />
       </Field>
 
-      <Panel title={student ? `Enviar para ${student.name.split(" ")[0]}` : template ? "Compartilhar modelo" : "Compartilhar ficha"} className="no-print">
+      <Panel title={shareTitle} className="no-print">
         {needsCoachIdentity(user) ? (
           <Link href="/conta" className="mb-2 flex min-h-11 items-center gap-2 text-sm font-semibold underline">
             <IdCard className="size-4 shrink-0" aria-hidden /> {COACH_IDENTITY_HINT}
           </Link>
         ) : null}
-        {dirty ? <p className="mb-3 text-sm text-steel">Salve as alterações para compartilhar a versão nova.</p> : empty ? <p className="mb-3 text-sm text-steel">Adicione exercícios antes de enviar.</p> : null}
-        <ProgramShare program={program} student={student} canExport={PLANS[plan].export} onPrint={() => window.print()} disabled={dirty || empty} />
+        {linkPanel && program.active ? (
+          <>
+            {/* Link para o app do aluno como ação principal; texto, PDF e planilha em "Outras formas" (U2 §3.5, anamnese §8.6). */}
+            {pendingNote ?? <PanelDeliveryLines student={linkPanel} version={deliveryVersion} className="mb-3" />}
+            {barSends ? null : <SendFichaLink student={linkPanel} where="editor" enabled={!dirty && !empty} version={saveCount} onSent={() => setDeliveryVersion((n) => n + 1)} />}
+            <div className={cx(!barSends && "mt-4 border-t border-rule pt-3")}>
+              <h3 className="text-sm font-bold">Outras formas</h3>
+              <p className="mb-3 mt-0.5 text-sm text-steel">Texto, PDF e planilha não atualizam o app de {firstName(linkPanel.name)}.</p>
+              {/* O link é o único verde do painel: o texto pelo WhatsApp fica secundário ("Mandar como texto"). */}
+              <ProgramShare {...shareProps} secondary />
+            </div>
+          </>
+        ) : linkPanel ? (
+          <>
+            <p className="mb-3 text-sm text-steel">Esta ficha não está ativa. O link para o celular leva só a ficha ativa.</p>
+            {pendingNote}
+            {programShare}
+          </>
+        ) : (
+          <>
+            {pendingNote}
+            {programShare}
+          </>
+        )}
       </Panel>
 
       {/* Versão de impressão: a ficha inteira em papel */}
@@ -618,22 +736,42 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
         ) : null}
       </div>
 
-      {dirty ? (
-        <div className="no-print sticky bottom-nav-safe z-10 space-y-2 lg:bottom-4">
-          {msg?.tone === "error" ? (
-            // Fundo opaco: a barra flutua sobre a lista de exercícios.
-            <div className="rounded-[var(--radius-ficha)] bg-paper shadow-lift">
-              <Alert tone="error">{msg.text}</Alert>
+      {/* Barra fixa: "não salvo" com "Salvar ficha" ou, depois de salvar, o resumo com o próximo passo. Sempre montada. */}
+      <div className="no-print sticky bottom-nav-safe z-10 lg:bottom-4">
+        {dirty ? (
+          <div ref={saveBar} className="space-y-2">
+            {msg?.tone === "error" ? (
+              // Fundo opaco: a barra flutua sobre a lista de exercícios.
+              <div className="rounded-[var(--radius-ficha)] bg-paper shadow-lift">
+                <Alert tone="error">{msg.text}</Alert>
+              </div>
+            ) : null}
+            <div className="flex items-center justify-end gap-3">
+              <span className="inline-flex items-center gap-1.5 rounded bg-warn-fill px-2 py-1 text-sm font-semibold text-iron">
+                <TriangleAlert className="size-4 shrink-0" aria-hidden /> Alterações não salvas
+              </span>
+              <Button size="lg" onClick={() => void save()} loading={saving} className="shadow-lift">
+                Salvar ficha
+              </Button>
             </div>
-          ) : null}
-          <div className="flex items-center justify-end gap-3">
-            <span className="rounded bg-plate-yellow px-2 py-1 text-sm font-semibold">Alterações não salvas</span>
-            <Button size="lg" onClick={() => void save()} loading={saving} className="shadow-lift">
-              Salvar ficha
-            </Button>
           </div>
-        </div>
-      ) : null}
+        ) : null}
+        <PostSaveBar
+          open={barOpen}
+          title={postSave?.title ?? ""}
+          text={postSave?.text}
+          textIcon={postSave?.textIcon}
+          focusRequest={focusTitle}
+          onClose={() => setPostSave(null)}
+          action={
+            barSends && linkPanel ? (
+              <div ref={barAction}>
+                <SendFichaLink key={saveCount} student={linkPanel} where="editor_salvo" enabled version={saveCount} compact status={false} onSent={barSent} />
+              </div>
+            ) : null
+          }
+        />
+      </div>
 
       <ExercisePicker
         open={Boolean(picker)}
@@ -694,7 +832,7 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
             onClick={() => {
               const to = leave;
               dropDraft();
-              setDirty(false);
+              setDiscarded(true);
               setLeave(null);
               if (to) router.push(to);
             }}
@@ -727,18 +865,6 @@ function readDraft(editorId: string, programId: string): FichaDraft | null {
   } catch {
     return null;
   }
-}
-
-/**
- * Seleciona todo o texto agora e de novo no próximo tique: o Safari do iPhone pode pôr o cursor no fim depois do
- * foco, e "30" + "35" viraria "3035" (U8 R17). Só reaplica se o campo ainda tem o foco e o mesmo valor.
- */
-function selectAllSoon(el: HTMLInputElement) {
-  const value = el.value;
-  el.select();
-  setTimeout(() => {
-    if (document.activeElement === el && el.value === value) el.setSelectionRange(0, el.value.length);
-  }, 0);
 }
 
 function swap<T>(list: T[], a: number, b: number): T[] {

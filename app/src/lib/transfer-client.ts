@@ -4,10 +4,10 @@ import { localRepo } from "@/lib/app-context";
 import { track } from "@/lib/analytics";
 import { lastBackupAt, markBackupDone } from "@/lib/data/local";
 import type { Repository } from "@/lib/data/repository";
-import { addPrepEntries, isIsoDate, nextAck, parseFichaAck, parseFichaSendRecord, parsePrepLog, type FichaAck, type FichaSendRecord, type PrepEntry, type PrepVia } from "@/lib/domain/delivery";
+import { addPrepEntries, fichaDelivery, fichaEchoOf, fichaVersao, isIsoDate, nextAck, parseFichaAck, parseFichaSendRecord, parsePrepLog, sameSession, type FichaAck, type FichaDelivery, type FichaSendRecord, type FichaVersao, type PrepEntry, type PrepVia, type VersionPair } from "@/lib/domain/delivery";
 import { uid } from "@/lib/domain/ids";
 import { backupAgeBucket, backupFileName, buildBackup, downloadText, parseBackup as parseBackupFile, SENT_KEY_RE, SENT_SINCE_KEY, SENT_SUFFIXES, sentKeyOf, type Backup, type BackupBundle } from "@/lib/domain/export";
-import { mergeMetric, mirrorLoads, studentFieldsOf, type FichaPacket, type TreinosPacket } from "@/lib/domain/transfer";
+import { fichaLinkItems, mergeMetric, mirrorLoads, receivedVersions, studentFieldsOf, type FichaPacket, type TreinosPacket } from "@/lib/domain/transfer";
 import type { Profile, Session } from "@/lib/domain/types";
 
 /**
@@ -19,13 +19,15 @@ import type { Profile, Session } from "@/lib/domain/types";
  * O aluno recebe ficha e dieta do personal. Devolve o perfil que deve ficar aberto.
  * `consent`: a pessoa tocou em "Salvar no meu celular" com o texto de autorização logo acima do botão; só então
  * a autorização de dados de saúde é gravada (origem "aluno_link"). Sem isso, nada é carimbado sozinho.
+ * `remoteCoach.recebido` guarda a versão do personal que chegou (`receivedVersions`); ela volta com os treinos.
  */
 export async function importFicha(packet: FichaPacket, current: Profile | null, opts: { consent?: boolean } = {}): Promise<Profile> {
   const now = new Date().toISOString();
   const ref = packet.student.ref;
   // Só os campos de cadastro: o que mais vier no link (versões novas, link adulterado) não entra no perfil.
   const fields = studentFieldsOf(packet.student);
-  const remoteCoach = { id: packet.coach.id, name: packet.coach.name, phone: packet.coach.phone, cref: packet.coach.cref, studentRef: ref };
+  const recebido = receivedVersions(packet, current && current.role === "athlete" ? current.remoteCoach : undefined);
+  const remoteCoach = { id: packet.coach.id, name: packet.coach.name, phone: packet.coach.phone, cref: packet.coach.cref, studentRef: ref, ...(recebido ? { recebido } : {}) };
 
   // Quem já usa o app como aluno neste aparelho continua com o próprio histórico.
   const keepsHistory = Boolean(current && current.role === "athlete");
@@ -68,21 +70,35 @@ export async function importFicha(packet: FichaPacket, current: Profile | null, 
 }
 
 /**
- * O personal recebe os treinos do aluno. Devolve quantos eram novos, quantos já existiam e quantos
- * exercícios da ficha passaram a mostrar a carga que o aluno fez.
+ * O personal recebe os treinos do aluno. Devolve quantos eram novos (`added`), quantos já existiam e mudaram
+ * (`updated`), quantos já estavam iguais no painel (`same`, nada é regravado) e quantos exercícios da ficha
+ * passaram a mostrar a carga que o aluno fez (`mirrored`).
+ * `opts.coachId` (o personal deste aparelho): com ele, o eco da versão (`packet.ficha`) é gravado em `:ack`, só se o
+ * pacote for deste personal e deste aluno (`fichaEchoOf`) e mais novo que o eco atual (`nextAck`). Link antigo
+ * (sem `ficha`) não grava nada.
  */
-export async function importTreinos(packet: TreinosPacket, studentId: string): Promise<{ added: number; updated: number; mirrored: number }> {
-  const existing = new Set((await localRepo.listSessions(studentId)).map((s) => s.id));
+export async function importTreinos(packet: TreinosPacket, studentId: string, opts: { coachId?: string } = {}): Promise<{ added: number; updated: number; same: number; mirrored: number }> {
+  const existing = new Map((await localRepo.listSessions(studentId)).map((s) => [s.id, s] as const));
   let added = 0;
   let updated = 0;
+  let same = 0;
   const incoming: Session[] = [];
   for (const s of packet.sessions) {
     const session: Session = { ...s, userId: studentId };
-    if (existing.has(s.id)) updated += 1;
-    else added += 1;
+    const prev = existing.get(s.id);
     incoming.push(session);
+    if (prev && sameSession(prev, session)) {
+      same += 1;
+      continue;
+    }
+    if (prev) updated += 1;
+    else added += 1;
+    existing.set(s.id, session);
     await localRepo.saveSession(session);
   }
+
+  const echo = fichaEchoOf(packet, studentId, opts.coachId);
+  if (echo) recordFichaAck(studentId, { ...echo, treinosSentAt: packet.sentAt, registeredAt: new Date().toISOString() });
 
   // A ficha ativa do aluno passa a mostrar a carga atual: o próximo reenvio não faz a carga regredir.
   let mirrored = 0;
@@ -104,7 +120,7 @@ export async function importTreinos(packet: TreinosPacket, studentId: string): P
     if (same) metrics[metrics.indexOf(same)] = merged;
     else metrics.push(merged);
   }
-  return { added, updated, mirrored };
+  return { added, updated, same, mirrored };
 }
 
 // ---- treinos já enviados ao personal (aparelho do aluno) ----------------------------
@@ -126,14 +142,6 @@ export function markSessionsSent(userId: string, ids: string[], at: string = new
     localStorage.setItem(sentKey(userId), JSON.stringify([...all].slice(-500)));
     localStorage.setItem(sentKeyOf(userId, ":at"), at);
   } catch {}
-}
-
-export function lastSentAt(userId: string): string | null {
-  try {
-    return localStorage.getItem(sentKeyOf(userId, ":at"));
-  } catch {
-    return null;
-  }
 }
 
 // ---- registro de envio com evidência (U2; tipos e regras em @/lib/domain/delivery) ------
@@ -206,6 +214,30 @@ export function deliveryTrackingSince(now: string = new Date().toISOString()): s
     localStorage.setItem(SENT_SINCE_KEY, now);
   } catch {}
   return now;
+}
+
+/**
+ * Situação do envio da ficha e da dieta deste aluno (U2b), lida agora do aparelho: `current` = as versões do que
+ * iria no link (`fichaLinkItems`). Garante o marcador `@desde` (gravado na primeira leitura).
+ */
+export function readFichaDelivery(studentId: string, current: VersionPair): FichaDelivery {
+  return fichaDelivery({ current, record: fichaSendRecord(studentId), ack: fichaAckOf(studentId), trackingSince: deliveryTrackingSince() });
+}
+
+/** Versões (os `updatedAt`) do que iria no link da ficha deste aluno agora (`fichaLinkItems`), no aparelho. */
+export async function fichaVersionsOf(studentId: string): Promise<VersionPair> {
+  const [programs, diet] = await Promise.all([localRepo.listPrograms(studentId), localRepo.getDiet(studentId)]);
+  const items = fichaLinkItems(programs, diet);
+  return { programAt: items.program?.updatedAt ?? null, dietAt: items.diet?.updatedAt ?? null };
+}
+
+/**
+ * Medição de `/receber` (`treinos_link_received.ficha_versao`): a versão que veio com os treinos comparada com a
+ * atual. Só conta o eco que vale (`fichaEchoOf`: mesmo personal e mesmo aluno); sem ele, `sem_info`.
+ */
+export async function receivedFichaVersao(packet: TreinosPacket, studentId: string, coachId: string | undefined): Promise<FichaVersao> {
+  const echo = fichaEchoOf(packet, studentId, coachId);
+  return echo ? fichaVersao(echo, await fichaVersionsOf(studentId)) : "sem_info";
 }
 
 /** Apaga as chaves de envio de um perfil. Implementada em data/local (o repositório chama ao remover um perfil). */

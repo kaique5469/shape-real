@@ -79,6 +79,28 @@ describe("peças do texto reaproveitadas na tela (U3a)", () => {
   });
 });
 
+describe("cardápio ajustado no aparelho do aluno (U3b R5)", () => {
+  const note = "Ajustado em 24/11 a partir do cardápio de Rafael Nunes.";
+  it("com adjustedNote, sai sem a assinatura do personal e termina com a linha do ajuste", () => {
+    const text = dietToText(diet, { coachName: "Rafael Nunes", coachCref: "123456-G/SP", adjustedNote: note });
+    expect(text).not.toContain("CREF");
+    expect(text).not.toContain("Rafael Nunes · ");
+    expect(text.split("\n").at(-1)).toBe(note);
+    expect(text.trim().endsWith(`Beba 2,5 L de água por dia.\n\n${note}`)).toBe(true);
+  });
+  it("sem a nota (ou com nota vazia), a assinatura continua como antes", () => {
+    expect(dietToText(diet, { coachName: "Rafael Nunes", coachCref: "123456-G/SP" }).split("\n").at(-1)).toBe("Rafael Nunes · CREF 123456-G/SP");
+    expect(dietToText(diet, { coachName: "Rafael Nunes", coachCref: "123456-G/SP", adjustedNote: null }).split("\n").at(-1)).toBe("Rafael Nunes · CREF 123456-G/SP");
+    expect(dietToText(diet, { coachName: "Rafael Nunes", coachCref: "123456-G/SP", adjustedNote: " " }).split("\n").at(-1)).toBe("Rafael Nunes · CREF 123456-G/SP");
+  });
+  it("plano só com metas e orientações (U3c): sem total do cardápio", () => {
+    const text = dietToText({ ...diet, meals: [{ uid: "m", name: "Almoço", items: [] }] });
+    expect(text).toContain("Metas do dia:");
+    expect(text).not.toContain("Total do cardápio");
+    expect(text).toContain("*Orientações*");
+  });
+});
+
 describe("dados para as metas em Dieta", () => {
   const ok = { sex: "F" as const, birthYear: "1994", heightCm: "165", weightKg: "62,5" };
   const opts = { thisYear: 2026, needsConsent: true, consent: true };

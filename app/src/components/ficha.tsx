@@ -5,13 +5,16 @@ import { techniqueText } from "@/lib/domain/program-share";
 import type { WorkoutDay } from "@/lib/domain/types";
 import { cx } from "@/lib/cx";
 
-/** Um dia da ficha no formato de folha: cabeçalho escuro, colunas, pauta fina. */
+/**
+ * Um dia da ficha no formato de folha: cabeçalho escuro, colunas, pauta fina.
+ * A letra do treino é identidade (`bg-brand` + `data-brand`); a técnica é ênfase sem estado (`text-iron`), U7 §3.4.
+ */
 export function FichaDay({ day, compact, className }: { day: WorkoutDay; compact?: boolean; className?: string }) {
   const meta = [`${day.exercises.length} ${day.exercises.length === 1 ? "exercício" : "exercícios"}`, day.exercises.length ? `~${estimateDayMinutes(day)} min` : null, day.focus.map((g) => GROUP_LABEL[g]).join(", ") || null].filter(Boolean);
   return (
     <div className={cx("ficha-day overflow-hidden rounded-[8px] border border-rule-strong bg-paper", className)}>
       <div className="flex items-center gap-3 bg-iron px-4 py-3 text-chalk">
-        <span className="plate-type grid h-11 min-w-11 shrink-0 place-items-center rounded bg-plate-red px-2 text-xl text-white">{day.key}</span>
+        <span data-brand className="plate-type grid h-11 min-w-11 shrink-0 place-items-center rounded bg-brand px-2 text-xl text-white">{day.key}</span>
         <div className="min-w-0">
           <p className="truncate font-bold">{day.title || `Treino ${day.key}`}</p>
           <p className="truncate text-xs text-chalk/65">{meta.join(" · ")}</p>
@@ -35,7 +38,7 @@ export function FichaDay({ day, compact, className }: { day: WorkoutDay; compact
                   </p>
                   {!compact && (e.technique !== "normal" || e.notes) ? (
                     <p className="mt-0.5 text-xs text-steel">
-                      {e.technique !== "normal" ? <span className="font-semibold text-plate-red-ink">{techniqueText(day.exercises, i)}{e.notes ? ". " : ""}</span> : null}
+                      {e.technique !== "normal" ? <span className="font-semibold text-iron">{techniqueText(day.exercises, i)}{e.notes ? ". " : ""}</span> : null}
                       {e.notes}
                     </p>
                   ) : null}

@@ -95,6 +95,10 @@ Com `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN` o app envia eventos de uso e erros pelo 
 - **Personal (modo teste):** `tester_started → student_created → program_generated / program_assigned → program_edited → program_shared → view_as_student → workout_completed`, mais
   `assessment_logged`, `diet_generated`, `diet_saved`, `diet_shared`, `diet_analyzed`, `program_copied`, `custom_exercise_created`, `custom_food_created`, `student_contacted`.
 - **Recursos do treino:** `session_feature_used` (cronômetro de série, troca de exercício, som, descanso), `pr_achieved`.
+- **Troca por link (sem conta):** `ficha_link_sent` (`via`, `has_program`, `has_diet`, `direct`, `where`: pagina_aluno, editor,
+  editor_salvo ou dieta; `situacao`: nunca, repetido, mudou ou sem_info) → `ficha_link_opened` (`aviso_dieta`: ajustes, proprio
+  ou nenhum) → `treinos_link_sent` (`via`, `sessions`, `where`: resumo, hoje, historico ou historico_item; `resend`; `novos`) →
+  `treinos_link_received` (`added`, `same`, `mirrored`, `ficha_versao`). Só contagens, booleanos e categorias.
 - **Conversão:** `paywall_viewed → upgrade_clicked`; loop do personal: `student_invited → invite_accepted`.
 - **Erros:** exceções não tratadas (captura automática), telas derrubadas (`error.tsx`, `global-error.tsx`), erros tratados com o local
   (`reportError`), respostas de erro das rotas e falhas inesperadas da IA no servidor (`src/instrumentation.ts`, `src/lib/posthog-server.ts`).

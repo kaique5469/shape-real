@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Check, Plus, Search, Trash2 } from "lucide-react";
 import { useApp } from "@/lib/app-context";
 import { GROUP_LABEL, UNIT_LABEL, getExercise, normalize, searchExercises } from "@/lib/domain/exercises";
@@ -31,9 +31,11 @@ interface Props {
   multi?: boolean;
   /** Ids já usados na ficha: aparecem primeiro quando a busca está vazia. */
   recent?: string[];
+  /** Linha logo abaixo do título (ex.: na troca durante o treino, "A ficha do seu personal não muda."). */
+  hint?: ReactNode;
 }
 
-export function ExercisePicker({ open, onClose, onPick, title = "Adicionar exercício", multi = false, recent }: Props) {
+export function ExercisePicker({ open, onClose, onPick, title = "Adicionar exercício", multi = false, recent, hint }: Props) {
   const { user, repo, refreshCustom, customVersion } = useApp();
   const [q, setQ] = useState("");
   const [group, setGroup] = useState<MuscleGroup | null>(null);
@@ -114,6 +116,7 @@ export function ExercisePicker({ open, onClose, onPick, title = "Adicionar exerc
         />
       ) : (
         <>
+          {hint ? <p className="-mt-1 mb-3 text-sm text-steel">{hint}</p> : null}
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-steel" aria-hidden />
             <Input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar: supino, remada, agachamento…" className="pl-9" aria-label="Buscar exercício" />
@@ -169,7 +172,7 @@ export function ExercisePicker({ open, onClose, onPick, title = "Adicionar exerc
                         </Button>
                       </span>
                     ) : (
-                      <button type="button" onClick={() => setConfirmDel(e.id)} aria-label={`Excluir exercício ${e.name}`} className="grid w-11 shrink-0 place-items-center text-plate-red-ink hover:bg-chalk">
+                      <button type="button" onClick={() => setConfirmDel(e.id)} aria-label={`Excluir exercício ${e.name}`} className="grid w-11 shrink-0 place-items-center text-danger hover:bg-chalk">
                         <Trash2 className="size-4" />
                       </button>
                     )

@@ -10,8 +10,11 @@ import { isIosBrowser } from "@/components/pwa";
 import { Alert, Button, LinkButton, Skeleton } from "@/components/ui";
 import { reportError, track } from "@/lib/analytics";
 import { useApp, localRepo } from "@/lib/app-context";
-import { firstName } from "@/lib/domain/format";
+import { dietLinkSummary, dietReplaceNotice, dietReplaceText } from "@/lib/domain/diet-plan";
+import { fichaReplaceNotice } from "@/lib/domain/ficha-context";
+import { firstName, fmtDayMonth } from "@/lib/domain/format";
 import { parsePacket, type FichaPacket } from "@/lib/domain/transfer";
+import type { DietPlan, Program } from "@/lib/domain/types";
 import { cameFromPaste, packedFromHash, unpackData } from "@/lib/share-link";
 import { importFicha } from "@/lib/transfer-client";
 
@@ -32,6 +35,9 @@ export default function AbrirPage() {
   /** Safari do iPhone, fora do app instalado. */
   const [iosBrowser, setIosBrowser] = useState(false);
   const [noProfile, setNoProfile] = useState(false);
+  /** O que este celular tem hoje e o link vai substituir (aviso antes de atualizar: U3b R7 e U5a R4). */
+  const [localDiet, setLocalDiet] = useState<DietPlan | null>(null);
+  const [localProgram, setLocalProgram] = useState<Program | null>(null);
   const read = useRef(false);
   const deadEnd = useRef(false);
 
@@ -75,6 +81,24 @@ export default function AbrirPage() {
     localRepo.getProfile(packet.student.ref).then((p) => setOwnStudent(Boolean(p && p.managedBy === user.id)));
   }, [packet, user]);
 
+  // Só quem atualiza a própria ficha (aluno, fora do "Ver como aluno") vê o aviso de substituição.
+  useEffect(() => {
+    if (!packet || !user || user.role !== "athlete" || returnTo) return;
+    let alive = true;
+    localRepo
+      .getDiet(user.id)
+      .then((d) => alive && setLocalDiet(d))
+      .catch(() => undefined);
+    if (packet.program)
+      localRepo
+        .getProgram(packet.program.id)
+        .then((p) => alive && setLocalProgram(p && p.ownerId === user.id ? p : null))
+        .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [packet, user, returnTo]);
+
   async function save() {
     if (!packet) return;
     setBusy(true);
@@ -83,7 +107,7 @@ export default function AbrirPage() {
       // O toque no botão, com o texto de autorização logo acima, registra a autorização de dados de saúde.
       const profile = await importFicha(packet, user && user.role === "athlete" && !returnTo ? user : null, { consent: true });
       enterLocalProfile(profile);
-      track("ficha_link_opened", { had_profile: Boolean(user), has_program: Boolean(packet.program), has_diet: Boolean(packet.diet), via_paste: viaPaste, ios_browser: iosBrowser });
+      track("ficha_link_opened", { had_profile: Boolean(user), has_program: Boolean(packet.program), has_diet: Boolean(packet.diet), via_paste: viaPaste, ios_browser: iosBrowser, aviso_dieta: dietNotice ?? "nenhum" });
       router.replace("/hoje?ficha=1");
     } catch (e) {
       reportError(e, "link:abrir-ficha");
@@ -95,8 +119,11 @@ export default function AbrirPage() {
   const coachFirst = packet ? firstName(packet.coach.name) : "";
   const studentFirst = packet ? firstName(packet.student.name) : "";
   const days = packet?.program?.days.length ?? 0;
-  const meals = packet?.diet?.meals.filter((m) => m.items.length).length ?? 0;
   const updating = user?.role === "athlete" && !returnTo;
+  // Ajustes feitos neste celular que o link vai apagar: ficha (mesmo id, com adjustedAt) e dieta (ajustada ou própria).
+  const fichaNotice = updating ? fichaReplaceNotice(localProgram, packet?.program?.id ?? null, coachFirst || null, fmtDayMonth) : null;
+  const dietNotice = updating && user ? dietReplaceNotice(localDiet, user.id, Boolean(packet?.diet)) : null;
+  const dietNoticeText = dietNotice && packet ? dietReplaceText(dietNotice, coachFirst || null, localDiet?.adjustedAt, fmtDayMonth) : null;
   // Reenvio: só o que veio no link é trocado (sem dieta no link, a dieta atual fica).
   const replaced = packet?.program && packet.diet ? `A ficha e a dieta passam a ser as novas de ${coachFirst}.` : packet?.program ? `A ficha passa a ser a nova de ${coachFirst}.` : packet?.diet ? `A dieta passa a ser a nova de ${coachFirst}.` : "";
   // LGPD: dados de saúde só ficam guardados com autorização; ela é dada pelo toque no botão logo abaixo deste texto.
@@ -147,9 +174,7 @@ export default function AbrirPage() {
                   <Salad className="mt-0.5 size-5 shrink-0" aria-hidden />
                   <span className="min-w-0">
                     <span className="block font-bold">{packet.diet.name}</span>
-                    <span className="block text-sm text-steel">
-                      {meals} {meals === 1 ? "refeição" : "refeições"} · {Math.round(packet.diet.targets.kcal)} kcal por dia
-                    </span>
+                    <span className="block text-sm text-steel">{dietLinkSummary(packet.diet)}</span>
                   </span>
                 </li>
               ) : null}
@@ -189,6 +214,13 @@ export default function AbrirPage() {
               <div className="space-y-3">
                 {err ? <Alert tone="error">{err}</Alert> : null}
                 {updating ? <p className="text-[0.9375rem] text-steel">Seus treinos, recordes e histórico continuam. {replaced}</p> : null}
+                {/* Um aviso só quando os dois valem, a ficha antes da dieta. */}
+                {fichaNotice || dietNoticeText ? (
+                  <Alert tone="warn">
+                    {fichaNotice ? <p>{fichaNotice}</p> : null}
+                    {dietNoticeText ? <p className={fichaNotice ? "mt-2" : undefined}>{dietNoticeText}</p> : null}
+                  </Alert>
+                ) : null}
                 <p id="abrir-autorizacao" className="text-sm text-iron">
                   {consentLine}
                 </p>

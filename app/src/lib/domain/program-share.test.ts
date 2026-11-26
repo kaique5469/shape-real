@@ -149,6 +149,12 @@ describe("cópia e resumo da ficha", () => {
     c.days[0]!.exercises[0]!.sets = 9;
     expect(program.days[0]!.exercises[0]!.sets).toBe(4);
   });
+  it("a cópia não leva o ajuste da original (adjustedAt)", () => {
+    const adjusted = { ...program, adjustedAt: "2026-11-20T10:00:00.000Z" };
+    const c = cloneProgram(adjusted, { ownerId: "u2", createdBy: "u2", active: false });
+    expect("adjustedAt" in c).toBe(false);
+    expect(adjusted.adjustedAt).toBe("2026-11-20T10:00:00.000Z");
+  });
   it("soma séries diretas por grupo", () => {
     const rows = programSetsPerGroup(program);
     expect(rows.find((r) => r.group === "peito")?.sets).toBe(4);

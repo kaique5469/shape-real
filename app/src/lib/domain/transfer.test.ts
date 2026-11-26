@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { cameFromPaste, packData, packedFromHash, packedFromText, pastedLinkHref, unpackData } from "../share-link";
 import { getExercise } from "./exercises";
 import { backupAgeBucket, backupFileName, backupReminderDue, backupStatusShort, backupStatusText, buildBackup, parseBackup, programsToCsv, promptShowsAgain } from "./export";
-import { buildFichaPacket, buildTreinosPacket, consentConfirmed, consentFromCheckbox, consentMetric, hasHealthData, MAX_SESSIONS_PER_LINK, mergeMetric, mirrorLoads, parsePacket, sessionToText, studentFieldsOf, topLoads, TRANSFER_VERSION, treinosMessage } from "./transfer";
+import { buildFichaPacket, buildTreinosPacket, consentConfirmed, consentFromCheckbox, consentMetric, hasHealthData, MAX_SESSIONS_PER_LINK, mergeMetric, mirrorLoads, parsePacket, sessionToText, studentFieldsOf, topLoads, TRANSFER_VERSION, treinosMessage, type FichaPacket, type TreinosPacket } from "./transfer";
 import type { BodyMetric, DietPlan, Exercise, Profile, Program, Session } from "./types";
 
 const coach: Profile = { id: "c1", name: "Rafael Nunes", role: "coach", plan: "coach", onboarded: true, createdAt: "2026-01-01T00:00:00Z", phone: "11988887777" };
@@ -404,5 +404,118 @@ describe("autorização de dados de saúde", () => {
     expect(consentMetric({ weightKg: 80 }, true)).toBe("sim");
     expect(consentMetric({ weightKg: 80 }, false)).toBe("nao");
     expect(consentMetric({}, false)).toBe("sem_dados_saude");
+  });
+});
+
+describe("o que vai no link da ficha (U2b)", async () => {
+  const { fichaLinkItems } = await import("./transfer");
+  const plan = (items: number): DietPlan => ({
+    id: "d1",
+    ownerId: "s1",
+    createdBy: "c1",
+    name: "Plano",
+    targets: { kcal: 1650, proteinG: 120, carbsG: 180, fatG: 50 },
+    meals: [{ uid: "m1", name: "Café", items: Array.from({ length: items }, (_, i) => ({ uid: `i${i}`, name: "Ovo", grams: 50, kcal: 70, proteinG: 6, carbsG: 0, fatG: 5 })) }],
+    updatedAt: "2026-11-18T13:00:00.000Z",
+  });
+  it("a ficha ativa e a dieta salva (com itens, orientações ou metas); o resto não vai (e o registro de envio compara estes dois)", () => {
+    const inactive = { ...program, id: "p0", active: false };
+    expect(fichaLinkItems([inactive, program], plan(1))).toEqual({ program, diet: plan(1) });
+    // U3c: sem itens, mas com metas, a dieta vai.
+    expect(fichaLinkItems([inactive], plan(0))).toEqual({ program: null, diet: plan(0) });
+    // Sem itens, sem orientações e sem metas: não há o que mandar.
+    const blank = { ...plan(0), targets: { kcal: 0, proteinG: 0, carbsG: 0, fatG: 0 } };
+    expect(fichaLinkItems([inactive], blank)).toEqual({ program: null, diet: null });
+    expect(fichaLinkItems([], null)).toEqual({ program: null, diet: null });
+  });
+});
+
+// ---- U2c: eco da versão no pacote de treinos ------------------------------------------------
+/**
+ * Links reais da versão anterior (ux/scripts/treino-msg.txt e ficha-msg.txt, gerados em 23/11 antes da U2c): o pacote
+ * novo continua lendo os dois, e o de treinos chega sem eco (`ficha` undefined).
+ */
+const OLD_TREINOS_LINK = "1.jVHLbtQwFP2V6K7jkRN7Ese78hAqBYSgq1YVcuybGYvESW2najUaiY_gNyqxQ2LZ_glfgpwOFKEu2Nm-5-F7zg6uQBY5fLbOgITo0boxQA4BXTyKIKGkZUWKgpTslFLJhaTVirHmLGHibNDFD9glKoaIBK9J8Th5pwYECa_n3iqnsvdemRFy0KPS22PzhzShD6NT_WIbgh1dAHm-A5sgoli3qmoEWWtjCNeUkhZNQwrTNm3HhGImOc4B_SJJaVmta4qkK4uG8JZxIqpakE4IXXLRcCNayGHy48arYaGwumGadh0xja4IZ11FBK8rooqGd6ZoRFXjI-Ww1NGz5y-yV_39j4hjyO6-Zy8HtfGo7YAupi2NujnBm4R8uJza2CfisevQ29FjyH5--Zpdzsr4-1uNU8gw2xwElwyVj2ieKqGW62pFaZVKwGv02gZ8iGxeMms7zRTnnDBdC8JNVRPFuSEtY2qty5ILyv6iLiH0uPk0eQzJ2j2s-AY32fKU8fXdtxSys-k3HqeEmnrlHBqQOwgYA0iWL6O31oEUh7O6BlmUOfSjMicbkIKmQYgfUYNsaA4R9dbZyzkZutEPqod9fhA83_3Dm8KibEaHIKOfcZ8_BXFz3_9GdaoP_w272F_kcDX284AJWnGaak8_ucihs86G7dONCEnpqqzpGSSFAaO3eqHtfwE";
+const OLD_FICHA_LINK = "1.vVrdiiQ3ln4VETDQhlSh_5-8627PGM-OZz3uAbOzmOJIOqoKd2REOiKyXG1j2IfYF_D6wnhgYG-WBV9Ovsk-yaLIzMrIqixXb7dnb4oKHUXkd6Tz850jfVvdVEu-qF7XbaqWVa7jNVSLasB2fD5Wy0owYSjnVMg_M7ZUdsnchTXuL9Wiih3E62r5bVWXN0ccRqRr7IeuhaZaVC2ssFpWn0EGbMgfNy0O1XeLahg3CduxvNdjvnsRbyk_vvT7TVNDC-TTHlI3wbmtltXvqkUV6n68_heEvlpy7_miusb66np8uaqW3OhF9fX0-E9X1dLIC7GoII71TT2-qZbVqku4_95VB021rHAFVz3GeoXtWIYbvMEyXrcj9itMNfR1GU_wZvgU-88RX1dLVeAMQ921n9TtZsShWhq2qPCrTb1eTZpVECHhqoai77rvrnpY3a2TtF5GljNNPhqqZDbUKWsocK9y4t4Zi9Wi6r5usf843V-f2COMmF68-YUVf_7i5Yfko2b784jdQP7-3-S399Qc3gwjrgrOENNl3Wbs667H4f0Xpu2m9aief7U5vL0kmqzqlpRPDAQXpO3Iuq9XWPcdwVvs4_Zvse5I6kiqYUEEGbY_9TUOJCGBdd_d1ivY_rj9oSPPIvYRyrhmvyFIrP4NSUAi9FfwAYF2LC_BcPeBm-33TZ1guCAvyxRSt3WsoVkSHGLXXAPZrMgah458tUGSsL5FIkiPaxzr7Y_b_9pBGLrQA8EViZBg_-kL8qcNtKkjGeM19KQjY7fuCpYM9e00e-wKkiOYBekIrNdk2FxhjwQ2ZXGgv9gvYrX812-r11i29Xm1qMZ6bMpWfny3N-R__u3fyVcbSP32bxHXA0Fytd_ialHlLm7KN6ppRl0mlM1sNpP8i0U1LXQ94O6HNpMlgknZaSUoz0ZTxVSkTkKgyqkEPCHnWVTHVydjbPDqct3jMBzN7Q94RaYhovTf_3Ny1nGolnJR9bgePqnbaun2_8NtteSiPAzjK4zV0rNF1XSQir86tqhGjNdt_dWmfLft-hU01XeLA16TUPCMjLLsOFWoPXWORyplVlFy8BzUfbzY4A1E6C7X2NzUEY6wf1skO7tab3-ahCR2KxKg74E8u67XZLzuN8P4wVmVOHtMJ6uPOklxoZ_QKmRhmFZFDcWpckxRJ5iiGmIQIioNKd_X6hri65m_X0G8hsnZyF7yrnjVU3ugTNApFIzRSKpkSDQgAGVeCym0ZSLz-2hLMKx7uMTbEduh62eb8HInInPRGexijl3PsJuZ_YinVlrnZGzilhqWPFU2Zhp8QpqEYBASZ0LYx7BDSJvxLPSZ5F2Ry6dWPcmEGISn4IOnKnBBvWKSOtTeIedCRHYf-c75L1fw1aZuZ7j3iYG0QFbb7ycheRa7OuIjhv52i39ehWNG-GweVtddTxpI3cVMx2iCVUYGylAkqpyM1HthKAKylEEAiPjo7jy6Oe-9N09aFRofIbFIhVGMKiuB-uAFZZJ5yXMW1rj7uNfQjpu-r5truMTV5RqPyD89ikoaWW9_mu_UeyjymGt_UVTZZZ4Xs8zzarOeZ57YDSOUJLYKfVeST9iloXnu2c0p3GWaNJG1ac4j-SfEiCJrpCzyQJV0ngamGGXBW1TAY8wPIt96cwsJLnOP7ThftWmY5L5rR2gIBOxHIM_Wm6bBN2Q3-73i-JMeqhxamQx1sbC67JAGdJYqHXOGjMmGcF-XHldFl1Aow4wvT6NkGp0S0tjX2_9orzZN9x4KCPtkIkKNwguhqA46U-UtUi-kpiIrB8iM5cnfVyHhgO1N19zsuN7lNTQj9kdlPjyVT_rs5kxs81214U9thwteSB4UDeAVVU4I6o1E6lXILCAT4ReoQgMj9nNCPaMKe9lbKPJWTvnUnhgeYgoyUYYsURUdo4DaUonGI3gVuXoQXPpuiHCZ6h7HYlz9PC5-VmRkJzuynfdQgD-lQbISeJCMQtScKgGcOm6BJs8S8xqElQ9SF4TUreoWmsths57Df34QkIPgDG49wy3YDLeaWVC7aZonkHNntVNSUmVBUqUTp8FEpNnwlFXyAN48sKFhnBJShFXdXhfvrtvY1C2kk-S0F5I7YYnx-3fvlOKPKXWyGewtdFpUm7Yudemqbk8C_svHS411N4yH5_OlxmzG07WGkZlnE2IpcyVVwRka0GqaQgn5xgWZ4f5iDmM9JYD9sr0qj08Y7VsVGk8GcwAjjJaORsOQKqcThcwclZrJ4FDHwB8E8_uFxkPida7geDK1_zqsnQfuHBeOWpUTVSxbGqJxFJKxMmirpH3ghCsc4DI3eHtCrD7BAchx9B_GqrznTLtsaQo-UKWSoC4npEYGZNKhVukBG4RjHXQ5rOrx-nyJ1Hbk1V76D6MDzGvnlVWUh1JQQww0-JAoy4JbnzFY-6C03hN2dQnrru6GywgtNvuIcI-7K7KbM3nD3by3p_GPhkX5viweLKLgUVOhWOluCU-DVZmaJIKSXmoM6Uy430ye0zX1abDf7Nwl4a7zUTfFYaZp5MCa3tUCH-ND_wdds-ZKcciFsAqqXHEoEyVNTMaclLMeH8S0Q8XywLEOFcv_g28ZrhNLHqjkIVElI1BvuaLIhM_RacnEQ949q1hKb3jXRj1TsxyFvzb-Wd768PFCZY312M3qlLF_WKhMc-Z1ytj_YqGStfE2SUEtykBVAKTOOE6dSAjZiWjMg_A5bNZ12132OHb3SdirSUSK6CkO9utEI6GlTkEADY57qjRYCpEbGhxIFpVNKj1o2uzxHxjKQ2q_1-Juwq_G7cUT2tjkAXPMNCZV3K4UXaVssUlLl7iMZ5oh97n9ZYTQ_SLBPwSa9zHkJ0supSVjinHKIliqrOc0FMaZVBReSRtSfqDK3lYvY9fPSeWfD33hfc07ZYb9lHcm909r4FW2KK2nCoyliqtIARKnyhSBFlnAoxqU84tzGkzjs17s5--jwlO-EbKWWoVEUdtElVKO-uiROmfBByWyzOcS1r4-qdt8vj6ZBOQZHg0rIVlj38LwSH7-tcoW7xgKayRNXuoSrCwNjGlqbBLKgHf-oXuEOtaxKfUi9lfdCssOzdR6cRCTSbz96SB_WKgI9pga71KofLE_v8NqOfYbXFRDt-ljeWF26rU_Ejt3WmmWSl0wy8tp5Wadnpjm_lLO61KN491hnTfSeG8cVbz8cdJRYDHQbKXDxC23GN_vsO4l9Gn7_bruSIChdLRG6K-mZf22eh3LYRw3mk3HiCPW7UfF8M2iitCHoTxYsagyjB9VS80X1ZgQy7pr-92iWiE0J_02kXOSDmmKzFOFqGiIKlGOmEX2whtu5sDy9qdypLWC9nr7w5RxJwGzS1YsqB5xNf88Q8ujYJKGqb2O1tJgjafMBq4y5ylqNWXhLu0pRXeZe2gjzg6TPi2uMo1u_zqVlT2UHykrsF-N08VQx6UQ_kIe1oJfmJlHlL4yz4YGKRRVGRN1kUlqsgGZY5YwRdk7YN3NLDX8803JbN_Uu2Pj-2isnIMxF_YIhx3RqAs3Q8NNNJlJyk2JmNEDdZg11VFjQBNZDHGOZrWJ0GMzc8c_bbD-siOrzfbHg2QPTN4B8_4UmJsD8wdgdr5MGrOT1gnqowOqDHM0RM-mEsZLY3OSMAcWoIV5fftieibrHsYZJHsHyZxAmlDcWbG7uDNjdsFnVFUYJr2X1HtdmusMqAvIaYjOeJTCG6_nmCJkvG_CA65IicE_R-iPuDg7rtUprtke8pL_jrC-mKUNbrVwDKjUGakCKymADNQzGR1TzjufZnmhWXXbH7ujD3GxlOd8SGeRvEiKppgmfRV1zDOqWNTWQiglx1xf6Pvum8tQ_GVms8_LKNmNPjBeftwRwd2JLxWLPaiubLGZg-5yZibGWy3RUqZ5yS8qUg-oqFdJKDQ5w1Ta3kHMWH8J3WUsNwbmSeV3WH9ZnH0veIDT6zsnE6co5-FPHI2ZXejZaZLjCoRTNIiJjXBLg2aZam9FCiayBCdeVkLOVWne7CqDQzQqjyVz78TkqsfmGuYo3TEwCTuHKfQcJzuAFHMTyjpAUlQ4iVQFbajD6KnwkmvLjfLo5hAHaE7aiK-m5wlducwwkGfQZIi4IP3257hp4IMjTHOMWKfGPosL_KwHYlJCCRapVoZTpRAoWKeosjrpwFPMjJ9Y5DdYz09mnk_PBWXX1DfzwHAXF062l51ZNDv3vByQBxUTldqUYkZnCk54agRi4EEJyWc__wdo4zWWNDZCn3DmgeZ8FsOcDXeWUcUDUmUMUBeTpSkZJhPzRiYz17furjb9iJctjJuTQ4OPdwKyF5BydeZqN-OhJ7qTbZlFIHkMjHq-LSwGkQqLMbY0mCIGGkRpr5povDAxSnGS0-AGT3or5bGcL-ami91wLoPw-8FBzFLt0Z7nGcR40CwnS4MRprTNHQ06eRp4sqg548qHOaivr_HNEdPn1_iG7H-QxK6N2I79ibPNwIkTFiDmNOBCHVmAm1uOAWUhQ6CpXLpSmnPqIzqKSrOkZIDsZ_zn91Du5xwNRrDzBqNZdk5JpDxlRpVJjHrQgQaQzmWNnDt9mjZHGOEydRHnubMM0jK4C4QzR-Ez8sPNozlU2BJwDh48izMRtEscLbUxGaqSK93soKlm3nomUVtgp7xsrNvrk_bONHAm-vkjMn9iwVLMc8mdtZi5tbAEJiIE6l05ZNGW0yClpTlwZzMLPDI_x9Xg1WaFpxePysA-cwzk2aq-_eBshpf6xFqOyOwFP5vksnEu8GRoyoXLulIQMrQ0a5Uyc15p7t8p6vGjy7unwh5nuxLo0JA8lgoJSY8Z--1f21jDBfm0S6XT1UXoy502aPbHraVr2W3Gfrpdt8Jh1ZGxXnfk2cQbJvHOHEm3ISuI0PfbH7rFId0VeYS-RVKuA8KiNNduscztbrrhg1IZjFiuwUHpz7ZjnSDhBXmBAcjdVT2pyaop_2y_v9rA9M3XV7tqeOgIdKTpym_trv9dvE2h5sRUqM07dV_s9mL697v_BQ";
+
+describe("eco da versão no pacote de treinos (U2c)", async () => {
+  const { receivedVersions } = await import("./transfer");
+  const echo = { programAt: "2026-11-10T13:00:00.000Z", dietAt: "2026-11-10T14:00:00.000Z" };
+  const treinos = (ficha?: { programAt?: string; dietAt?: string } | null) => buildTreinosPacket({ student, coachId: "c1", studentRef: "s1", sessions: [session("a", 20)], ficha, now: new Date("2026-11-22T10:00:00Z") });
+
+  it("pacote com ficha vai e volta igual pelo link, com TRANSFER_VERSION 1", async () => {
+    const p = treinos(echo);
+    expect(TRANSFER_VERSION).toBe(1);
+    expect(p.v).toBe(1);
+    expect(p.ficha).toEqual(echo);
+    const back = parsePacket(await unpackData(await packData(p))) as TreinosPacket | null;
+    expect(back?.ficha).toEqual(echo);
+    expect(back?.v).toBe(1);
+    // Igual ao pacote, a menos dos nulos das séries (o link sempre os tira).
+    expect(back).toEqual(parsePacket(JSON.parse(JSON.stringify(p))));
+  });
+
+  it("sem ficha informada (ou sem nenhuma versão), o campo não existe", () => {
+    for (const f of [undefined, null, {}, { programAt: "" }]) {
+      const p = treinos(f);
+      expect(p).not.toHaveProperty("ficha");
+      expect(parsePacket(JSON.parse(JSON.stringify(p)))).not.toHaveProperty("ficha");
+    }
+    expect(treinos({ dietAt: echo.dietAt }).ficha).toEqual({ dietAt: echo.dietAt });
+  });
+
+  it("campo futuro na raiz é aceito e descartado, nos dois tipos de pacote (o app antigo lendo o link novo)", () => {
+    const t = parsePacket({ ...JSON.parse(JSON.stringify(treinos(echo))), recibo: { ids: ["x"] } });
+    expect(t?.kind).toBe("treinos");
+    expect(t).not.toHaveProperty("recibo");
+    const f = parsePacket({ ...JSON.parse(JSON.stringify(buildFichaPacket({ coach, student, program, diet, customExercises: [], customFoods: [] }))), received: { ids: ["x"] } });
+    expect(f?.kind).toBe("ficha");
+    expect(f).not.toHaveProperty("received");
+  });
+
+  it("ficha malformada: o pacote é aceito e a ficha fica undefined (a versão é acessória)", () => {
+    const raw = JSON.parse(JSON.stringify(treinos(null)));
+    for (const bad of [3, "2026-11-10", [echo.programAt], null, { programAt: "x".repeat(50) }, { programAt: 20261110 }]) {
+      const p = parsePacket({ ...raw, ficha: bad });
+      expect(p?.kind).toBe("treinos");
+      expect((p as TreinosPacket).ficha).toBeUndefined();
+      expect(p).not.toHaveProperty("ficha");
+      expect((p as TreinosPacket).sessions).toHaveLength(1);
+    }
+    // Chave extra dentro do bloco: descartada, o resto vale.
+    expect((parsePacket({ ...raw, ficha: { ...echo, recibo: 1 } }) as TreinosPacket).ficha).toEqual(echo);
+  });
+
+  it("link de treinos da versão anterior abre, sem eco", async () => {
+    const p = parsePacket(await unpackData(OLD_TREINOS_LINK)) as TreinosPacket | null;
+    expect(p?.kind).toBe("treinos");
+    expect(p!.ficha).toBeUndefined();
+    expect(p!.coachId).toBe("teste-personal");
+    expect(p!.sessions.map((s) => s.exercises[0]!.name)).toEqual(["Leg press 45°"]);
+  });
+
+  it("link de ficha da versão anterior abre; a versão recebida vem do updatedAt do personal no pacote", async () => {
+    const p = parsePacket(await unpackData(OLD_FICHA_LINK)) as FichaPacket | null;
+    expect(p?.kind).toBe("ficha");
+    expect(p!.program?.updatedAt).toBeTruthy();
+    expect(receivedVersions(p!, undefined)).toEqual({ programAt: p!.program!.updatedAt, dietAt: p!.diet!.updatedAt });
+  });
+
+  describe("receivedVersions (aparelho do aluno, ao salvar a ficha)", () => {
+    const pk = (over: Partial<FichaPacket> = {}) => ({ ...buildFichaPacket({ coach, student, program, diet, customExercises: [], customFoods: [] }), ...over });
+    const prev = { id: "c1", name: "Rafael Nunes", studentRef: "s1", recebido: { programAt: "2026-10-01T10:00:00.000Z", dietAt: "2026-10-02T10:00:00.000Z" } };
+    it("vem do pacote (o updatedAt do personal), não da hora local", () => {
+      expect(receivedVersions(pk(), undefined)).toEqual({ programAt: program.updatedAt, dietAt: diet.updatedAt });
+      expect(receivedVersions(pk(), prev)).toEqual({ programAt: program.updatedAt, dietAt: diet.updatedAt });
+    });
+    it("item que não veio mantém a versão anterior com o mesmo personal", () => {
+      expect(receivedVersions(pk({ diet: null }), prev)).toEqual({ programAt: program.updatedAt, dietAt: "2026-10-02T10:00:00.000Z" });
+      expect(receivedVersions(pk({ program: null }), prev)).toEqual({ programAt: "2026-10-01T10:00:00.000Z", dietAt: diet.updatedAt });
+    });
+    it("outro personal recomeça; data ilegível não vira versão; nada conhecido → null", () => {
+      expect(receivedVersions(pk({ diet: null }), { ...prev, id: "c9" })).toEqual({ programAt: program.updatedAt });
+      expect(receivedVersions(pk({ diet: null, program: { ...program, updatedAt: "ontem" } }), undefined)).toBeNull();
+      expect(receivedVersions(pk({ diet: null, program: null }), undefined)).toBeNull();
+    });
   });
 });

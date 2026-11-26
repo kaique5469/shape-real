@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { BookmarkPlus, CheckCircle2, Copy, Download, MessageCircle, MoreHorizontal, Pencil, Plus, Printer, Send, Trash2, Users } from "lucide-react";
+import { BookmarkPlus, CalendarClock, CalendarX, CheckCircle2, Copy, Download, MessageCircle, MoreHorizontal, Pencil, Plus, Printer, Send, Trash2, Users } from "lucide-react";
 import { fileSlug, shareNames } from "@/components/program/program-share";
 import { ActionSheet, Alert, Badge, Button, Dialog, Empty, IconButton, LinkButton, Skeleton, cx, type SheetAction } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
@@ -15,9 +15,12 @@ import { PLANS } from "@/lib/domain/plans";
 import { cloneProgram, programToText } from "@/lib/domain/program-share";
 import { getSystem } from "@/lib/domain/systems";
 import { track } from "@/lib/analytics";
+import { validityIcon, validityTone } from "@/lib/ui/tone";
 import type { Profile, Program, StudentSummary } from "@/lib/domain/types";
 
 const SOURCE: Record<Program["source"], string> = { ia: "IA", manual: "Manual", modelo: "Gerada", personal: "Personal" };
+/** Ícone da validade (U7 R3): atenção = ícone `warn-ink` + texto `iron`; "ok" fica `steel`, sem ícone. */
+const VALIDITY_ICON = { CalendarX, CalendarClock } as const;
 
 interface Props {
   ownerId: string;
@@ -199,6 +202,8 @@ export function ProgramList({ ownerId, basePath, newHref, canExport, student }: 
       <ul className="space-y-3">
         {programs.map((p) => {
           const validity = programValidity(p.createdAt, p.durationWeeks);
+          const vIcon = validityIcon(validity);
+          const VIcon = vIcon ? VALIDITY_ICON[vIcon] : null;
           const count = p.days.reduce((n, d) => n + d.exercises.length, 0);
           return (
             <li key={p.id} className="rounded-[8px] border border-rule bg-paper">
@@ -217,7 +222,15 @@ export function ProgramList({ ownerId, basePath, newHref, canExport, student }: 
                 </span>
                 <span className="num block text-sm text-steel">
                   Atualizada em {fmtDate(p.updatedAt)}
-                  {validity ? <span className={cx("font-semibold", validity.state === "expired" ? "text-plate-red-ink" : validity.state === "soon" ? "text-iron" : "")}> · {validity.label}</span> : null}
+                  {validity ? (
+                    <>
+                      {" · "}
+                      <span className={cx("whitespace-nowrap font-semibold", validityTone(validity) === "warn" && "text-iron")}>
+                        {VIcon ? <VIcon className="mr-1 inline-block size-4 align-[-0.1875rem] text-warn-ink" aria-hidden /> : null}
+                        {validity.label}
+                      </span>
+                    </>
+                  ) : null}
                 </span>
               </Link>
               <div className="flex items-center gap-2 px-3 pb-3 pt-1">

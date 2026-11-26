@@ -1,18 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { Check, Copy, MessageCircle, Send, Smartphone } from "lucide-react";
-import { StatusRegion } from "@/components/delivery-status";
+import { DeliveryLine, StatusRegion } from "@/components/delivery-status";
 import { Alert, Button, Dialog, Skeleton } from "@/components/ui";
-import { reportError, track, type TreinosLinkWhere } from "@/lib/analytics";
+import { reportError, track, type FichaLinkWhere, type TreinosLinkWhere } from "@/lib/analytics";
 import { useApp } from "@/lib/app-context";
-import { prepStatusText, resendCounts, resendEntry, resendNote, sessionDelivery, type PrepEntry, type PrepVia, type SessionDelivery } from "@/lib/domain/delivery";
-import { firstName, waLink, waPhone } from "@/lib/domain/format";
-import { buildFichaPacket, buildTreinosPacket, MAX_SESSIONS_PER_LINK, treinosMessage } from "@/lib/domain/transfer";
-import { coachSignature } from "@/lib/domain/cref";
+import { fichaDeliveryLines, prepStatusText, resendCounts, resendEntry, resendNote, sessionDelivery, type PrepEntry, type PrepVia, type SessionDelivery } from "@/lib/domain/delivery";
+import { firstName, waLink } from "@/lib/domain/format";
+import { buildTreinosPacket, MAX_SESSIONS_PER_LINK, treinosMessage } from "@/lib/domain/transfer";
 import type { Profile, Session } from "@/lib/domain/types";
 import { packData } from "@/lib/share-link";
 import { markSessionsPrepared, prepLog, sentSessionIds } from "@/lib/transfer-client";
+import { useFichaDelivery, useFichaLink } from "@/lib/use-ficha-link";
+
+/** Envio da ficha por link e a situação do envio (U2b; hooks em @/lib/use-ficha-link). */
+export { useFichaDelivery, useFichaLink };
 
 const origin = () => (typeof window !== "undefined" ? window.location.origin : "");
 
@@ -40,85 +43,112 @@ function CopyButton({ text, label = "Copiar mensagem", onCopied }: { text: strin
 }
 
 /**
- * Personal → celular do aluno. Monta um link com a ficha ativa e a dieta; o aluno abre e passa a treinar
- * pelo app no próprio celular, sem cadastro.
+ * Personal → celular do aluno. Monta um link com a ficha ativa e a dieta (`useFichaLink`); o aluno abre e passa a
+ * treinar pelo app no próprio celular, sem cadastro. O toque grava o registro único do envio
+ * (`sr:sent:{aluno}:ficha`, com as versões que foram) e o diálogo mostra o que o aparelho viu: "Envio iniciado",
+ * "Mensagem copiada", nunca que a mensagem saiu ou chegou (U2 §3.5 personal 1–2).
+ * `showLines="page"`: uma linha de situação sob o botão (M da U2 §3.3), ligada a ele por `aria-describedby`.
  */
-export function SendToStudent({ student, className, variant = "secondary" }: { student: Profile; className?: string; variant?: "primary" | "secondary" }) {
-  const { user, repo } = useApp();
+export function SendToStudent({
+  student,
+  where,
+  showLines = "none",
+  disabled,
+  className,
+  variant = "secondary",
+  version = 0,
+  onSent,
+}: {
+  student: Profile;
+  /** Medição (`ficha_link_sent.where`). */
+  where: FichaLinkWhere;
+  showLines?: "page" | "none";
+  disabled?: boolean;
+  className?: string;
+  variant?: "primary" | "secondary";
+  /** Contador que sobe quando a ficha ou a dieta podem ter mudado fora daqui (relê a linha de situação). */
+  version?: number;
+  /** Depois do toque: canal e a hora gravada no registro. */
+  onSent?: (via: PrepVia, at: string) => void;
+}) {
   const [open, setOpen] = useState(false);
-  const [state, setState] = useState<{ link: string; text: string; programName: string | null; dietName: string | null } | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
   const first = firstName(student.name);
+  const { estado, erro, entrega, toque, aoEnviar } = useFichaLink(student, open, { where });
+  // `version` (contador de quem chama) e `tick` (toques aqui) só sobem: a soma muda sempre que um dos dois muda.
+  const delivery = useFichaDelivery(student, version + tick);
+  const lineId = useId();
+  const pageLine = showLines === "page" && delivery ? fichaDeliveryLines(delivery, first) : null;
+  const dialogLines = entrega ? fichaDeliveryLines(entrega, first) : null;
+  const empty = estado && !estado.programa && !estado.dieta;
 
-  useEffect(() => {
-    if (!open || !user) return;
-    let alive = true;
-    setState(null);
-    setErr(null);
-    (async () => {
-      const [programs, diet, exercises, foods] = await Promise.all([repo.listPrograms(student.id), repo.getDiet(student.id), repo.listCustomExercises(user.id), repo.listCustomFoods(user.id)]);
-      const program = programs.find((p) => p.active) ?? null;
-      const usableDiet = diet && diet.meals.some((m) => m.items.length) ? diet : null;
-      const packet = buildFichaPacket({ coach: user, student, program, diet: usableDiet, customExercises: exercises, customFoods: foods });
-      const link = `${origin()}/abrir#d=${await packData(packet)}`;
-      // Assinatura única do personal ("Nome · CREF …"), a mesma da ficha impressa, da dieta e do relatório.
-      const coachName = (user.name.trim() && user.name !== "Personal" ? coachSignature({ name: user.name, cref: user.cref }) : undefined) ?? "seu personal";
-      const what = program && usableDiet ? "sua ficha e sua dieta" : program ? "sua ficha" : "sua dieta";
-      const text = `Oi, ${first}! ${what[0]!.toUpperCase()}${what.slice(1)} ${program && usableDiet ? "estão" : "está"} no Shape Real. Abra este link no seu celular para treinar, registrar as cargas e me mandar cada treino (não precisa cadastro):\n${link}\n\n— ${coachName}`;
-      if (alive) setState({ link, text, programName: program?.name ?? null, dietName: usableDiet?.name ?? null });
-    })().catch((e) => {
-      reportError(e, "link:montar-ficha");
-      if (alive) setErr("Não foi possível montar o link. Tente de novo.");
-    });
-    return () => {
-      alive = false;
-    };
-  }, [open, user, repo, student, first]);
-
-  const sent = (via: "whatsapp" | "copy") => track("ficha_link_sent", { via, has_program: Boolean(state?.programName), has_diet: Boolean(state?.dietName), direct: Boolean(waPhone(student.phone)) });
-  const empty = state && !state.programName && !state.dietName;
+  function sent(via: PrepVia) {
+    const t = aoEnviar(via);
+    if (!t) return;
+    setTick((n) => n + 1);
+    onSent?.(t.via, t.at);
+  }
 
   return (
     <>
-      <Button variant={variant} className={className} icon={<Smartphone className="size-4" />} onClick={() => setOpen(true)}>
+      <Button variant={variant} className={className} disabled={disabled} icon={<Smartphone className="size-4" />} onClick={() => setOpen(true)} aria-describedby={pageLine?.page ? lineId : undefined}>
         Enviar para o celular de {first}
       </Button>
+      {pageLine?.page ? (
+        <p className="mt-1.5 text-sm">
+          <DeliveryLine id={lineId} icon={pageLine.pageIcon ?? "pendente"}>
+            {pageLine.page}
+          </DeliveryLine>
+        </p>
+      ) : null}
       <Dialog open={open} onClose={() => setOpen(false)} title={`Enviar para o celular de ${first}`}>
         <div className="space-y-4">
           <p className="text-[0.9375rem] text-steel">
             {first} abre o link no celular {student.sex === "F" ? "dela" : "dele"} e passa a treinar pelo app, sem cadastro. Depois de cada treino, {student.sex === "F" ? "ela" : "ele"} manda o resultado de volta e você registra no painel com um toque.
           </p>
-          {err ? <Alert tone="error">{err}</Alert> : null}
-          {!state && !err ? <Skeleton className="h-24" /> : null}
-          {state ? (
+          {erro ? <Alert tone="error">{erro}</Alert> : null}
+          {!estado && !erro ? <Skeleton className="h-24" /> : null}
+          {estado ? (
             <>
               <ul className="ruled rounded-[var(--radius-ficha)] border border-rule bg-chalk text-[0.9375rem]">
                 <li className="flex justify-between gap-3 px-3 py-2">
                   <span className="text-steel">Ficha</span>
-                  <span className="min-w-0 truncate text-right font-semibold">{state.programName ?? "nenhuma ativa"}</span>
+                  <span className="min-w-0 truncate text-right font-semibold">{estado.programa?.name ?? "nenhuma ativa"}</span>
                 </li>
                 <li className="flex justify-between gap-3 px-3 py-2">
                   <span className="text-steel">Dieta</span>
-                  <span className="min-w-0 truncate text-right font-semibold">{state.dietName ?? "não enviada"}</span>
+                  <span className="min-w-0 truncate text-right font-semibold">{estado.dieta?.name ?? "não enviada"}</span>
                 </li>
               </ul>
               {empty ? (
                 <Alert tone="warn">Monte a ficha ou a dieta de {first} antes de enviar.</Alert>
               ) : (
                 <>
-                  <div className="flex flex-wrap gap-2">
-                    <a
-                      href={waLink(state.text, student.phone)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={() => sent("whatsapp")}
-                      className="inline-flex h-11 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-[6px] bg-plate-green px-4 font-semibold text-white hover:bg-plate-green-ink"
-                    >
-                      <MessageCircle className="size-4" aria-hidden /> Enviar no WhatsApp
-                    </a>
-                    <CopyButton text={state.text} onCopied={() => sent("copy")} />
+                  {/* Situação de antes do toque: manchete (com ícone) e detalhe, no máximo duas linhas. */}
+                  {dialogLines?.dialog.length ? (
+                    <div className="space-y-1 text-sm">
+                      <DeliveryLine icon={dialogLines.dialogIcon ?? "pendente"}>{dialogLines.dialog[0]}</DeliveryLine>
+                      {/* Alinhado ao texto da manchete (ícone de 1,05em + o vão da DeliveryLine). */}
+                      {dialogLines.dialog[1] ? <p className="pl-[calc(1.05em+0.375rem)] text-steel">{dialogLines.dialog[1]}</p> : null}
+                    </div>
+                  ) : null}
+                  <div>
+                    <div className="flex flex-wrap gap-2">
+                      <a
+                        href={waLink(estado.texto, student.phone)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={() => sent("whatsapp")}
+                        className="inline-flex h-11 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-[6px] bg-plate-green px-4 font-semibold text-white hover:bg-plate-green-ink"
+                      >
+                        <MessageCircle className="size-4" aria-hidden /> Enviar no WhatsApp
+                      </a>
+                      <CopyButton text={estado.texto} onCopied={() => sent("copy")} />
+                    </div>
+                    {/* Montada junto com os botões, antes de qualquer toque; só o texto muda. */}
+                    <StatusRegion className="mt-2" text={toque ? prepStatusText(toque.via, toque.at, first, "personal") : null} icon={toque?.via === "copy" ? "copia" : "whatsapp"} />
                   </div>
-                  <p className="text-sm text-steel">Mudou a ficha ou a dieta? Envie de novo: o celular de {first} atualiza e mantém os treinos dele.</p>
+                  <p className="text-sm text-steel">Mudou a ficha ou a dieta? Envie de novo: o celular de {first} atualiza, e os treinos já registrados continuam lá.</p>
                 </>
               )}
             </>
@@ -165,7 +195,8 @@ export function useSessionDelivery(sessions: Session[] | undefined, version = 0)
 /**
  * Aluno → personal. Manda os treinos pelo WhatsApp: o texto mostra o que foi feito e o link registra
  * tudo no painel do personal. O toque grava canal e hora por treino (`markSessionsPrepared`): o app registra
- * o que viu (o toque, a cópia), nunca que a mensagem saiu ou chegou.
+ * o que viu (o toque, a cópia), nunca que a mensagem saiu ou chegou. O link leva também a versão da ficha e da
+ * dieta que este celular recebeu (`remoteCoach.recebido`, U2c).
  */
 export function SendToCoach({
   sessions,
@@ -178,7 +209,7 @@ export function SendToCoach({
 }: {
   sessions: Session[];
   /** Medição (`treinos_link_sent.where`). */
-  where?: TreinosLinkWhere;
+  where: TreinosLinkWhere;
   label?: string;
   className?: string;
   /** "ghost": ação secundária com cara de link (ex.: "Enviar de novo" no fim do treino, depois do envio). */
@@ -216,7 +247,8 @@ export function SendToCoach({
     (async () => {
       // Medidas registradas pelo aluno vão junto (o personal acompanha peso e circunferências).
       const metrics = await repo.listMetrics(user.id).catch(() => []);
-      const packet = buildTreinosPacket({ student: user, coachId: coach.id, studentRef: coach.studentRef, sessions: shown, metrics: metrics.slice(-12) });
+      // A versão da ficha e da dieta que este celular recebeu volta junto (U2c): o personal vê se o aluno está com a atual.
+      const packet = buildTreinosPacket({ student: user, coachId: coach.id, studentRef: coach.studentRef, sessions: shown, metrics: metrics.slice(-12), ficha: coach.recebido });
       const link = `${origin()}/receber#d=${await packData(packet)}`;
       if (alive) setMsg(treinosMessage(shown, link, coachFirst));
     })().catch((e) => {

@@ -7,12 +7,15 @@ import {
   fmtOvertime,
   nextSetOf,
   restEndedAgoText,
+  restAfterRemove,
+  restAfterUnmark,
   restEndedText,
   restFromDraft,
   restPhase,
   shiftRest,
   shouldStartRest,
   startRest,
+  type RestTimer,
 } from "./rest";
 
 const T0 = Date.parse("2026-03-01T10:00:00Z");
@@ -148,5 +151,60 @@ describe("textos da barra de descanso", () => {
     expect(restEndedText(nextSetOf(log))).toBe("Descanso acabou · Série 3 de 4 · Supino");
     expect(nextSetOf({ name: "Supino", sets: [{ done: true }] })).toBeNull();
     expect(restEndedText(null)).toBe("Descanso acabou");
+  });
+});
+
+describe("série que iniciou o descanso (U1b)", () => {
+  const from = { logUid: "agach", index: 0 };
+
+  it("startRest guarda a série de origem; sem série, o descanso é o de sempre", () => {
+    expect(startRest(90, T0, from)).toEqual({ until: T0 + 90_000, total: 90, from });
+    expect(startRest(90, T0)).toEqual({ until: T0 + 90_000, total: 90 });
+    expect(startRest(90, T0)).not.toHaveProperty("from");
+    expect(startRest(0, T0, from)).toBeNull();
+  });
+
+  it("shiftRest (−15s / +15s) preserva a série de origem", () => {
+    const r = startRest(90, T0, from)!;
+    expect(shiftRest(r, 15, T0)).toEqual({ until: T0 + 105_000, total: 105, from });
+    expect(shiftRest(r, -15, T0).from).toEqual(from);
+    expect(shiftRest({ until: T0 + 60_000, total: 90 }, 15, T0)).not.toHaveProperty("from");
+  });
+
+  it("restFromDraft preserva o from válido e descarta o inválido sem perder o descanso", () => {
+    const saved = JSON.parse(JSON.stringify({ rest: startRest(90, T0, from) })) as { rest: unknown };
+    expect(restFromDraft(saved.rest)).toEqual({ until: T0 + 90_000, total: 90, from });
+    for (const bad of [null, "agach:0", { logUid: "", index: 0 }, { logUid: "agach", index: -1 }, { logUid: "agach", index: 1.5 }, { logUid: 3, index: 0 }, { index: 0 }]) {
+      const r = restFromDraft({ until: T0, total: 90, from: bad });
+      expect(r).toEqual({ until: T0, total: 90 });
+      expect(r).not.toHaveProperty("from");
+    }
+  });
+
+  it("restAfterUnmark: mesma série → cancela; outra série → igual; sem origem (rascunho antigo) → igual; sem descanso → null", () => {
+    const r = startRest(90, T0, from)!;
+    expect(restAfterUnmark(r, { logUid: "agach", index: 0 })).toBeNull();
+    expect(restAfterUnmark(r, { logUid: "agach", index: 1 })).toBe(r);
+    expect(restAfterUnmark(r, { logUid: "supino", index: 0 })).toBe(r);
+    const old: RestTimer = { until: T0, total: 90 };
+    expect(restAfterUnmark(old, from)).toBe(old);
+    expect(restAfterUnmark(null, from)).toBeNull();
+  });
+
+  it("vale também na barra de fim (o descanso continua no estado até OK ou 10 min)", () => {
+    const r = startRest(90, T0, from)!;
+    expect(restPhase(r, T0 + 95_000)).toMatchObject({ phase: "ended" });
+    expect(restAfterUnmark(r, from)).toBeNull();
+  });
+
+  it("restAfterRemove: a série de origem saiu → cancela; outra série ou outro exercício → igual; exercício inteiro (0) → cancela", () => {
+    const r = startRest(90, T0, { logUid: "agach", index: 3 })!;
+    expect(restAfterRemove(r, "agach", 3)).toBeNull();
+    expect(restAfterRemove(r, "agach", 4)).toBe(r);
+    expect(restAfterRemove(r, "supino", 0)).toBe(r);
+    expect(restAfterRemove(r, "agach", 0)).toBeNull();
+    const old: RestTimer = { until: T0, total: 90 };
+    expect(restAfterRemove(old, "agach", 0)).toBe(old);
+    expect(restAfterRemove(null, "agach", 0)).toBeNull();
   });
 });

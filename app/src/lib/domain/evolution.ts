@@ -1,6 +1,6 @@
 import { getExercise, unitOf } from "./exercises";
 import { todayISO } from "./ids";
-import { completedSets, e1rm, fmtKg, isAssisted, splitTypos } from "./progression";
+import { RETURN_AFTER_DAYS, completedSets, e1rm, fmtKg, isAssisted, splitTypos } from "./progression";
 import type { ExerciseLog, Implement, Session, SetLog, Unit } from "./types";
 
 /**
@@ -361,4 +361,64 @@ export function comparisonDates(first: string, last: string | null = null): { fi
   const withYear = last !== null && first.slice(0, 4) !== last.slice(0, 4);
   const fmt = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}${withYear ? `/${d.slice(2, 4)}` : ""}`;
   return { first: fmt(first), last: last === null ? null : fmt(last) };
+}
+
+/** Uma opção do seletor de exercício da aba Cargas. */
+export interface ProgressOption {
+  exerciseId: string;
+  name: string;
+  /** Treinos com marca (válidas e suspeitas): o "(N treinos)" da opção. */
+  count: number;
+  kind: ProgressKind;
+}
+
+/**
+ * R-15. Exercícios da aba Cargas, na ordem do seletor (o primeiro vem marcado): mais treinos primeiro; no empate,
+ * `forca` antes dos outros tipos; depois a marca mais recente (data decrescente); depois a posição no treino dessa
+ * marca; por fim o id. Entram peso do corpo, tempo, graviton e carga + reps; aeróbio em minutos não entra.
+ */
+export function progressExercises(sessions: readonly Session[]): ProgressOption[] {
+  const byId = new Map(sessions.map((s) => [s.id, s]));
+  const ids = new Set<string>();
+  for (const s of sessions) for (const e of s.exercises) if (completedSets(e).length) ids.add(e.exerciseId);
+  const rows: (ProgressOption & { lastDate: string; position: number })[] = [];
+  for (const id of ids) {
+    const h = exerciseMarks(sessions, id);
+    if (!h) continue;
+    const latest = h.marks[h.marks.length - 1]!;
+    const session = byId.get(latest.sessionId);
+    const position = session ? session.exercises.findIndex((e) => e.exerciseId === id && completedSets(e).length) : Number.MAX_SAFE_INTEGER;
+    rows.push({ exerciseId: id, name: h.name, count: h.marks.length, kind: h.kind, lastDate: latest.date, position });
+  }
+  rows.sort(
+    (a, b) =>
+      b.count - a.count ||
+      Number(b.kind === "forca") - Number(a.kind === "forca") ||
+      b.lastDate.localeCompare(a.lastDate) ||
+      a.position - b.position ||
+      (a.exerciseId < b.exerciseId ? -1 : a.exerciseId > b.exerciseId ? 1 : 0),
+  );
+  return rows.map(({ exerciseId, name, count, kind }) => ({ exerciseId, name, count, kind }));
+}
+
+/** Dias de calendário entre dois dias AAAA-MM-DD (sem fuso: os dois já são dias locais). */
+function calendarDays(from: string, to: string): number {
+  const utc = (d: string) => Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10)));
+  return Math.round((utc(to) - utc(from)) / 86_400_000);
+}
+
+export interface ComparisonLabels {
+  title: string;
+  before: string;
+  after: string;
+}
+
+/**
+ * R-14. Rótulos do cartão: o aluno, com a última marca de até 14 dias de calendário (`RETURN_AFTER_DAYS`), vê
+ * "Antes e agora"; o personal (que só tem o que chegou por link) e o aluno com marca mais velha veem "Primeiro e
+ * último registro". `lastDate` e `today` são dias locais AAAA-MM-DD.
+ */
+export function comparisonLabels(byCoach: boolean, lastDate: string, today: string): ComparisonLabels {
+  if (!byCoach && calendarDays(lastDate, today) <= RETURN_AFTER_DAYS) return { title: "Antes e agora", before: "Antes", after: "Agora" };
+  return { title: "Primeiro e último registro", before: "Primeiro", after: "Último" };
 }

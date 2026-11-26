@@ -15,11 +15,13 @@
  * Fundação (UX0): tipos (inclusive os estados), constantes, validação do que vem do armazenamento,
  * `addPrepEntries` e `nextAck`.
  * U2a (envio do aluno): `sessionDelivery`, `sessionDeliveryText`, `prepStatusText`, `resendNote`, `resendCounts`.
- * Ainda entram aqui: `itemDelivery`/`fichaDelivery`, `fichaDeliveryLines`, `fichaSendSituation` (U2b),
- * `sameSession` (U2d) e `fichaVersao`/eco (U2c).
+ * U2b (envio da ficha, aparelho do personal): `fichaDelivery` (I1, I3–I6), `fichaDeliveryLines`, `fichaSendSituation`.
+ * U2d (/receber): `sameSession`, `receivePreview`, `receiveResult`, `seriesText`.
+ * U2c (eco da versão): `ack` em `fichaDelivery` (I2, I4 com a versão do aluno, `staleEcho`), `fichaVersao`.
  */
 
 import { fmtDayMonth, fmtTime } from "./format";
+import type { Session } from "./types";
 
 export type PrepVia = "whatsapp" | "copy";
 /** Último toque de envio de um treino neste aparelho ("Enviar no WhatsApp" ou "Copiar mensagem"). */
@@ -252,4 +254,259 @@ export function resendEntry(d: SessionDelivery): PrepEntry | "antigo" | null {
 export function resendCounts(states: readonly SessionDelivery[]): { resend: boolean; novos: number } {
   const novos = states.filter((d) => d.kind === "nao_enviado").length;
   return { resend: novos < states.length, novos };
+}
+
+// ---- U2b: envio da ficha e da dieta (aparelho do personal) ------------------------------------------
+/** `a ≥ b` entre duas datas; data ilegível nunca vale como prova. */
+function notBefore(a: string, b: string): boolean {
+  const x = Date.parse(a);
+  const y = Date.parse(b);
+  return Number.isFinite(x) && Number.isFinite(y) && x >= y;
+}
+
+/**
+ * Situação de um item (ficha ativa ou dieta que vai no link; `current` = o `updatedAt` dele ou null), nesta ordem
+ * (U2 §3.3):
+ *  I1. sem item → `sem_item`;
+ *  I2. o último treino recebido trouxe esta versão (`acked`, eco do aluno) → `confirmado` (quando foi registrado);
+ *  I3. o último envio levou esta versão → `enviado` (hora e canal do toque);
+ *  I4. o último envio ou o eco têm outra versão → `mudou` (data do envio; versão que o aluno disse ter);
+ *  I5. o registro começou antes desta versão (`current ≥ marcador`) e nenhum envio a levou → `nao_enviado` (fato);
+ *  I6. senão → `desconhecido`: o conteúdo é anterior ao registro, sem prova de nada (nenhuma frase).
+ * Toda comparação de versão é igualdade de textos do relógio do personal (o eco devolve o `updatedAt` dele).
+ */
+function itemDelivery(current: string | null, sent: string | null, acked: string | null, record: FichaSendRecord | null, ack: FichaAck | null, trackingSince: string | null): ItemDelivery {
+  if (current === null) return { kind: "sem_item" };
+  if (ack && acked !== null && acked === current) return { kind: "confirmado", ackAt: ack.registeredAt };
+  const wasSent = record !== null && sent !== null;
+  if (wasSent && sent === current) return { kind: "enviado", at: record.at, via: record.via };
+  if (wasSent || acked !== null) return { kind: "mudou", sentAt: wasSent ? record.at : null, studentVersion: acked };
+  if (trackingSince !== null && notBefore(current, trackingSince)) return { kind: "nao_enviado" };
+  return { kind: "desconhecido" };
+}
+
+/** `a > b` entre duas datas; data ilegível nunca vale como prova. */
+function after(a: string, b: string): boolean {
+  const x = Date.parse(a);
+  const y = Date.parse(b);
+  return Number.isFinite(x) && Number.isFinite(y) && x > y;
+}
+
+/**
+ * Situação do envio da ficha e da dieta de um aluno (U2 §3.3). `current` = versões do que iria no link agora;
+ * `record` = o registro único `sr:sent:{aluno}:ficha` (o último toque); `ack` = o eco `sr:sent:{aluno}:ack` (a versão
+ * que veio com o último treino; opcional: sem eco, nada é confirmado); `trackingSince` = `sr:sent:@desde`.
+ * Reenviar o mesmo conteúdo continua `enviado` (a versão é o conteúdo, não a hora do pacote).
+ * `staleEcho` (eco antigo, fato e não inferência): o item da manchete (a ficha; sem ficha, a dieta) está `enviado`,
+ * e um treino registrado DEPOIS do envio (`ack.registeredAt > record.at`, os dois no relógio do personal) ainda veio
+ * com outra versão dele.
+ */
+export function fichaDelivery(input: { current: VersionPair; record: FichaSendRecord | null; ack?: FichaAck | null; trackingSince: string | null }): FichaDelivery {
+  const { current, record, trackingSince } = input;
+  const ack = input.ack ?? null;
+  const program = itemDelivery(current.programAt, record?.programAt ?? null, ack?.programAt ?? null, record, ack, trackingSince);
+  const diet = itemDelivery(current.dietAt, record?.dietAt ?? null, ack?.dietAt ?? null, record, ack, trackingSince);
+  const head = program.kind === "sem_item" ? { item: diet, current: current.dietAt, acked: ack?.dietAt } : { item: program, current: current.programAt, acked: ack?.programAt };
+  const staleEcho =
+    head.item.kind === "enviado" && ack && record && head.acked && head.acked !== head.current && after(ack.registeredAt, record.at) ? { registeredAt: ack.registeredAt, version: head.acked } : null;
+  return { program, diet, staleEcho };
+}
+
+/** Linhas de estado do envio da ficha (U2 §3.3). `pageIcon` vale para a linha `page`. */
+export interface FichaDeliveryLines {
+  /** Uma linha, para a página do aluno (sob o botão de envio); null = nada a afirmar. */
+  page: string | null;
+  pageIcon: DeliveryIcon | null;
+  /** Diálogo e painéis de envio: manchete (M) e detalhe (D), no máximo duas linhas, nesta ordem. */
+  dialog: string[];
+  /** Ícone da primeira linha de `dialog` (as demais vão sem ícone). */
+  dialogIcon: DeliveryIcon | null;
+}
+
+/**
+ * Textos do envio da ficha (S = primeiro nome do aluno; dd/mm e HH:MM no fuso do aparelho). A manchete (M) vem
+ * da ficha; sem ficha, da dieta ("a dieta" no lugar de "a ficha"). O detalhe (D) é o primeiro que valer:
+ *  1. a dieta mudou (e a ficha não); 2. a dieta atual ainda não foi; 3. eco antigo (U2c); 4. envio sem confirmação.
+ * (A U2 punha o eco antigo e "a confirmação aparece…" antes da dieta; aqui o que pede ação vem antes.)
+ * A página mostra uma linha só: M quando há algo a fazer com a ficha (mudou, não foi) ou nada a fazer com a dieta;
+ * quando a ficha está em dia e a dieta não, o detalhe da dieta (senão a página diria "em dia" com a dieta pendente).
+ * A linha da página é sempre uma das linhas do diálogo.
+ * Nunca afirma o outro lado: nada de "enviada para", "aberto no WhatsApp", "chegou", "Nenhum envio".
+ */
+export function fichaDeliveryLines(d: FichaDelivery, studentFirst: string): FichaDeliveryLines {
+  const s = studentFirst;
+  const dietHead = d.program.kind === "sem_item";
+  const head = dietHead ? d.diet : d.program;
+  const noun = dietHead ? "dieta" : "ficha";
+
+  let m: { text: string; icon: DeliveryIcon } | null = null;
+  switch (head.kind) {
+    case "confirmado": {
+      const both = !dietHead && d.diet.kind === "confirmado";
+      m = { text: `${s} está com ${both ? "a ficha e a dieta atuais" : `a ${noun} atual`}. Confirmado pelo treino recebido em ${fmtDayMonth(head.ackAt)}.`, icon: "confirmado" };
+      break;
+    }
+    case "enviado": {
+      const when = `${fmtDayMonth(head.at)} às ${fmtTime(head.at)}`;
+      m = head.via === "copy" ? { text: `Mensagem com a ${noun} atual copiada em ${when}.`, icon: "copia" } : { text: `Envio da ${noun} atual iniciado em ${when}.`, icon: "whatsapp" };
+      break;
+    }
+    case "mudou": {
+      const both = !dietHead && d.diet.kind === "mudou";
+      const text = head.sentAt
+        ? both
+          ? `A ficha e a dieta mudaram depois do último envio (${fmtDayMonth(head.sentAt)}).`
+          : `A ${noun} mudou depois do último envio (${fmtDayMonth(head.sentAt)}).`
+        : head.studentVersion
+          ? `${s} está com a versão de ${fmtDayMonth(head.studentVersion)}. A ${noun} mudou depois disso.`
+          : `A ${noun} mudou depois do último envio.`;
+      m = { text, icon: "pendente" };
+      break;
+    }
+    case "nao_enviado":
+      m = { text: `A versão atual da ${noun} ainda não foi para o app de ${s}.`, icon: "pendente" };
+      break;
+    default:
+      m = null; // sem_item, desconhecido: nada a afirmar
+  }
+
+  // Detalhe da dieta quando a manchete é da ficha (com a manchete da dieta, repetiria a mesma coisa).
+  const dietDetail = dietHead
+    ? null
+    : d.diet.kind === "mudou" && d.program.kind !== "mudou"
+      ? "A dieta mudou depois do último envio."
+      : d.diet.kind === "nao_enviado"
+        ? `A dieta atual ainda não foi para o app de ${s}.`
+        : null;
+  const staleText = d.staleEcho ? `O treino recebido em ${fmtDayMonth(d.staleEcho.registeredAt)} ainda veio com a versão de ${fmtDayMonth(d.staleEcho.version)}.` : null;
+  const detail = dietDetail ?? staleText ?? (head.kind === "enviado" ? `A confirmação aparece quando ${s} mandar o próximo treino.` : null);
+
+  const headUpToDate = head.kind === "enviado" || head.kind === "confirmado";
+  const page = m && !(headUpToDate && dietDetail) ? m : dietDetail ? { text: dietDetail, icon: "pendente" as const } : null;
+  const dialog = [m?.text, detail].filter((t): t is string => Boolean(t));
+  return { page: page?.text ?? null, pageIcon: page?.icon ?? null, dialog, dialogIcon: m?.icon ?? (dialog.length ? "pendente" : null) };
+}
+
+/**
+ * Categoria do envio para a medição (`ficha_link_sent.situacao`), calculada com a situação de ANTES do toque:
+ * `repetido` = tudo o que vai já tinha ido (ou voltou confirmado); `mudou` = algo mudou ou entrou depois do último
+ * envio; `nunca` = nada do que vai tinha ido; `sem_info` = conteúdo anterior ao registro (ou nada a enviar).
+ */
+export function fichaSendSituation(d: FichaDelivery): FichaSendSituation {
+  const kinds = [d.program.kind, d.diet.kind].filter((k) => k !== "sem_item");
+  if (!kinds.length) return "sem_info";
+  if (kinds.includes("mudou")) return "mudou";
+  if (kinds.every((k) => k === "enviado" || k === "confirmado")) return "repetido";
+  if (kinds.includes("desconhecido")) return "sem_info";
+  return kinds.every((k) => k === "nao_enviado") ? "nunca" : "mudou";
+}
+
+// ---- U2c: versão que voltou com os treinos (medição) ------------------------------------------------
+/**
+ * Versão que o aluno disse ter, comparada com a atual, para a medição (`treinos_link_received.ficha_versao`).
+ * `echo` = o bloco `ficha` do pacote de treinos, só quando vale como eco (mesmo personal e mesmo aluno), senão
+ * undefined. `atual` = toda versão ecoada é igual à atual; `anterior` = alguma difere; `sem_info` = sem eco.
+ */
+export function fichaVersao(echo: { programAt?: string; dietAt?: string } | undefined, current: VersionPair): FichaVersao {
+  if (!echo) return "sem_info";
+  const pairs: [string, string | null][] = [];
+  if (echo.programAt !== undefined) pairs.push([echo.programAt, current.programAt]);
+  if (echo.dietAt !== undefined) pairs.push([echo.dietAt, current.dietAt]);
+  if (!pairs.length) return "sem_info";
+  return pairs.every(([e, c]) => e === c) ? "atual" : "anterior";
+}
+
+/**
+ * O bloco `ficha` de um pacote de treinos só vale como eco quando veio do aparelho de um aluno DESTE personal:
+ * mesmo personal (`coachId`) e o mesmo aluno do painel (`studentRef`, o id para onde a ficha foi). Escolher outro
+ * aluno à mão em /receber não grava eco nenhum. Versões e `sentAt` ilegíveis ficam de fora. null = sem eco.
+ */
+export function fichaEchoOf(packet: { ficha?: { programAt?: string; dietAt?: string }; coachId: string; studentRef: string; sentAt: string }, studentId: string, coachId: string | undefined): { programAt?: string; dietAt?: string } | null {
+  const f = packet.ficha;
+  if (!f || !coachId || packet.coachId !== coachId || packet.studentRef !== studentId || !isIsoDate(packet.sentAt)) return null;
+  const out: { programAt?: string; dietAt?: string } = {};
+  if (isIsoDate(f.programAt)) out.programAt = f.programAt;
+  if (isIsoDate(f.dietAt)) out.dietAt = f.dietAt;
+  return out.programAt || out.dietAt ? out : null;
+}
+
+// ---- U2d: /receber sem "atualizado" falso (aparelho do personal) ---------------------------------------
+type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
+
+/** Forma canônica: chaves em ordem, sem `undefined`/`null` em objeto (o link já tira os nulos), arrays na ordem. */
+function canonical(v: unknown): Json | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (Array.isArray(v)) return v.map((x) => canonical(x) ?? null);
+  if (typeof v === "object") {
+    const out: { [k: string]: Json } = {};
+    for (const k of Object.keys(v as object).sort()) {
+      const c = canonical((v as Record<string, unknown>)[k]);
+      if (c !== undefined) out[k] = c;
+    }
+    return out;
+  }
+  if (typeof v === "number" || typeof v === "string" || typeof v === "boolean") return v;
+  return undefined;
+}
+
+/**
+ * O treino que chegou é igual ao que já está no painel? Independe da ordem das chaves e ignora `userId` (no painel o
+ * treino é gravado com o id do aluno do personal) e campos `undefined`/`null`. Ordem das séries e dos exercícios
+ * conta. Qualquer outra diferença (anotação, carga, repetição) → false.
+ */
+export function sameSession(a: Session, b: Session): boolean {
+  const strip = (s: Session) => canonical({ ...s, userId: undefined });
+  return JSON.stringify(strip(a)) === JSON.stringify(strip(b));
+}
+
+/** "1 série" / "3 séries". */
+export function seriesText(n: number): string {
+  return `${n} ${n === 1 ? "série" : "séries"}`;
+}
+
+/** "a", "a e b", "a, b e c". */
+function joinPt(parts: readonly string[]): string {
+  if (parts.length <= 1) return parts[0] ?? "";
+  return `${parts.slice(0, -1).join(", ")} e ${parts[parts.length - 1]}`;
+}
+
+/**
+ * Título de /receber antes de registrar (S = primeiro nome do aluno no painel). `present` = quantos treinos do link
+ * já estão no painel (pelo id); null = ainda não se sabe (aluno não escolhido): só a contagem.
+ *  - nenhum no painel: "2 treinos para registrar";
+ *  - alguns: "1 treino novo para registrar" + "1 já está no painel de S.";
+ *  - todos: "Estes treinos já estão no painel de S" ("Este treino já está…" com um) e o botão "Registrar de novo".
+ */
+export function receivePreview(total: number, present: number | null, studentFirst: string): { title: string; line: string | null; allPresent: boolean } {
+  const count = (n: number) => (n === 1 ? "1 treino" : `${n} treinos`);
+  if (present === null || present <= 0 || total <= 0) return { title: `${count(total)} para registrar`, line: null, allPresent: false };
+  if (present >= total) return { title: total === 1 ? `Este treino já está no painel de ${studentFirst}` : `Estes treinos já estão no painel de ${studentFirst}`, line: null, allPresent: true };
+  const novos = total - present;
+  return {
+    title: `${novos === 1 ? "1 treino novo" : `${novos} treinos novos`} para registrar`,
+    line: `${present} ${present === 1 ? "já está" : "já estão"} no painel de ${studentFirst}.`,
+    allPresent: false,
+  };
+}
+
+/**
+ * Textos de /receber depois de registrar (`importTreinos`: `updated` só conta o que mudou; `same`, o que já estava
+ * igual). Título no singular ou no plural pelo número de treinos do link; corpo só com as partes diferentes de zero
+ * ("1 treino novo, 1 atualizado e 1 que já estava no painel"); nada novo nem mudado → "Nada novo: …".
+ * Nunca "0 treinos novos" e nunca "atualizado" para o que não mudou.
+ */
+export function receiveResult(r: { added: number; updated: number; same: number }, studentFirst: string): { title: string; body: string } {
+  const total = r.added + r.updated + r.same;
+  const title = total === 1 ? `Treino de ${studentFirst} registrado.` : `Treinos de ${studentFirst} registrados.`;
+  const tail = `Frequência, cargas e o relatório de evolução já contam com ${total === 1 ? "ele" : "eles"}.`;
+  if (!r.added && !r.updated) {
+    const lead = total === 1 ? "Nada novo: este treino já estava no painel." : "Nada novo: estes treinos já estavam no painel.";
+    return { title, body: `${lead} ${tail}` };
+  }
+  const parts = [
+    r.added ? (r.added === 1 ? "1 treino novo" : `${r.added} treinos novos`) : null,
+    r.updated ? (r.updated === 1 ? "1 atualizado" : `${r.updated} atualizados`) : null,
+    r.same ? (r.same === 1 ? "1 que já estava no painel" : `${r.same} que já estavam no painel`) : null,
+  ].filter((p): p is string => p !== null);
+  return { title, body: `${joinPt(parts)}. ${tail}` };
 }

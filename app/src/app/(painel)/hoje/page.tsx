@@ -3,12 +3,14 @@
 import Link from "next/link";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { ArrowRight, Check, ChevronDown, MessageCircle, Play, Plus, Trophy } from "lucide-react";
+import { ArrowRight, CalendarClock, CalendarX, Check, ChevronDown, MessageCircle, Play, Plus } from "lucide-react";
 import { BackupReminder } from "@/components/backup-reminder";
 import { ColarLink } from "@/components/colar-link";
 import { FichaDay } from "@/components/ficha";
 import { InstallCard } from "@/components/pwa";
+import { RecordMark } from "@/components/record-mark";
 import { SendToCoach, usePendingWorkouts } from "@/components/transfer-share";
+import { TargetsList } from "@/components/views/diet-read";
 import { estimateDayMinutes } from "@/lib/domain/generator";
 import { Alert, Empty, LinkButton, Panel, Segmented, Skeleton, cx } from "@/components/ui";
 import { track } from "@/lib/analytics";
@@ -18,6 +20,7 @@ import { weekStart, weekStreak } from "@/lib/domain/progression";
 import { targetsForProfile } from "@/lib/domain/nutrition";
 import { programValidity } from "@/lib/domain/format";
 import { useAI } from "@/lib/ai/client";
+import { validityIcon, validityTone } from "@/lib/ui/tone";
 import { draftProgressText, readDraftInfo, type DraftInfo } from "@/lib/workout-draft";
 
 const WEEK = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
@@ -44,6 +47,9 @@ function Hoje() {
   const [sentTick, setSentTick] = useState(0);
   // sentTick faz reler o que já foi enviado depois de um envio.
   const pending = usePendingWorkouts(data?.sessions, sentTick);
+  // Depois de um toque, o envio continua montado mesmo sem pendentes: a cópia deixa o diálogo aberto com
+  // "Mensagem copiada às …", e a faixa sumir no meio fecharia o diálogo junto (mesma regra do Histórico).
+  const [sentNow, setSentNow] = useState(false);
   // Treino começado e ainda não finalizado (fica guardado no aparelho).
   const [ongoing, setOngoing] = useState<DraftInfo | null>(null);
   useEffect(() => {
@@ -77,6 +83,8 @@ function Hoje() {
   const coachName = data.coach?.name && data.coach.name !== "Personal" ? data.coach.name : null;
   const fromCoach = program && program.createdBy !== user!.id ? (coachName ? `ficha de ${coachName}` : "ficha do seu personal") : null;
   const validity = program ? programValidity(program.createdAt, program.durationWeeks) : null;
+  const vIcon = validityIcon(validity);
+  const VIcon = vIcon === "CalendarX" ? CalendarX : vIcon === "CalendarClock" ? CalendarClock : null;
   // Meta da semana: a mesma conta de /alunos (segunda a domingo ÷ dias da ficha ativa ou do perfil).
   const week = weekGoal(data.sessions, program?.daysPerWeek, user!.daysPerWeek);
   // Personal que acompanha: o do link (nome, telefone e CREF do pacote) ou o vinculado neste aparelho.
@@ -112,7 +120,7 @@ function Hoje() {
       {ongoing ? (
         <section aria-label="Treino em andamento" className="flex flex-col gap-3 rounded-[8px] border-2 border-iron bg-paper p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <p className="col-head text-plate-red-ink">Treino em andamento</p>
+            <p className="col-head text-iron">Treino em andamento</p>
             <p className="mt-1 truncate font-bold">{ongoing.dayKey ? `Treino ${ongoing.dayKey}${ongoing.dayTitle ? ` — ${ongoing.dayTitle}` : ""}` : "Treino livre"}</p>
             <p className="num text-sm text-steel">
               {draftProgressText(ongoing)} · iniciado {relativeDay(ongoing.startedAt)}. Ainda não está no histórico.
@@ -135,7 +143,16 @@ function Hoje() {
               <p className="text-sm text-steel">
                 {program.name}
                 {fromCoach ? ` · ${fromCoach}` : ""}
-                {validity && validity.state !== "ok" ? <span className={cx("font-semibold", validity.state === "expired" ? "text-plate-red-ink" : "text-iron")}> · {validity.label}</span> : null}
+                {validity && validity.state !== "ok" ? (
+                  <>
+                    {" · "}
+                    {/* Atenção = âmbar no ícone, texto em iron (U7 R3); ícone e rótulo não se separam na quebra. */}
+                    <span className={cx("whitespace-nowrap font-semibold", validityTone(validity) === "warn" && "text-iron")}>
+                      {VIcon ? <VIcon className="mr-1 inline-block size-4 align-[-0.1875rem] text-warn-ink" aria-hidden /> : null}
+                      {validity.label}
+                    </span>
+                  </>
+                ) : null}
               </p>
             </div>
             {program.days.length > 1 ? (
@@ -147,7 +164,7 @@ function Hoje() {
           {day.exercises.length ? (
             <>
               <div className="flex items-center gap-3">
-                <span className="plate-type grid size-14 shrink-0 place-items-center rounded-full bg-plate-red text-2xl text-white">{day.key.slice(0, 3)}</span>
+                <span data-brand className="plate-type grid size-14 shrink-0 place-items-center rounded-full bg-brand text-2xl text-white">{day.key.slice(0, 3)}</span>
                 <div className="min-w-0">
                   <p className="truncate text-[1.05rem] font-bold">{day.title || `Treino ${day.key}`}</p>
                   <p className="num text-sm text-steel">
@@ -220,13 +237,25 @@ function Hoje() {
         />
       )}
 
-      {pending.length ? (
-        <section aria-label="Treinos para enviar" className="flex flex-col gap-3 rounded-[8px] border border-rule bg-paper p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <h2 className="text-[0.9375rem] font-bold">{pending.length === 1 ? "1 treino ainda não enviado" : `${pending.length} treinos ainda não enviados`}</h2>
-            <p className="text-sm text-steel">Mande para {user!.remoteCoach ? user!.remoteCoach.name.split(" ")[0] : "seu personal"} acompanhar suas cargas e ajustar a ficha.</p>
-          </div>
-          <SendToCoach sessions={pending} className="shrink-0" onSent={() => setSentTick((t) => t + 1)} />
+      {pending.length || sentNow ? (
+        // Sem pendentes (logo depois do envio), a faixa some mas o mesmo nó continua montado ("contents", sem caixa
+        // nem nome de região), para o diálogo do envio não fechar sozinho.
+        <section aria-label={pending.length ? "Treinos para enviar" : undefined} className={pending.length ? "flex flex-col gap-3 rounded-[8px] border border-rule bg-paper p-4 sm:flex-row sm:items-center sm:justify-between" : "contents"}>
+          {pending.length ? (
+            <div className="min-w-0">
+              <h2 className="text-[0.9375rem] font-bold">{pending.length === 1 ? "1 treino ainda não enviado" : `${pending.length} treinos ainda não enviados`}</h2>
+              <p className="text-sm text-steel">Mande para {user!.remoteCoach ? user!.remoteCoach.name.split(" ")[0] : "seu personal"} acompanhar suas cargas e ajustar a ficha.</p>
+            </div>
+          ) : null}
+          <SendToCoach
+            sessions={pending}
+            where="hoje"
+            className="shrink-0"
+            onSent={() => {
+              setSentNow(true);
+              setSentTick((t) => t + 1);
+            }}
+          />
         </section>
       ) : null}
 
@@ -342,7 +371,7 @@ function Hoje() {
         <Panel
           title="Recordes recentes"
           action={
-            <Link href="/evolucao" className="-my-2 inline-flex min-h-10 items-center text-sm font-semibold text-plate-blue-ink hover:underline">
+            <Link href="/evolucao" className="-my-2 inline-flex min-h-10 items-center text-sm font-semibold text-plate-blue-ink hover:underline pointer-coarse:min-h-11">
               Evolução
             </Link>
           }
@@ -352,7 +381,7 @@ function Hoje() {
             <ul className="ruled">
               {stats.prs.map((p, i) => (
                 <li key={i} className="flex items-center gap-3 px-4 py-2.5">
-                  <Trophy className="size-4 shrink-0 text-plate-red" aria-hidden />
+                  <RecordMark variant="icon" label={false} />
                   <span className="min-w-0 flex-1 truncate text-[0.9375rem] font-semibold">{p.name}</span>
                   <span className="num shrink-0 text-sm font-bold">{p.mark ?? ""}</span>
                   <span className="w-14 text-right text-xs text-steel">{fmtDate(p.date)}</span>
@@ -365,27 +394,16 @@ function Hoje() {
         </Panel>
 
         <Panel
-          title="Hoje na dieta"
+          title="Dieta"
           action={
-            <Link href="/dieta" className="-my-2 inline-flex min-h-10 items-center text-sm font-semibold text-plate-blue-ink hover:underline">
+            <Link href="/dieta" className="-my-2 inline-flex min-h-11 items-center text-sm font-semibold text-plate-blue-ink hover:underline">
               Abrir dieta
             </Link>
           }
         >
           {targets ? (
-            <dl className="grid grid-cols-4 gap-2 text-center">
-              {[
-                ["kcal", targets.kcal],
-                ["proteína", targets.proteinG],
-                ["carbo", targets.carbsG],
-                ["gordura", targets.fatG],
-              ].map(([l, v]) => (
-                <div key={l as string}>
-                  <dd className="num plate-type text-xl">{v as number}</dd>
-                  <dt className="text-xs text-steel">{l === "kcal" ? "kcal" : `g ${l}`}</dt>
-                </div>
-              ))}
-            </dl>
+            // Só as metas do dia (U3 §3.4): nada aqui diz o que a pessoa comeu.
+            <TargetsList targets={targets} compact />
           ) : (
             <p className="text-sm text-steel">
               {/* Mesmo caminho (e mesma autorização) do formulário de /dieta: um só lugar para os dados de saúde. */}

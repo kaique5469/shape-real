@@ -1,19 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
-import { Camera, Trash2, Trophy } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Camera, Trash2 } from "lucide-react";
 import { BarChart, HBars, LineChart } from "@/components/charts";
+import { RecordMark } from "@/components/record-mark";
 import { Alert, Button, Dialog, Empty, Field, Input, Panel, Segmented, Select, Skeleton, cx } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
 import { fmtDate, fmtNum, useLoad } from "@/lib/hooks";
 import { GROUP_LABEL } from "@/lib/domain/exercises";
-import { bestSet, e1rmSeries, setsPerGroup, trackedExercises, weeklyVolume } from "@/lib/domain/progression";
+import { comparisonDates, comparisonLabels, deltaLine, exerciseProgress, progressExercises, strengthIndicator, E1RM_MAX_REPS, type ExerciseChart, type ExerciseProgress, type NoChartReason, type SessionMark } from "@/lib/domain/evolution";
+import { firstName, fmtDayMonth } from "@/lib/domain/format";
+import { fmtMark, setsPerGroup, weeklyVolume } from "@/lib/domain/progression";
 import { todayISO, uid } from "@/lib/domain/ids";
 import { PLANS } from "@/lib/domain/plans";
 import { consentConfirmed, consentFromCheckbox } from "@/lib/domain/transfer";
 import { track } from "@/lib/analytics";
-import type { BodyMetric, MuscleGroup, PhotoPose, Profile, ProgressPhoto } from "@/lib/domain/types";
+import type { BodyMetric, MuscleGroup, PhotoPose, Profile, ProgressPhoto, Session } from "@/lib/domain/types";
 import { compressImage } from "./photo-tools";
 import { ReportView } from "./report-view";
 
@@ -72,7 +75,7 @@ export function EvolutionView({
       </div>
       {loading && !data ? <Skeleton className="h-80" /> : error ? <Alert tone="error">{error}</Alert> : data ? (
         <>
-          {tab === "cargas" && <Loads sessions={data.sessions} />}
+          {tab === "cargas" && <Loads sessions={data.sessions} byCoach={byCoach} student={student} />}
           {tab === "corpo" && <Body userId={userId} metrics={data.metrics} editable={editable} byCoach={byCoach} student={student} onStudentChange={onStudentChange} onChange={reload} />}
           {tab === "fotos" && <Photos userId={userId} editable={editable} byCoach={byCoach} student={student} onStudentChange={onStudentChange} />}
           {tab === "volume" && <Volume sessions={data.sessions} />}
@@ -83,67 +86,191 @@ export function EvolutionView({
   );
 }
 
-function Loads({ sessions }: { sessions: Parameters<typeof trackedExercises>[0] }) {
-  const tracked = useMemo(() => trackedExercises(sessions), [sessions]);
+/** Título, subtítulo e unidade do gráfico de cada métrica (U6 §3.3 A.4). */
+const CHART_TEXT: Record<ExerciseChart["metric"], { title: string; sub: string; unit: string }> = {
+  e1rm: { title: "Força estimada (1RM)", sub: "Estimativa de quanto daria para levantar uma vez, a partir da melhor série de cada treino (fórmula de Epley).", unit: " kg" },
+  reps: { title: "Repetições na melhor série", sub: "Uma marca por treino.", unit: " reps" },
+  seg: { title: "Segundos na melhor série", sub: "Uma marca por treino.", unit: " s" },
+};
+
+/** O parágrafo que fica no lugar do gráfico quando ele não se aplica (um registro só não tem: o cartão já explica). */
+function noChartText(reason: NoChartReason | null, seg: boolean): string | null {
+  if (reason === "ajuda") return "Na barra assistida, usar menos ajuda é o progresso. Por isso não há gráfico de força: compare pelos registros abaixo.";
+  if (reason === "duplo") return seg ? "Carga e tempo mudaram juntos e não cabem num gráfico só. Compare pelos registros abaixo." : "Carga e repetições mudaram juntas e não cabem num gráfico só. Compare pelos registros abaixo.";
+  if (reason === "reps_altas") return "Acima de 12 repetições, a força estimada deixa de ser confiável. Compare pelos registros abaixo.";
+  return null;
+}
+
+/** "sex, 20/11": dia da semana curto e dd/mm, no fuso do aparelho. */
+function weekdayDayMonth(date: string): string {
+  const wd = new Date(date + "T12:00:00").toLocaleDateString("pt-BR", { weekday: "short" }).replace(".", "");
+  return `${wd}, ${fmtDayMonth(date)}`;
+}
+
+/**
+ * Aba Cargas (U6 §3.3 A): seletor na ordem de R-15, cartão com as séries de verdade ("Antes e agora" ou "Primeiro e
+ * último registro"), gráfico com o título do indicador (ou o motivo de não ter) e os últimos treinos do exercício.
+ */
+function Loads({ sessions, byCoach, student }: { sessions: Session[]; byCoach: boolean; student?: Profile | null }) {
+  const options = useMemo(() => progressExercises(sessions), [sessions]);
   const [ex, setEx] = useState<string | null>(null);
-  const current = ex ?? tracked[0]?.exerciseId ?? null;
-  const series = useMemo(() => (current ? e1rmSeries(sessions, current) : []), [sessions, current]);
-  const history = useMemo(
-    () =>
-      current
-        ? sessions
-            .filter((s) => s.exercises.some((e) => e.exerciseId === current))
-            .slice(0, 8)
-            .map((s) => ({ date: s.startedAt, best: bestSet(s.exercises.find((e) => e.exerciseId === current)!), pr: s.prs.includes(current) }))
-        : [],
-    [sessions, current],
-  );
+  const current = (ex && options.some((o) => o.exerciseId === ex) ? ex : options[0]?.exerciseId) ?? null;
+  const progress = useMemo(() => (current ? exerciseProgress(sessions, current) : null), [sessions, current]);
 
-  if (!tracked.length) return <Empty title="Sem cargas registradas ainda" body="Depois dos primeiros treinos com carga, você vê a força estimada de cada exercício subir aqui." />;
+  // Uma vez por exercício exibido em cada visita à aba (na entrada e a cada troca); recarregar os dados não repete.
+  const shown = useRef<string | null>(null);
+  useEffect(() => {
+    if (!progress || shown.current === progress.exerciseId) return;
+    shown.current = progress.exerciseId;
+    const c = progress.comparison;
+    track("evolution_compare_shown", {
+      kind: progress.kind,
+      state: c.state,
+      direction: c.direction ?? "nenhuma",
+      chart: progress.chart !== null,
+      suspect: progress.marks.some((m) => m.suspect),
+      by_coach: byCoach,
+    });
+  }, [progress, byCoach]);
 
-  const first = series[0]?.value ?? 0;
-  const last = series[series.length - 1]?.value ?? 0;
-  const delta = Math.round((last - first) * 10) / 10;
+  const who = student?.name ? firstName(student.name) : null;
+  if (!options.length || !progress) {
+    return (
+      <Empty
+        title="Nada para comparar ainda"
+        body={
+          byCoach
+            ? `${who ? `Os treinos de ${who}` : "Os treinos do aluno"} aparecem aqui quando chegarem pelo link ou quando você registrar. Aeróbio em minutos não entra.`
+            : "Os exercícios aparecem aqui a partir do primeiro treino registrado. Aeróbio em minutos não entra."
+        }
+      />
+    );
+  }
 
+  const seg = progress.unit === "seg";
+  const paragraph = noChartText(progress.noChartReason, seg);
   return (
     <div className="space-y-4">
       <Field label="Exercício">
         <Select value={current ?? ""} onChange={(e) => setEx(e.target.value)}>
-          {tracked.map((t) => (
+          {options.map((t) => (
             <option key={t.exerciseId} value={t.exerciseId}>
               {t.name} ({t.count} {t.count === 1 ? "treino" : "treinos"})
             </option>
           ))}
         </Select>
       </Field>
-      <Panel>
-        <div className="flex flex-wrap items-baseline justify-between gap-3">
-          <div>
-            <p className="font-bold">1RM estimado</p>
-            <p className="text-sm text-steel">Força máxima estimada pela melhor série de cada treino (fórmula de Epley).</p>
-          </div>
-          <p className={cx("num plate-type text-2xl", delta > 0 && "text-plate-green-ink")}>
-            {delta > 0 ? "+" : ""}
-            {fmtNum(delta)} <span className="text-base">kg</span>
-          </p>
-        </div>
-        <div className="mt-3">{series.length ? <LineChart data={series} unit=" kg" label="1RM estimado" /> : null}</div>
-      </Panel>
-      <Panel title="Últimos treinos deste exercício" pad={false}>
-        <ul className="ruled">
-          {history.map((h, i) => (
-            <li key={i} className="num flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
-              <span className="text-steel">{fmtDate(h.date, { weekday: "short", day: "2-digit", month: "short" })}</span>
-              <span className="flex items-center gap-2 font-bold">
-                {h.pr ? <Trophy className="size-4 text-plate-red" aria-label="recorde" /> : null}
-                {h.best ? `${fmtNum(h.best.loadKg)} kg × ${h.best.reps}` : "—"}
-                <span className="w-24 text-right font-normal text-steel">1RM ~{h.best ? fmtNum(h.best.e1rm) : "—"}</span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      </Panel>
+      <CompareCard progress={progress} byCoach={byCoach} who={who} />
+      {progress.chart ? <ProgressChart chart={progress.chart} name={progress.name} /> : paragraph ? <p className="text-sm text-steel">{paragraph}</p> : null}
+      <RecentMarks progress={progress} />
     </div>
+  );
+}
+
+/** Cartão "Antes e agora" / "Primeiro e último registro" (R-11 a R-14): duas séries com data, a diferença e o indicador. */
+function CompareCard({ progress, byCoach, who }: { progress: ExerciseProgress; byCoach: boolean; who: string | null }) {
+  const hid = useId();
+  const c = progress.comparison;
+  const labels = comparisonLabels(byCoach, (c.last ?? c.first).date, todayISO());
+  const dates = comparisonDates(c.first.date, c.last?.date ?? null);
+  // R-13: com o primeiro e o último em anos diferentes, as outras datas do cartão também levam o ano ("13/11/25").
+  const withYear = c.last !== null && c.first.date.slice(0, 4) !== c.last.date.slice(0, 4);
+  const dm = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}${withYear ? `/${d.slice(2, 4)}` : ""}`;
+  const mark = (m: SessionMark) => fmtMark(m.mark, progress.exerciseId, progress.unit);
+  const indicator = strengthIndicator(c);
+  const s = c.suspectLatest;
+
+  const row = (label: string, date: string, shown: string, m: SessionMark) => (
+    <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 py-1.5">
+      <dt className="text-sm text-steel">
+        {label} · <time dateTime={m.date}>{date}</time>
+      </dt>
+      <dd className="num plate-type text-lg">{shown}</dd>
+    </div>
+  );
+
+  return (
+    <section aria-labelledby={hid} className="overflow-hidden rounded-[var(--radius-ficha)] border border-rule bg-paper">
+      <div className="border-b border-rule px-4 py-3">
+        <h2 id={hid} className="text-[0.9375rem] font-bold">
+          {labels.title}
+        </h2>
+      </div>
+      <div className="p-4">
+        {c.state === "um_registro" || !c.last ? (
+          <>
+            <dl>{row("Primeiro registro", dates.first, mark(c.first), c.first)}</dl>
+            <p className="mt-2 text-sm text-steel">Com mais um treino deste exercício, aparece a comparação.</p>
+          </>
+        ) : (
+          <>
+            <dl className="ruled">
+              {row(labels.before, dates.first, mark(c.first), c.first)}
+              {row(labels.after, dates.last!, mark(c.last), c.last)}
+            </dl>
+            <p className={cx("mt-3 font-semibold", c.direction === "subiu" ? "text-done-ink" : "text-iron")}>{deltaLine(progress.kind, c.first.mark, c.last.mark, progress.unit)}</p>
+            {indicator ? <p className="mt-1 text-sm text-steel">{indicator}</p> : null}
+            {c.best ? (
+              <p className="mt-1 text-sm text-steel">
+                Melhor marca: <span className="num font-semibold text-iron">{mark(c.best)}</span> em <time dateTime={c.best.date}>{dm(c.best.date)}</time>
+              </p>
+            ) : null}
+          </>
+        )}
+        {s ? (
+          <p className="mt-3 text-sm text-iron">
+            O treino de <time dateTime={s.date}>{dm(s.date)}</time> ({mark(s)}) ficou fora da comparação: a carga passa do dobro da maior anterior e parece erro de digitação.
+            {byCoach ? ` Vale confirmar com ${who ?? "o aluno"}.` : null}
+          </p>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+/** Gráfico do indicador (R-10): sem o número grande, sem linha de período e sem o ponto do máximo. */
+function ProgressChart({ chart, name }: { chart: ExerciseChart; name: string }) {
+  const t = CHART_TEXT[chart.metric];
+  const first = chart.points[0]!;
+  const last = chart.points[chart.points.length - 1]!;
+  const d = comparisonDates(first.date, last.date);
+  const summary = `${t.title} em ${name}, de ${d.first} a ${d.last}: de ${fmtNum(first.value)} para ${fmtNum(last.value)}${t.unit}.`;
+  return (
+    <Panel>
+      <p className="font-bold">{t.title}</p>
+      <p className="text-sm text-steel">{t.sub}</p>
+      <div className="mt-3">
+        <LineChart data={chart.points} unit={t.unit} label={t.title} summary={summary} highlightMax={false} />
+      </div>
+    </Panel>
+  );
+}
+
+/** Até 8 marcas, da mais recente para a mais antiga, válidas e suspeitas, cada uma numa linha a 360 px. */
+function RecentMarks({ progress }: { progress: ExerciseProgress }) {
+  const forca = progress.kind === "forca";
+  const rows = progress.marks.slice(-8).reverse();
+  return (
+    <Panel title="Últimos treinos deste exercício" pad={false}>
+      <ul className="ruled">
+        {rows.map((m) => (
+          <li key={m.sessionId} className="num flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
+            <span className="shrink-0 text-steel">{weekdayDayMonth(m.date)}</span>
+            <span className="flex min-w-0 items-center justify-end gap-2">
+              {m.record ? <RecordMark variant="icon" /> : null}
+              <span className="whitespace-nowrap font-bold">{fmtMark(m.mark, progress.exerciseId, progress.unit)}</span>
+              {forca ? (
+                <span className={cx("w-24 shrink-0 text-right text-steel", m.suspect && "text-xs leading-tight")}>
+                  {m.suspect ? "fora da comparação" : m.mark.reps <= E1RM_MAX_REPS && m.e1rm !== null ? `1RM ~${fmtNum(m.e1rm)}` : null}
+                </span>
+              ) : m.suspect ? (
+                <span className="shrink-0 text-xs text-steel">fora da comparação</span>
+              ) : null}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </Panel>
   );
 }
 
@@ -380,7 +507,7 @@ function Body({
                     {editable ? (
                       <td className="pr-1">
                         <button onClick={() => setToDelete(m)} className="grid size-11 place-items-center rounded hover:bg-chalk-2" aria-label={`Excluir medidas de ${fmtDate(m.date)}`}>
-                          <Trash2 className="size-4 text-plate-red-ink" />
+                          <Trash2 className="size-4 text-danger" />
                         </button>
                       </td>
                     ) : null}
@@ -548,7 +675,7 @@ function Photos({ userId, editable, byCoach, student, onStudentChange }: { userI
               {editable ? (
                 <button onClick={() => setDrop(p)} className="absolute right-0 top-0 grid size-11 place-items-center" aria-label={`Excluir foto de ${fmtDate(p.date)}`}>
                   <span className="grid size-8 place-items-center rounded bg-paper/90">
-                    <Trash2 className="size-4 text-plate-red-ink" />
+                    <Trash2 className="size-4 text-danger" />
                   </span>
                 </button>
               ) : null}
@@ -601,7 +728,12 @@ function Volume({ sessions }: { sessions: Parameters<typeof weeklyVolume>[0] }) 
       <Panel title="Volume semanal (toneladas levantadas)">
         <BarChart
           label="Volume semanal"
-          data={weeks.map((w) => ({ label: fmtDate(w.week, { day: "2-digit", month: "2-digit" }), value: w.volume, sub: `Semana de ${fmtDate(w.week)} · ${w.sessions} ${w.sessions === 1 ? "treino" : "treinos"}` }))}
+          data={weeks.map((w, i) => {
+            const count = `${w.sessions} ${w.sessions === 1 ? "treino" : "treinos"}`;
+            // A semana atual ainda não acabou: "0 treinos" afirmaria uma ausência que ainda não aconteceu.
+            const sub = i === weeks.length - 1 ? `Esta semana até agora · ${count}` : `Semana de ${fmtDate(w.week)} · ${count}`;
+            return { label: fmtDate(w.week, { day: "2-digit", month: "2-digit" }), value: w.volume, sub };
+          })}
           format={(v) => `${fmtNum(v / 1000, 1)} t`}
         />
       </Panel>

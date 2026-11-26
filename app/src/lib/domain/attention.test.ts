@@ -1,19 +1,28 @@
 import { describe, expect, it } from "vitest";
 import {
+  ATTENTION_ORDER,
+  LIST_TOOLS_MIN,
   calendarDaysSince,
   contactMessage,
   contactReason,
   daysWithoutNews,
   displayNames,
   expiringLabel,
+  fichaStateText,
   inactiveThreshold,
   isQuiet,
+  matchesQuery,
   namesList,
   newsLabel,
+  newsSince,
+  pendingText,
+  programLine,
   reasonLabel,
+  resultsStatus,
   sessionsThisWeek,
   splitQueue,
   studentBand,
+  topReason,
   weeklyGoal,
 } from "./attention";
 import { fmtDayMonth, programValidity, waLink } from "./format";
@@ -220,4 +229,188 @@ describe("studentBand", () => {
     expect(studentBand(10)).toBe("4-10");
     expect(studentBand(11)).toBe("11+");
   });
+});
+
+// ───────────────────────── U4a: correções com dado confiável ─────────────────────────
+
+describe("contactReason sem ficha (U4a)", () => {
+  const soon = programValidity(iso(28, 10, 10), 4, NOW);
+  it("aluno sem ficha nunca vira 'Chamar', nem parado nem com validade", () => {
+    expect(contactReason(true, null, false)).toBeNull();
+    expect(contactReason(false, null, false)).toBeNull();
+    expect(contactReason(true, soon, false)).toBeNull();
+  });
+  it("com ficha (ou sem informar), o resultado de antes", () => {
+    expect(contactReason(true, null, true)).toBe("sem_noticias");
+    expect(contactReason(false, soon, true)).toBe("ficha_vencendo");
+    expect(contactReason(true, null)).toBe("sem_noticias");
+  });
+});
+
+describe("newsSince e programCreatedAt (U4a)", () => {
+  // Vínculo há 20 dias, nenhum treino recebido, meta 3x (limiar 5 dias).
+  const linked = iso(2);
+  it("ficha criada há 2 dias: conta da ficha, não está parado", () => {
+    const s = { lastSessionAt: null, linkedAt: linked, programCreatedAt: iso(20) };
+    expect(newsSince(s)).toBe(iso(20));
+    expect(daysWithoutNews(s, NOW)).toBe(2);
+    expect(isQuiet(s, 3, NOW)).toBe(false);
+  });
+  it("ficha criada há 5 dias: parado", () => {
+    const s = { lastSessionAt: null, linkedAt: linked, programCreatedAt: iso(17) };
+    expect(daysWithoutNews(s, NOW)).toBe(5);
+    expect(isQuiet(s, 3, NOW)).toBe(true);
+  });
+  it("com treino recebido, a data da ficha é ignorada", () => {
+    const s = { lastSessionAt: iso(10), linkedAt: linked, programCreatedAt: iso(21) };
+    expect(newsSince(s)).toBe(iso(10));
+    expect(daysWithoutNews(s, NOW)).toBe(12);
+    expect(isQuiet(s, 3, NOW)).toBe(true);
+  });
+  it("ficha mais antiga que o vínculo: conta do vínculo", () => {
+    const s = { lastSessionAt: null, linkedAt: iso(20), programCreatedAt: iso(1) };
+    expect(newsSince(s)).toBe(iso(20));
+    expect(daysWithoutNews(s, NOW)).toBe(2);
+  });
+  it("sem programCreatedAt (ausente, null ou inválida): o resultado de hoje, desde o vínculo", () => {
+    for (const programCreatedAt of [undefined, null, "", "versão 2"]) {
+      const s = { lastSessionAt: null, linkedAt: linked, programCreatedAt };
+      expect(newsSince(s)).toBe(linked);
+      expect(daysWithoutNews(s, NOW)).toBe(daysWithoutNews({ lastSessionAt: null, linkedAt: linked }, NOW));
+      expect(isQuiet(s, 3, NOW)).toBe(true);
+    }
+  });
+});
+
+describe("topReason: pendência do cartão (U4a)", () => {
+  const soon = { state: "soon" as const };
+  const expired = { state: "expired" as const };
+  it("ordem: sem ficha → sem notícias → vencida → vencendo", () => {
+    expect(ATTENTION_ORDER).toEqual(["sem_ficha", "sem_noticias", "ficha_vencida", "ficha_vencendo"]);
+    expect(topReason({ hasProgram: false, quiet: true, validity: null })).toBe("sem_ficha");
+    expect(topReason({ hasProgram: true, quiet: true, validity: expired })).toBe("sem_noticias");
+    expect(topReason({ hasProgram: true, quiet: false, validity: expired })).toBe("ficha_vencida");
+    expect(topReason({ hasProgram: true, quiet: false, validity: soon })).toBe("ficha_vencendo");
+  });
+  it("em dia ou sem validade: sem pendência", () => {
+    expect(topReason({ hasProgram: true, quiet: false, validity: { state: "ok" } })).toBeNull();
+    expect(topReason({ hasProgram: true, quiet: false, validity: null })).toBeNull();
+  });
+  it("Henrique (sem ficha, vínculo há 30 dias, nada recebido, meta 2x): pendência 'sem ficha', sem 'Chamar'", () => {
+    const quiet = isQuiet({ lastSessionAt: null, linkedAt: iso(23, 10, 10) }, 2, NOW);
+    expect(quiet).toBe(true);
+    expect(topReason({ hasProgram: false, quiet, validity: null })).toBe("sem_ficha");
+    expect(contactReason(quiet, null, false)).toBeNull();
+  });
+  it("ficha nova não dispara alarme: vínculo há 20 dias, sem treino, ficha de hoje, meta 3x", () => {
+    const quiet = isQuiet({ lastSessionAt: null, linkedAt: iso(2), programCreatedAt: iso(22, 9) }, 3, NOW);
+    expect(quiet).toBe(false);
+    expect(topReason({ hasProgram: true, quiet, validity: null })).toBeNull();
+    expect(contactReason(quiet, null, true)).toBeNull();
+  });
+});
+
+describe("textos de pendência (U4a)", () => {
+  it("newsLabel com os dias sem notícias, quando nada chegou", () => {
+    expect(newsLabel(null, "local", NOW, { daysWithoutNews: 6 })).toBe("Sem notícias há 6 dias · nada recebido ainda");
+    expect(newsLabel(null, "supabase", NOW, { daysWithoutNews: 6 })).toBe("Sem treinar há 6 dias · nenhum treino ainda");
+    expect(newsLabel(null, "local", NOW, { daysWithoutNews: 1 })).toBe("Sem notícias há 1 dia · nada recebido ainda");
+  });
+  it("newsLabel sem opts (ou com 0 dias) é o texto de sempre; com treino recebido, os dias vêm do treino", () => {
+    expect(newsLabel(null, "local", NOW, { daysWithoutNews: 0 })).toBe("Nada recebido ainda");
+    expect(newsLabel(null, "local", NOW, {})).toBe("Nada recebido ainda");
+    expect(newsLabel(iso(13, 19), "local", NOW, { daysWithoutNews: 3 })).toBe("Sem notícias há 9 dias · último treino recebido em 13/11");
+  });
+  it("reasonLabel da fila usa o mesmo texto do cartão", () => {
+    expect(reasonLabel("sem_noticias", { lastSessionAt: null, daysWithoutNews: 6 }, "local", NOW)).toBe("Sem notícias há 6 dias · nada recebido ainda");
+  });
+  it("pendingText por motivo", () => {
+    const vencida = programValidity(iso(13, 10, 10), 5, NOW)!; // 13/10 + 5 semanas = 17/11: vencida há 5 dias
+    const vence = programValidity(iso(29, 14, 10), 4, NOW)!; // 29/10 14h + 4 semanas = 26/11 14h: vence em 4 dias
+    expect(vencida.state).toBe("expired");
+    expect(vence.state).toBe("soon");
+    expect(pendingText("sem_ficha", { lastSessionAt: null }, "local", NOW)).toBe("Sem ficha ativa");
+    expect(pendingText("sem_noticias", { lastSessionAt: iso(10, 19) }, "local", NOW)).toBe("Sem notícias há 12 dias · último treino recebido em 10/11");
+    expect(pendingText("sem_noticias", { lastSessionAt: null, daysWithoutNews: 6 }, "local", NOW)).toBe("Sem notícias há 6 dias · nada recebido ainda");
+    expect(pendingText("sem_noticias", { lastSessionAt: null, daysWithoutNews: 6 }, "supabase", NOW)).toBe("Sem treinar há 6 dias · nenhum treino ainda");
+    expect(pendingText("ficha_vencida", { lastSessionAt: null, validity: vencida }, "local", NOW)).toBe("Ficha vencida há 5 dias");
+    expect(pendingText("ficha_vencendo", { lastSessionAt: null, validity: vence }, "local", NOW)).toBe("Ficha vence em 4 dias");
+    expect(fichaStateText({ label: "vencida ontem" })).toBe("Ficha vencida ontem");
+    expect(fichaStateText({ label: "vence hoje" })).toBe("Ficha vence hoje");
+  });
+  it("nenhum texto afirma o que o app não viu", () => {
+    const texts = [
+      pendingText("sem_ficha", { lastSessionAt: null }, "local", NOW),
+      pendingText("sem_noticias", { lastSessionAt: null, daysWithoutNews: 6 }, "local", NOW),
+      pendingText("sem_noticias", { lastSessionAt: iso(10) }, "local", NOW),
+      pendingText("ficha_vencida", { lastSessionAt: null, validity: { label: "vencida há 5 dias" } }, "local", NOW),
+      pendingText("ficha_vencendo", { lastSessionAt: null, validity: { label: "vence em 2 dias" } }, "local", NOW),
+      resultsStatus(2),
+    ];
+    for (const t of texts) expect(t).not.toMatch(/aberto|enviad|chegou|conferid/i);
+    for (const t of texts) expect(t.toLowerCase()).not.toContain("sem treinar");
+  });
+});
+
+describe("programLine: estado da ficha antes do nome (U4a)", () => {
+  const soon = { state: "soon" as const, label: "vence em 2 dias" };
+  const expired = { state: "expired" as const, label: "vencida há 5 dias" };
+  const ok = { state: "ok" as const, label: "vence em 3 semanas" };
+  it("pendência de outro motivo: o estado vem antes do nome", () => {
+    expect(programLine({ programName: "ABCD Glúteos · Emagrecimento", validity: soon, top: "sem_noticias" })).toEqual({ state: "Ficha vence em 2 dias", name: "ABCD Glúteos · Emagrecimento" });
+    expect(programLine({ programName: "ABC", validity: expired, top: "sem_noticias" })).toEqual({ state: "Ficha vencida há 5 dias", name: "ABC" });
+  });
+  it("a pendência já fala da ficha: só o nome", () => {
+    expect(programLine({ programName: "ABC", validity: soon, top: "ficha_vencendo" })).toEqual({ state: null, name: "ABC" });
+    expect(programLine({ programName: "ABC", validity: expired, top: "ficha_vencida" })).toEqual({ state: null, name: "ABC" });
+  });
+  it("validade em dia ou nenhuma: só o nome", () => {
+    expect(programLine({ programName: "ABC", validity: ok, top: null })).toEqual({ state: null, name: "ABC" });
+    expect(programLine({ programName: "ABC", validity: null, top: "sem_noticias" })).toEqual({ state: null, name: "ABC" });
+  });
+  it("sem ficha: o objetivo, ou nada sem objetivo", () => {
+    expect(programLine({ programName: null, goalLabel: "Hipertrofia", validity: null, top: "sem_ficha" })).toEqual({ state: null, name: "Hipertrofia" });
+    expect(programLine({ programName: null, goalLabel: null, validity: null, top: "sem_ficha" })).toBeNull();
+    expect(programLine({ validity: null, top: "sem_ficha" })).toBeNull();
+  });
+});
+
+describe("matchesQuery: busca pelo início de cada palavra (U4a)", () => {
+  const names = ["Ana Souza", "Ana Beatriz Souza", "Juliana Prado", "Mariana Costa", "João Ferreira", "Maria-Clara Dias"];
+  const find = (q: string) => names.filter((n) => matchesQuery(n, q));
+  it("'ana' acha as Anas, não Juliana nem Mariana", () => expect(find("ana")).toEqual(["Ana Souza", "Ana Beatriz Souza"]));
+  it("'sou' acha os dois Souza", () => expect(find("sou")).toEqual(["Ana Souza", "Ana Beatriz Souza"]));
+  it("várias palavras, em qualquer ordem, sem diferença de maiúscula", () => {
+    expect(find("ANA bea")).toEqual(["Ana Beatriz Souza"]);
+    expect(find("bea ana")).toEqual(["Ana Beatriz Souza"]);
+    expect(find("ana xyz")).toEqual([]);
+  });
+  it("sem acento nos dois sentidos", () => {
+    expect(find("joao")).toEqual(["João Ferreira"]);
+    expect(matchesQuery("Joao Ferreira", "joão")).toBe(true);
+  });
+  it("hífen separa palavras", () => {
+    expect(find("clara")).toEqual(["Maria-Clara Dias"]);
+    expect(find("maria-cl")).toEqual(["Maria-Clara Dias"]);
+  });
+  it("busca vazia (ou só espaços) acha todos", () => {
+    expect(find("")).toEqual(names);
+    expect(find("   ")).toEqual(names);
+  });
+  it("trecho no meio da palavra não conta", () => {
+    expect(find("liana")).toEqual([]);
+    expect(find("zz")).toEqual([]);
+  });
+});
+
+describe("resultsStatus e LIST_TOOLS_MIN (U4a)", () => {
+  it("'11 alunos', '1 aluno', 'Nenhum aluno'", () => {
+    expect(resultsStatus(11)).toBe("11 alunos");
+    expect(resultsStatus(2)).toBe("2 alunos");
+    expect(resultsStatus(1)).toBe("1 aluno");
+    expect(resultsStatus(0)).toBe("Nenhum aluno");
+    expect(resultsStatus(-1)).toBe("Nenhum aluno");
+    expect(resultsStatus(Number.NaN)).toBe("Nenhum aluno");
+  });
+  it("a busca aparece a partir de 7 linhas, como antes", () => expect(LIST_TOOLS_MIN).toBe(7));
 });

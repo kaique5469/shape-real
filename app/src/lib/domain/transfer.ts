@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { isIsoDate } from "./delivery";
+import { dietForLink } from "./diet-plan";
 import type { Food } from "./foods";
 import { completedSets } from "./progression";
 import type { BodyMetric, ConsentSource, DietPlan, Exercise, Profile, Program, Session } from "./types";
@@ -30,6 +32,15 @@ export interface FichaPacket {
   foods: Food[];
 }
 
+/**
+ * Versão da ficha e da dieta que o aparelho do aluno tem (U2c, eco por conteúdo): os `updatedAt` do personal que
+ * vieram no último link da ficha. Volta com os treinos; o personal compara com a versão atual dele.
+ */
+export interface FichaEcho {
+  programAt?: string;
+  dietAt?: string;
+}
+
 export interface TreinosPacket {
   v: number;
   kind: "treinos";
@@ -39,6 +50,8 @@ export interface TreinosPacket {
   coachId: string;
   sessions: Session[];
   metrics: BodyMetric[];
+  /** Opcional: links antigos não têm; apps antigos descartam o campo (o esquema ignora chaves desconhecidas). */
+  ficha?: FichaEcho;
 }
 
 export type Packet = FichaPacket | TreinosPacket;
@@ -179,6 +192,8 @@ const treinosSchema = z.object({
   coachId: text(80),
   sessions: z.array(session).max(60),
   metrics: z.array(metric).max(60),
+  // Acessório: um bloco malformado é ignorado (vira undefined) e o link abre do mesmo jeito.
+  ficha: z.object({ programAt: text(40).optional(), dietAt: text(40).optional() }).optional().catch(undefined),
 });
 
 /** Confere o pacote recebido; null quando não é um link do Shape Real (ou veio corrompido). */
@@ -203,6 +218,16 @@ function pickStudent(p: Partial<Profile>): StudentFields {
  */
 export function studentFieldsOf(student: FichaPacket["student"]): StudentFields {
   return pickStudent(student as Partial<Profile>);
+}
+
+/**
+ * O que vai no link da ficha: a ficha ativa e a dieta salva com itens, orientações ou metas (U3c: uma dieta só com
+ * metas e orientações também vai; no aluno, abre em `leitura_metas`). É também o que o registro de envio compara
+ * (U2b: as versões gravadas no toque são os `updatedAt` destes dois). Um lugar só, para o link e o registro nunca
+ * discordarem sobre o que "a dieta" é.
+ */
+export function fichaLinkItems(programs: readonly Program[], diet: DietPlan | null): { program: Program | null; diet: DietPlan | null } {
+  return { program: programs.find((p) => p.active) ?? null, diet: dietForLink(diet) };
 }
 
 /** Pacote que o personal manda ao aluno: ficha ativa, dieta e os exercícios/alimentos próprios usados nelas. */
@@ -230,9 +255,22 @@ export function buildFichaPacket(input: {
   };
 }
 
-/** Pacote que o aluno devolve: treinos (os mais recentes primeiro, até o limite) e medidas. */
-export function buildTreinosPacket(input: { student: Profile; coachId: string; studentRef: string; sessions: Session[]; metrics?: BodyMetric[]; now?: Date }): TreinosPacket {
+/** Só as versões informadas; null quando nenhuma veio (o campo não vai no link). */
+function cleanEcho(e: FichaEcho | null | undefined): FichaEcho | null {
+  if (!e) return null;
+  const out: FichaEcho = {};
+  if (typeof e.programAt === "string" && e.programAt) out.programAt = e.programAt;
+  if (typeof e.dietAt === "string" && e.dietAt) out.dietAt = e.dietAt;
+  return out.programAt || out.dietAt ? out : null;
+}
+
+/**
+ * Pacote que o aluno devolve: treinos (os mais recentes primeiro, até o limite) e medidas. `ficha` (U2c) = a versão
+ * da ficha e da dieta que este aparelho recebeu (`remoteCoach.recebido`); só entra no pacote quando informada.
+ */
+export function buildTreinosPacket(input: { student: Profile; coachId: string; studentRef: string; sessions: Session[]; metrics?: BodyMetric[]; ficha?: FichaEcho | null; now?: Date }): TreinosPacket {
   const sessions = [...input.sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, MAX_SESSIONS_PER_LINK);
+  const ficha = cleanEcho(input.ficha);
   return {
     v: TRANSFER_VERSION,
     kind: "treinos",
@@ -242,7 +280,23 @@ export function buildTreinosPacket(input: { student: Profile; coachId: string; s
     coachId: input.coachId,
     sessions,
     metrics: input.metrics ?? [],
+    ...(ficha ? { ficha } : {}),
   };
+}
+
+/**
+ * Versão da ficha e da dieta que este aparelho passa a ter (U2c), lida do PACOTE (o `updatedAt` do personal), antes
+ * de a ficha ser gravada aqui com o horário local. Item que não veio no link mantém a versão anterior quando o
+ * personal é o mesmo (a ficha ou a dieta de antes continua no aparelho); outro personal recomeça do zero.
+ * Data ilegível não vira versão. null = nenhuma versão conhecida.
+ */
+export function receivedVersions(packet: Pick<FichaPacket, "coach" | "program" | "diet">, previous: Profile["remoteCoach"] | undefined): FichaEcho | null {
+  const prev = previous?.id === packet.coach.id ? previous.recebido : undefined;
+  const pick = (item: { updatedAt: string } | null, old: string | undefined) => (item ? (isIsoDate(item.updatedAt) ? item.updatedAt : undefined) : old);
+  const programAt = pick(packet.program, prev?.programAt);
+  const dietAt = pick(packet.diet, prev?.dietAt);
+  if (!programAt && !dietAt) return null;
+  return { ...(programAt ? { programAt } : {}), ...(dietAt ? { dietAt } : {}) };
 }
 
 // ---- recebimento: carga atual e medidas ------------------------------------------

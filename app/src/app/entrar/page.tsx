@@ -223,7 +223,7 @@ function Entrar() {
         </div>
         <div className="relative flex h-full flex-col justify-end p-12">
           <p className="plate-type text-[3.2rem] leading-[0.95]">
-            50 → <span className="text-plate-red">52,5</span>
+            50 → <span data-brand className="text-brand">52,5</span>
             <span className="text-2xl"> kg</span>
           </p>
           <p className="mt-4 max-w-sm text-lg text-chalk/70">Toda semana um pouco mais. O Shape Real lembra a carga e avisa quando subir.</p>
