@@ -142,6 +142,36 @@ export function useKeepFocusedRowVisible(opts: {
   }, [main, header, footer, enabled]);
 }
 
+/**
+ * Barra fixa embaixo fora da sessão ("Salvar ajustes" da dieta, "Salvar ficha" do editor): enquanto ela tem conteúdo,
+ * o `scroll-padding-bottom` da página desconta a distância da barra até o pé da tela (o menu inferior e a área
+ * segura, lidos do `bottom` calculado dela) mais a altura da barra e 8 px de folga. Assim o foco do teclado (Tab, o
+ * "próximo" do teclado) nunca para atrás da barra nem do menu (WCAG 2.4.11). Barra vazia ou desmontada: volta o
+ * padrão do globals.css (menu + 8 px). Mesmo padrão da sessão (sessao/page.tsx, U8 §3.2a).
+ */
+export function useStickyBarScrollPadding(bar: RefObject<HTMLElement | null>, enabled: boolean): void {
+  useEffect(() => {
+    const el = bar.current;
+    if (!enabled || !el || typeof window === "undefined") return;
+    const css = document.documentElement.style;
+    const apply = () => {
+      const h = el.offsetHeight;
+      const bottom = Number.parseFloat(getComputedStyle(el).bottom);
+      if (!h || !Number.isFinite(bottom)) css.removeProperty("scroll-padding-bottom");
+      else css.scrollPaddingBottom = `${Math.ceil(bottom + h + 8)}px`;
+    };
+    apply();
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(apply);
+    ro?.observe(el);
+    window.addEventListener("resize", apply);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", apply);
+      css.removeProperty("scroll-padding-bottom");
+    };
+  }, [bar, enabled]);
+}
+
 export function relativeDay(iso: string | null, now = new Date()): string {
   if (!iso) return "nunca";
   const d = new Date(iso);

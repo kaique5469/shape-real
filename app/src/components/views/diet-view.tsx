@@ -37,7 +37,7 @@ import { ACTIVITY_LABEL, analyzeDietText, buildDietTemplate, dietTotals, itemFro
 import { coachSignature, signerFor } from "@/lib/domain/program-share";
 import { fichaDeliveryLines, prepStatusText, type PrepVia } from "@/lib/domain/delivery";
 import { consentConfirmed } from "@/lib/domain/transfer";
-import { fmtDate, selectAllSoon } from "@/lib/hooks";
+import { fmtDate, selectAllSoon, useStickyBarScrollPadding } from "@/lib/hooks";
 import { reportError, track, type DietAnalyzedProps } from "@/lib/analytics";
 import { useFichaDelivery, useFichaLink } from "@/lib/use-ficha-link";
 import type { ActivityLevel, DietItem, DietPlan, MacroTargets, Meal, Profile } from "@/lib/domain/types";
@@ -711,25 +711,27 @@ export function DietView({ owner, mode, onDeliveryChange }: { owner: Profile; mo
             </div>
           </Panel>
         ) : null}
-
-        {showBar ? (
-          <div className="sticky bottom-nav-safe z-10 flex flex-wrap items-center justify-end gap-2 lg:bottom-4">
-            {dirty ? (
-              <span className="flex w-full justify-end sm:w-auto">
-                <span className="rounded bg-warn-fill px-2 py-1 text-sm font-semibold text-iron">Alterações não salvas</span>
-              </span>
-            ) : null}
-            {coach ? null : (
-              <Button variant="secondary" size="lg" onClick={cancelEditing} disabled={saving} className="shadow-lift">
-                Cancelar
-              </Button>
-            )}
-            <Button size="lg" onClick={save} loading={saving} className="shadow-lift">
-              {adjusting ? "Salvar ajustes" : "Salvar dieta"}
-            </Button>
-          </div>
-        ) : null}
       </div>
+
+      {/* Fora do bloco do cardápio: dentro dele, a barra só grudava depois de rolar (o bloco começa abaixo das metas)
+          e, no topo da página, ficava atrás do menu de baixo. */}
+      {showBar ? (
+        <StickySaveBar className="no-print sticky bottom-nav-safe z-10 flex flex-wrap items-center justify-end gap-2 lg:bottom-4">
+          {dirty ? (
+            <span className="flex w-full justify-end sm:w-auto">
+              <span className="rounded bg-warn-fill px-2 py-1 text-sm font-semibold text-iron">Alterações não salvas</span>
+            </span>
+          ) : null}
+          {coach ? null : (
+            <Button variant="secondary" size="lg" onClick={cancelEditing} disabled={saving} className="shadow-lift">
+              Cancelar
+            </Button>
+          )}
+          <Button size="lg" onClick={save} loading={saving} className="shadow-lift">
+            {adjusting ? "Salvar ajustes" : "Salvar dieta"}
+          </Button>
+        </StickySaveBar>
+      ) : null}
 
       <Dialog open={askDiscard} onClose={() => setAskDiscard(false)} title={adjusting ? "Descartar os ajustes?" : "Descartar as alterações?"}>
         <p className="text-[0.9375rem] text-steel">{adjusting ? "O que você mudou agora não fica salvo. O cardápio volta a ser o de antes." : "O que você mudou agora não fica salvo. A dieta volta a ser a de antes."}</p>
@@ -893,6 +895,17 @@ export function DietView({ owner, mode, onDeliveryChange }: { owner: Profile; mo
  * dos botões, as linhas M/D da situação do envio; depois do toque, o que o aparelho viu ("Envio iniciado às 14:02…"),
  * nunca que a mensagem saiu ou chegou. Texto e PDF ficam em "Outras formas": eles não atualizam o app do aluno.
  */
+/** Barra fixa de salvar (montada só enquanto aparece): o foco do teclado não para atrás dela nem do menu (WCAG 2.4.11). */
+function StickySaveBar({ className, children }: { className: string; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useStickyBarScrollPadding(ref, true);
+  return (
+    <div ref={ref} className={className}>
+      {children}
+    </div>
+  );
+}
+
 function SendDietPanel({
   student,
   dirty,
@@ -1010,7 +1023,7 @@ function SendDietPanel({
               !textHref && "pointer-events-none opacity-50",
             )}
           >
-            <MessageCircle className="size-4" aria-hidden /> Texto no WhatsApp
+            <MessageCircle className="size-4" aria-hidden /> Mandar como texto
           </a>
           <Button variant="secondary" disabled={dirty || !hasItems} onClick={onCopyText} icon={copied ? <Check className="size-4" /> : <Copy className="size-4" />}>
             {copied ? "Copiado" : "Copiar texto"}

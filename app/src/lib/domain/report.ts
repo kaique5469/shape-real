@@ -1,6 +1,6 @@
 import { bestMarkOf, compareMarks, exerciseMarks, markDeltaPct, type Mark } from "./evolution";
 import { todayISO } from "./ids";
-import { completedSets, e1rm, fmtKg, fmtMark, sessionVolume, weekStart } from "./progression";
+import { completedSets, e1rmRaw, fmtKg, fmtMark, sessionVolume, weekStart } from "./progression";
 import type { BodyMetric, Profile, Session } from "./types";
 
 /**
@@ -215,11 +215,11 @@ export function buildReport(input: { profile: Pick<Profile, "name" | "daysPerWee
     const dl = Math.round((best.mark.loadKg - base.mark.loadKg) * 100) / 100;
     const dr = best.mark.reps - base.mark.reps;
     const compact = deltaPct ? null : dl > 0 ? `+${fmtKg(dl)}` : `+${dr} ${dr === 1 ? "rep" : "reps"}`;
-    const e0 = e1rm(base.mark.loadKg, base.mark.reps);
+    const e0 = e1rmRaw(base.mark.loadKg, base.mark.reps);
     improved.push({
       row: { exerciseId: id, name: h.name, from: base.mark, to: best.mark, fromDate: base.date, toDate: best.date, deltaPct, compact, sessions: inside.length },
-      // Ordem: variação do 1RM com o teto (sem arredondar), depois número de treinos.
-      gain: e0 ? (e1rm(best.mark.loadKg, best.mark.reps) - e0) / e0 : 0,
+      // Ordem: variação do 1RM com o teto (sem arredondar; resíduo de ponto flutuante cortado), depois número de treinos.
+      gain: e0 ? Math.round(((e1rmRaw(best.mark.loadKg, best.mark.reps) - e0) / e0) * 1e6) / 1e6 : 0,
     });
   }
   improved.sort((a, b) => b.gain - a.gain || b.row.sessions - a.row.sessions);

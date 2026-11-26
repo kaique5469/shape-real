@@ -459,7 +459,7 @@ function Summary({ student, justCreated, onTab, onEdit }: { student: Profile; ju
         <div className="flex flex-col gap-3 rounded-[var(--radius-ficha)] border border-rule bg-paper p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <h2 className="text-[0.9375rem] font-bold">Relatório de evolução</h2>
-            <p className="mt-0.5 text-sm text-steel">Presença, cargas que subiram e medidas do período, prontos para enviar a {first} pelo WhatsApp ou em PDF.</p>
+            <p className="mt-0.5 text-sm text-steel">Presença, exercícios que melhoraram e medidas do período, prontos para enviar a {first} pelo WhatsApp ou em PDF.</p>
           </div>
           <Button variant="secondary" onClick={() => onTab("relatorio")} icon={<FileText className="size-4" />} className="shrink-0">
             Abrir relatório

@@ -1,7 +1,7 @@
 "use client";
 
 import { uid } from "@/lib/domain/ids";
-import { SENT_SUFFIXES, sentKeyOf } from "@/lib/domain/export";
+import { SENT_SINCE_KEY, SENT_SUFFIXES, sentKeyOf } from "@/lib/domain/export";
 import type { Food } from "@/lib/domain/foods";
 import type { BodyMetric, DietPlan, Exercise, Invite, PhotoPose, Profile, Program, ProgressPhoto, Session, StudentDraft } from "@/lib/domain/types";
 import { DataError, summarizeStudent, type Repository } from "./repository";
@@ -88,6 +88,8 @@ export function markBackupDone(at: string = new Date().toISOString()) {
 // ---- registro de envio (sr:sent:*) ---------------------------------------------
 /** Prefixo das chaves de envio (fora de `sr:v1:`): lista de treinos enviados, log, registro da ficha e eco. */
 const SENT_PREFIX = "sr:sent:";
+/** Rascunho do treino em andamento (`sr:draft:{userId}`, ver workout-draft.ts): entra no "apagar tudo". */
+const DRAFT_PREFIX = "sr:draft:";
 
 /** Chaves do localStorage (por índice: funciona também com armazenamento simulado nos testes). */
 function storageKeys(): string[] {
@@ -292,6 +294,11 @@ export class LocalRepository implements Repository {
   }
   async createStudent(coachId: string, draft: StudentDraft) {
     const now = new Date().toISOString();
+    // Marco do registro de envios (U2b): gravado antes da primeira ficha deste aluno existir, para ela nunca
+    // cair em "sem informação" por o marco ter sido lido pela primeira vez só depois.
+    try {
+      if (!localStorage.getItem(SENT_SINCE_KEY)) localStorage.setItem(SENT_SINCE_KEY, now);
+    } catch {}
     const profile: Profile = {
       ...draft,
       name: draft.name.trim(),
@@ -401,10 +408,14 @@ export class LocalRepository implements Repository {
     clearDeliveryKeys(userId);
   }
 
-  /** Apaga todos os dados locais (botão "Apagar dados deste aparelho"), inclusive o registro de envio (sr:sent:*). */
+  /**
+   * Apaga todos os dados locais ("Apagar dados deste aparelho" e "Apagar tudo e recomeçar"): `sr:v1:*`, o registro de
+   * envio (`sr:sent:*`, inclusive `@desde`), o rascunho do treino em andamento (`sr:draft:*`, com cargas) e as fotos.
+   * No aparelho do personal isso inclui os alunos dele; `deleteAccount` sozinho deixaria esses dados órfãos.
+   */
   async wipe() {
     storageKeys()
-      .filter((k) => k.startsWith(PREFIX) || k.startsWith(SENT_PREFIX))
+      .filter((k) => k.startsWith(PREFIX) || k.startsWith(SENT_PREFIX) || k.startsWith(DRAFT_PREFIX))
       .forEach((k) => localStorage.removeItem(k));
     await new Promise<void>((res) => {
       const req = indexedDB.deleteDatabase(DB_NAME);

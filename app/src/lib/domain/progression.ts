@@ -13,12 +13,20 @@ export function isAssisted(exerciseId: string): boolean {
   return ASSISTED.has(exerciseId);
 }
 
-/** 1RM estimado (Epley), confiável até ~10 repetições; acima de 12 a conta para de subir. */
-export function e1rm(loadKg: number, reps: number): number {
+/**
+ * 1RM estimado (Epley) sem arredondar: para comparar marcas (% de variação, ordem do relatório). Arredondar antes
+ * de comparar daria % diferentes para o mesmo progresso (+1 rep a partir de 10 é sempre +2,5%).
+ */
+export function e1rmRaw(loadKg: number, reps: number): number {
   if (!loadKg || !reps || reps <= 0) return 0;
   if (reps === 1) return loadKg;
   const r = Math.min(reps, 12);
-  return Math.round(loadKg * (1 + r / 30) * 10) / 10;
+  return loadKg * (1 + r / 30);
+}
+
+/** 1RM estimado (Epley), confiável até ~10 repetições; acima de 12 a conta para de subir. Arredondado a 0,1 kg (para mostrar). */
+export function e1rm(loadKg: number, reps: number): number {
+  return Math.round(e1rmRaw(loadKg, reps) * 10) / 10;
 }
 
 /**

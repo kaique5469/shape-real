@@ -80,6 +80,12 @@ export interface FichaDelivery {
   diet: ItemDelivery;
   /** O treino registrado depois do envio ainda veio com a versão velha (fato, não inferência). */
   staleEcho: { registeredAt: string; version: string } | null;
+  /**
+   * Um treino registrado depois do envio veio com eco, mas sem a versão do item da manchete (o aluno ajustou esse
+   * item no celular dele, ou não abriu o link). Só aparece quando vale `true`; com ele, a promessa "A confirmação
+   * aparece quando … mandar o próximo treino" sai (já veio um treino, e ele não confirmou).
+   */
+  headMissingFromEcho?: true;
 }
 
 /** Categoria do envio da ficha para a medição (`ficha_link_sent.situacao`; calculada por `fichaSendSituation`, U2b). */
@@ -309,7 +315,8 @@ export function fichaDelivery(input: { current: VersionPair; record: FichaSendRe
   const head = program.kind === "sem_item" ? { item: diet, current: current.dietAt, acked: ack?.dietAt } : { item: program, current: current.programAt, acked: ack?.programAt };
   const staleEcho =
     head.item.kind === "enviado" && ack && record && head.acked && head.acked !== head.current && after(ack.registeredAt, record.at) ? { registeredAt: ack.registeredAt, version: head.acked } : null;
-  return { program, diet, staleEcho };
+  const headMissingFromEcho = head.item.kind === "enviado" && ack !== null && record !== null && !head.acked && after(ack.registeredAt, record.at);
+  return { program, diet, staleEcho, ...(headMissingFromEcho ? { headMissingFromEcho: true as const } : {}) };
 }
 
 /** Linhas de estado do envio da ficha (U2 §3.3). `pageIcon` vale para a linha `page`. */
@@ -379,7 +386,7 @@ export function fichaDeliveryLines(d: FichaDelivery, studentFirst: string): Fich
         ? `A dieta atual ainda não foi para o app de ${s}.`
         : null;
   const staleText = d.staleEcho ? `O treino recebido em ${fmtDayMonth(d.staleEcho.registeredAt)} ainda veio com a versão de ${fmtDayMonth(d.staleEcho.version)}.` : null;
-  const detail = dietDetail ?? staleText ?? (head.kind === "enviado" ? `A confirmação aparece quando ${s} mandar o próximo treino.` : null);
+  const detail = dietDetail ?? staleText ?? (head.kind === "enviado" && !d.headMissingFromEcho ? `A confirmação aparece quando ${s} mandar o próximo treino.` : null);
 
   const headUpToDate = head.kind === "enviado" || head.kind === "confirmado";
   const page = m && !(headUpToDate && dietDetail) ? m : dietDetail ? { text: dietDetail, icon: "pendente" as const } : null;

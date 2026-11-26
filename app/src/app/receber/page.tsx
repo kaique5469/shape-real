@@ -153,7 +153,7 @@ export default function ReceberPage() {
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-md flex-col px-5 py-8">
-      <Link href="/" aria-label="Shape Real">
+      <Link href="/" aria-label="Shape Real" className="inline-flex min-h-11 items-center">
         <Logo />
       </Link>
       <main className="flex flex-1 flex-col justify-center py-8">

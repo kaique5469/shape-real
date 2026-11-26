@@ -265,6 +265,25 @@ function cleanEcho(e: FichaEcho | null | undefined): FichaEcho | null {
 }
 
 /**
+ * Eco que este aparelho manda com os treinos (U2c): só o que continua igual ao que chegou do personal. A ficha entra
+ * quando a ativa é dele (`createdBy`) e não foi ajustada aqui (`adjustedAt`, U5a); a dieta, nas mesmas condições
+ * (U3b). O eco prova a versão recebida, não o conteúdo em uso: sem este filtro, o personal leria "está com a ficha
+ * atual" enquanto o celular do aluno diz "ajustado por você". O que fica de fora não confirma nada lá.
+ */
+export function echoFor(
+  recebido: FichaEcho | null | undefined,
+  coachId: string,
+  activeProgram: Pick<Program, "createdBy" | "adjustedAt"> | null | undefined,
+  diet: Pick<DietPlan, "createdBy" | "adjustedAt"> | null | undefined,
+): FichaEcho | null {
+  const unchanged = (item: { createdBy: string; adjustedAt?: string } | null | undefined) => Boolean(item && item.createdBy === coachId && !item.adjustedAt);
+  return cleanEcho({
+    ...(recebido?.programAt && unchanged(activeProgram) ? { programAt: recebido.programAt } : {}),
+    ...(recebido?.dietAt && unchanged(diet) ? { dietAt: recebido.dietAt } : {}),
+  });
+}
+
+/**
  * Pacote que o aluno devolve: treinos (os mais recentes primeiro, até o limite) e medidas. `ficha` (U2c) = a versão
  * da ficha e da dieta que este aparelho recebeu (`remoteCoach.recebido`); só entra no pacote quando informada.
  */

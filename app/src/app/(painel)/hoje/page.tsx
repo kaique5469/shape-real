@@ -81,6 +81,7 @@ function Hoje() {
   const day = program?.days.find((d) => d.key === dayKey) ?? program?.days[0];
   const today = (new Date().getDay() + 6) % 7;
   const coachName = data.coach?.name && data.coach.name !== "Personal" ? data.coach.name : null;
+  const coachFirst = coachName?.split(" ")[0] ?? null;
   const fromCoach = program && program.createdBy !== user!.id ? (coachName ? `ficha de ${coachName}` : "ficha do seu personal") : null;
   const validity = program ? programValidity(program.createdAt, program.durationWeeks) : null;
   const vIcon = validityIcon(validity);
@@ -109,6 +110,14 @@ function Hoje() {
       {params.get("ficha") ? (
         <Alert tone="done">
           <strong>Ficha salva neste celular.</strong> Toque em “Começar treino” quando chegar na academia. No fim, o app monta a mensagem para você mandar o treino a {user!.remoteCoach?.name.split(" ")[0] ?? "seu personal"}.
+        </Alert>
+      ) : null}
+      {params.get("dieta") ? (
+        <Alert tone="done">
+          <strong>Dieta salva neste celular.</strong>{" "}
+          <Link href="/dieta" className="font-semibold underline">
+            Ver a dieta
+          </Link>
         </Alert>
       ) : null}
       {params.get("personal") ? (
@@ -210,10 +219,19 @@ function Hoje() {
         </section>
       ) : (
         <Empty
-          title={data.coach ? "Seu personal ainda não enviou a ficha" : "Você ainda não tem ficha ativa"}
+          title={
+            // Sem servidor, o app só sabe o que está neste aparelho: nunca afirma o que o personal fez ou deixou de fazer.
+            data.coach
+              ? mode === "local"
+                ? `Nenhuma ficha ${coachFirst ? `de ${coachFirst}` : "do seu personal"} neste celular ainda`
+                : "Seu personal ainda não enviou a ficha"
+              : "Você ainda não tem ficha ativa"
+          }
           body={
             data.coach
-              ? `Quando ${coachName ?? "seu personal"} enviar a ficha, ela aparece aqui. Enquanto isso, você pode registrar um treino livre.`
+              ? mode === "local"
+                ? `Quando a ficha ${coachFirst ? `de ${coachFirst}` : "do seu personal"} chegar pelo link, ela aparece aqui. Enquanto isso, você pode registrar um treino livre.`
+                : `Quando ${coachName ?? "seu personal"} enviar a ficha, ela aparece aqui. Enquanto isso, você pode registrar um treino livre.`
               : ai.enabled
                 ? "Monte uma ficha com IA em segundos, no sistema que você preferir, ou registre um treino livre."
                 : "Monte sua ficha em um minuto, no sistema que você preferir, ou registre um treino livre."

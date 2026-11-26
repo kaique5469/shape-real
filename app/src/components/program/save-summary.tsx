@@ -47,7 +47,8 @@ export function PostSaveBar({
   useEffect(() => {
     if (focusRequest === handled.current) return;
     handled.current = focusRequest;
-    if (open) titleRef.current?.focus();
+    // Sem rolar: a barra é fixa no rodapé; focar com rolagem fazia a página pular ~600 px depois de salvar.
+    if (open) titleRef.current?.focus({ preventScroll: true });
   }, [focusRequest, open]);
 
   return (

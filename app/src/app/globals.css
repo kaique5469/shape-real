@@ -162,6 +162,18 @@ a {
   bottom: calc(5rem + env(safe-area-inset-bottom));
 }
 
+/*
+ * Foco do teclado nunca atrás do cabeçalho (h-14) nem do menu de baixo do painel (WCAG 2.4.11): ao levar um campo ou
+ * link em foco para a tela, o navegador desconta os dois, com 8 px de folga. Só nas telas com o menu de baixo. A
+ * sessão e as barras fixas (useStickyBarScrollPadding) sobrescrevem com o estilo inline e voltam a este padrão ao sair.
+ */
+@media (width < 64rem) {
+  html:has([data-bottom-nav]) {
+    scroll-padding-top: 4rem;
+    scroll-padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
+  }
+}
+
 /* Números de treino: tabulares e um pouco condensados para caberem nas colunas. */
 .num {
   font-variant-numeric: tabular-nums;

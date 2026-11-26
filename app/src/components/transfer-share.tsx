@@ -8,7 +8,7 @@ import { reportError, track, type FichaLinkWhere, type TreinosLinkWhere } from "
 import { useApp } from "@/lib/app-context";
 import { fichaDeliveryLines, prepStatusText, resendCounts, resendEntry, resendNote, sessionDelivery, type PrepEntry, type PrepVia, type SessionDelivery } from "@/lib/domain/delivery";
 import { firstName, waLink } from "@/lib/domain/format";
-import { buildTreinosPacket, MAX_SESSIONS_PER_LINK, treinosMessage } from "@/lib/domain/transfer";
+import { buildTreinosPacket, echoFor, MAX_SESSIONS_PER_LINK, treinosMessage } from "@/lib/domain/transfer";
 import type { Profile, Session } from "@/lib/domain/types";
 import { packData } from "@/lib/share-link";
 import { markSessionsPrepared, prepLog, sentSessionIds } from "@/lib/transfer-client";
@@ -124,8 +124,9 @@ export function SendToStudent({
                 <Alert tone="warn">Monte a ficha ou a dieta de {first} antes de enviar.</Alert>
               ) : (
                 <>
-                  {/* Situação de antes do toque: manchete (com ícone) e detalhe, no máximo duas linhas. */}
-                  {dialogLines?.dialog.length ? (
+                  {/* Situação de antes do toque: manchete (com ícone) e detalhe, no máximo duas linhas. Depois do toque
+                      sai de cena: "ainda não foi para o app" ao lado de "Envio iniciado" se contradizia. */}
+                  {!toque && dialogLines?.dialog.length ? (
                     <div className="space-y-1 text-sm">
                       <DeliveryLine icon={dialogLines.dialogIcon ?? "pendente"}>{dialogLines.dialog[0]}</DeliveryLine>
                       {/* Alinhado ao texto da manchete (ícone de 1,05em + o vão da DeliveryLine). */}
@@ -246,9 +247,15 @@ export function SendToCoach({
     );
     (async () => {
       // Medidas registradas pelo aluno vão junto (o personal acompanha peso e circunferências).
-      const metrics = await repo.listMetrics(user.id).catch(() => []);
-      // A versão da ficha e da dieta que este celular recebeu volta junto (U2c): o personal vê se o aluno está com a atual.
-      const packet = buildTreinosPacket({ student: user, coachId: coach.id, studentRef: coach.studentRef, sessions: shown, metrics: metrics.slice(-12), ficha: coach.recebido });
+      const [metrics, programs, diet] = await Promise.all([
+        repo.listMetrics(user.id).catch(() => []),
+        repo.listPrograms(user.id).catch(() => []),
+        repo.getDiet(user.id).catch(() => null),
+      ]);
+      // A versão da ficha e da dieta que este celular recebeu volta junto (U2c), só do que continua igual ao que
+      // chegou (sem ajuste feito aqui): o eco nunca diz ao personal que o aluno está com o conteúdo dele quando não está.
+      const ficha = echoFor(coach.recebido, coach.id, programs.find((p) => p.active), diet);
+      const packet = buildTreinosPacket({ student: user, coachId: coach.id, studentRef: coach.studentRef, sessions: shown, metrics: metrics.slice(-12), ficha });
       const link = `${origin()}/receber#d=${await packData(packet)}`;
       if (alive) setMsg(treinosMessage(shown, link, coachFirst));
     })().catch((e) => {

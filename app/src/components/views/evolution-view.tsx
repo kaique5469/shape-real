@@ -96,8 +96,12 @@ const CHART_TEXT: Record<ExerciseChart["metric"], { title: string; sub: string; 
 /** O parágrafo que fica no lugar do gráfico quando ele não se aplica (um registro só não tem: o cartão já explica). */
 function noChartText(reason: NoChartReason | null, seg: boolean): string | null {
   if (reason === "ajuda") return "Na barra assistida, usar menos ajuda é o progresso. Por isso não há gráfico de força: compare pelos registros abaixo.";
-  if (reason === "duplo") return seg ? "Carga e tempo mudaram juntos e não cabem num gráfico só. Compare pelos registros abaixo." : "Carga e repetições mudaram juntas e não cabem num gráfico só. Compare pelos registros abaixo.";
-  if (reason === "reps_altas") return "Acima de 12 repetições, a força estimada deixa de ser confiável. Compare pelos registros abaixo.";
+  // Sem afirmar o que mudou nem negar a linha de cima (o cartão pode mostrar "+4 kg no mesmo tempo" ou um 1RM válido).
+  if (reason === "duplo")
+    return seg
+      ? "Com carga e tempo no mesmo exercício, não dá para fazer um gráfico só. Compare pelos registros abaixo."
+      : "Com carga e repetições no mesmo exercício, não dá para fazer um gráfico só. Compare pelos registros abaixo.";
+  if (reason === "reps_altas") return "A maioria dos treinos passou de 12 repetições, e aí a força estimada deixa de ser confiável. Por isso não há gráfico: compare pelos registros abaixo.";
   return null;
 }
 

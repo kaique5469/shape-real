@@ -38,7 +38,7 @@ import { PLANS } from "@/lib/domain/plans";
 import { coachSignature, nextDayKey, programSetsPerGroup, signerFor, techniqueText } from "@/lib/domain/program-share";
 import { draftToRestore, parseFichaDraft, programForSave, programSignature, type FichaDraft } from "@/lib/domain/program-signature";
 import { getSystem } from "@/lib/domain/systems";
-import { fmtDate, selectAllSoon } from "@/lib/hooks";
+import { fmtDate, selectAllSoon, useStickyBarScrollPadding } from "@/lib/hooks";
 import type { Exercise, Goal, Level, PlannedExercise, Profile, Program, Technique, Unit, WorkoutDay } from "@/lib/domain/types";
 
 const RESTS = [0, 30, 45, 60, 75, 90, 120, 150, 180, 240, 300];
@@ -99,6 +99,9 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
   const autoPrint = useRef(false);
   const saveBar = useRef<HTMLDivElement>(null);
   const barAction = useRef<HTMLDivElement>(null);
+  // Barra fixa de baixo (sempre montada depois de carregar): o foco do teclado não para atrás dela (WCAG 2.4.11).
+  const stickyBar = useRef<HTMLDivElement>(null);
+  useStickyBarScrollPadding(stickyBar, Boolean(program));
 
   useEffect(() => {
     let alive = true;
@@ -591,7 +594,7 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
                         {unit !== "min" ? <NumField label="Carga (kg)" value={e.loadKg ?? null} min={0} max={999} decimal allowEmpty onCommit={(v) => changeEx(e.uid, { loadKg: v || null })} /> : null}
                         <label className="block">
                           <span className="col-head mb-1 block text-steel">Descanso</span>
-                          <Select value={e.restSec} onChange={(ev) => changeEx(e.uid, { restSec: Number(ev.target.value) })} className="h-11 px-2 text-sm">
+                          <Select value={e.restSec} onChange={(ev) => changeEx(e.uid, { restSec: Number(ev.target.value) })} className="h-11 px-2">
                             {(RESTS.includes(e.restSec) ? RESTS : [...RESTS, e.restSec].sort((a, b) => a - b)).map((r) => (
                               <option key={r} value={r}>
                                 {r === 0 ? "Sem" : fmtRest(r)}
@@ -608,7 +611,7 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
                               const base = u === "reps" ? { repsMin: 8, repsMax: 12 } : u === "seg" ? { repsMin: 30, repsMax: 45 } : { repsMin: 15, repsMax: 15 };
                               changeEx(e.uid, { unit: u, ...base, ...(u === "min" ? { loadKg: null, sets: 1 } : {}) });
                             }}
-                            className="h-11 px-2 text-sm"
+                            className="h-11 px-2"
                           >
                             <option value="reps">Reps</option>
                             <option value="seg">Seg.</option>
@@ -617,7 +620,7 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
                         </label>
                         <label className={cx("block", unit === "min" ? "col-span-3" : "col-span-3 sm:col-span-1")}>
                           <span className="col-head mb-1 block text-steel">Técnica</span>
-                          <Select value={e.technique} onChange={(ev) => changeEx(e.uid, { technique: ev.target.value as Technique })} className="h-11 px-2 text-sm">
+                          <Select value={e.technique} onChange={(ev) => changeEx(e.uid, { technique: ev.target.value as Technique })} className="h-11 px-2">
                             {(Object.keys(TECHNIQUE_LABEL) as Technique[]).map((t) => (
                               <option key={t} value={t}>
                                 {t === "normal" ? "Sem técnica especial" : TECHNIQUE_LABEL[t]}
@@ -737,7 +740,7 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
       </div>
 
       {/* Barra fixa: "não salvo" com "Salvar ficha" ou, depois de salvar, o resumo com o próximo passo. Sempre montada. */}
-      <div className="no-print sticky bottom-nav-safe z-10 lg:bottom-4">
+      <div ref={stickyBar} className="no-print sticky bottom-nav-safe z-10 lg:bottom-4">
         {dirty ? (
           <div ref={saveBar} className="space-y-2">
             {msg?.tone === "error" ? (

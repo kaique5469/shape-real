@@ -108,7 +108,8 @@ export default function AbrirPage() {
       const profile = await importFicha(packet, user && user.role === "athlete" && !returnTo ? user : null, { consent: true });
       enterLocalProfile(profile);
       track("ficha_link_opened", { had_profile: Boolean(user), has_program: Boolean(packet.program), has_diet: Boolean(packet.diet), via_paste: viaPaste, ios_browser: iosBrowser, aviso_dieta: dietNotice ?? "nenhum" });
-      router.replace("/hoje?ficha=1");
+      // Link só com dieta (U3c): o Hoje diz que a dieta foi salva, nunca "Ficha salva".
+      router.replace(packet.program ? "/hoje?ficha=1" : "/hoje?dieta=1");
     } catch (e) {
       reportError(e, "link:abrir-ficha");
       setErr(e instanceof Error ? e.message : "Não foi possível salvar neste aparelho. Tente de novo.");
@@ -131,7 +132,7 @@ export default function AbrirPage() {
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-md flex-col px-5 py-8">
-      <Link href="/" aria-label="Shape Real">
+      <Link href="/" aria-label="Shape Real" className="inline-flex min-h-11 items-center">
         <Logo />
       </Link>
       <main className="flex flex-1 flex-col justify-center py-8">
@@ -155,7 +156,9 @@ export default function AbrirPage() {
             {showAppCard ? <ColarNoAppCard /> : null}
             <div>
               <p className="text-sm font-semibold text-steel">Enviado por {packet.coach.name}</p>
-              <h1 className="plate-type mt-1 text-[2rem] leading-[1.05]">{studentFirst}, sua ficha chegou.</h1>
+              <h1 className="plate-type mt-1 text-[2rem] leading-[1.05]">
+                {studentFirst}, {packet.program ? "sua ficha chegou." : "sua dieta chegou."}
+              </h1>
             </div>
             <ul className="ruled rounded-[var(--radius-ficha)] border border-rule bg-paper">
               {packet.program ? (
@@ -225,7 +228,7 @@ export default function AbrirPage() {
                   {consentLine}
                 </p>
                 <Button size="lg" className="w-full" loading={busy} onClick={save} aria-describedby="abrir-autorizacao">
-                  {updating ? "Atualizar minha ficha" : "Salvar no meu celular"}
+                  {updating ? (packet.program ? "Atualizar minha ficha" : "Atualizar minha dieta") : "Salvar no meu celular"}
                 </Button>
                 {updating ? null : <p className="text-sm text-steel">Sem cadastro: a ficha, a dieta e os seus treinos ficam guardados neste celular. Na próxima vez, é só abrir o app.</p>}
               </div>

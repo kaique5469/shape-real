@@ -129,6 +129,7 @@ export default function PainelLayout({ children }: { children: ReactNode }) {
 
           <nav
             aria-label="Navegação do app"
+            data-bottom-nav
             className="no-print fixed inset-x-0 bottom-0 z-30 grid border-t border-rule bg-paper/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
             style={{ gridTemplateColumns: `repeat(${nav.length}, minmax(0, 1fr))` }}
           >

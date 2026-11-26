@@ -300,3 +300,61 @@ barra de progresso e o selo de exercício completo da sessão continuam verdes c
 **Fica para a rodada do questionário (U7c).** `program-generator.tsx` continua com `sticky bottom-20` (o grep do aceite
 U8 A6 ainda encontra essa linha), e o selo "N recordes" da página do aluno continua `bg-plate-red` sem `data-record`:
 os dois arquivos são reescritos pela anamnese.
+
+## 2026-11-26 — Correções da revisão da rodada (estado, privacidade, 360 px, números)
+
+**Apagar dados deste aparelho (modo local).** Passa a usar `wipe()`, como "Apagar tudo e recomeçar": no modo local,
+"dados deste aparelho" é o aparelho inteiro. `deleteAccount` apagava só o próprio perfil e deixava, no aparelho do
+personal, perfis, fichas, treinos, medidas e dietas dos alunos (órfãos e invisíveis) e as chaves `sr:sent*`; no da
+aluna, o rascunho do treino com cargas e o perfil do personal. `wipe()` agora também apaga `sr:draft:*`. Depois de apagar, a página recarrega em "/" (`location.assign`, como
+"Apagar e recomeçar"): nada da memória da página sobrevive, e o painel não disputa a navegação mandando para /entrar.
+Na nuvem continua `deleteAccount`. Teste: `local.apagar.test.ts`.
+
+**Eco da versão (U2c) com ajuste no celular do aluno.** O aluno só ecoa o que continua igual ao recebido
+(`echoFor`): a ficha, se a ativa é do personal e não tem `adjustedAt`; a dieta, nas mesmas condições. O eco prova a
+versão recebida, não o conteúdo em uso; sem o filtro, o personal lia "está com a ficha e a dieta atuais" enquanto o
+celular dela dizia "ajustado por você". Não entrou o campo `ajustada` sugerido na revisão (com o texto "Juliana
+ajustou a ficha no celular dela"): o celular da aluna promete "Os ajustes ficam só neste celular e não aparecem para
+Rafael", e contar ao personal que houve ajuste contradiz isso; mudar essa promessa é decisão do dono. Sem texto novo:
+quando um treino registrado depois do envio vem com eco mas sem a versão do item da manchete (`headMissingFromEcho`),
+a promessa "A confirmação aparece quando … mandar o próximo treino" sai. Resíduo aceito: com ficha E dieta ajustadas
+o pacote vai sem eco nenhum (como um link antigo), nada é registrado e a promessa continua. Teste:
+`transfer.u2c-ajuste.test.ts`.
+
+**Link só com dieta (U3c).** /abrir diz "sua dieta chegou." e "Atualizar minha dieta"; salvar leva a
+`/hoje?dieta=1` ("Dieta salva neste celular." + "Ver a dieta"), nunca "Ficha salva". No Hoje do modo local, o vazio
+com personal passou de "Seu personal ainda não enviou a ficha" (afirmava o outro lado) para "Nenhuma ficha de Rafael
+neste celular ainda" / "Quando a ficha de Rafael chegar pelo link, ela aparece aqui…"; na nuvem o texto antigo fica
+(lá o servidor sabe). A mensagem do WhatsApp sem ficha diz "para guardar e consultar quando quiser" em vez de "para
+treinar, registrar as cargas e me mandar cada treino".
+
+**Foco atrás do menu e das barras fixas (WCAG 2.4.11).** `html:has([data-bottom-nav])` abaixo de 64rem ganha
+`scroll-padding-top: 4rem` (cabeçalho h-14 + 8 px) e `scroll-padding-bottom: calc(5.5rem + área segura)` (menu +
+8 px). As barras "Salvar ajustes"/"Salvar dieta" e "Salvar ficha" usam `useStickyBarScrollPadding` (hooks.ts): o
+padding de baixo é o `bottom` calculado da barra + a altura dela + 8 px, medido por ResizeObserver, e sai ao
+desmontar. Lê o `bottom` da própria barra (5rem + área segura no celular, 1rem no lg) em vez da altura do menu: o menu
+mede ~67 px e a barra fica a 80 px do pé. A sessão continua com o estilo inline dela. Fora da lista da revisão, mas
+achado na mesma medição: a barra "Cancelar / Salvar ajustes" da dieta saiu do bloco do cardápio para o contêiner da
+tela. Dentro dele, ela só grudava depois de rolar (o bloco começa abaixo das metas) e, ao abrir o ajuste no topo da
+página, ficava inteira atrás do menu de baixo (685–741 com o menu em 673–740); agora fica em 604–660 desde o início.
+
+**Painel de envio da dieta.** "Texto no WhatsApp" virou "Mandar como texto", o mesmo rótulo do editor (spec-ux §2).
+A única diferença que sobra entre os dois painéis é a nota ("Texto e PDF" × "Texto, PDF e planilha": a dieta não tem
+planilha).
+
+**Números da Evolução e do relatório.** A % do 1RM (`markDeltaPct`) e a ordem do relatório (`gain`) saem do 1RM sem
+arredondar (`e1rmRaw`), com corte do resíduo de ponto flutuante: o mesmo +1 rep a partir de 10 dava +2% ou +3%
+conforme a carga. O "1RM ~27,3" mostrado continua arredondado. Com a primeira e a última marca idênticas, o cartão
+não mostra "Força estimada (1RM): menos de 1% de diferença" (a linha de cima já diz "Mesma carga e mesmas reps"). O
+eixo Y não usa passo 0,25 (abaixo de 1, só 1, 2 e 5 × 10^k): peso com 1 casa não ganha eixo com 2. Testes:
+`report.u6a-pct.test.ts`, `evolution.u6c-indicador.test.ts`, `chart-scale.u6b-decimal.test.ts`.
+
+**Textos fora do literal da U6 §3.3 A.** No lugar do gráfico: duplo → "Com carga e repetições no mesmo exercício, não
+dá para fazer um gráfico só. Compare pelos registros abaixo." (tempo: "Com carga e tempo…"); reps altas → "A maioria
+dos treinos passou de 12 repetições, e aí a força estimada deixa de ser confiável. Por isso não há gráfico: compare
+pelos registros abaixo.". O literal afirmava que carga e reps "mudaram juntas" quando só uma mudou, e negava a força
+estimada logo abaixo de um 1RM válido (duas marcas de 12 reps).
+
+**Acabamento.** Selects Descanso, Contagem e Técnica do editor em 16 px (sem `text-sm`, R13 da U8). Logo de /receber
+e /abrir com 44 px de altura. Cartão do relatório no resumo do aluno: "exercícios que melhoraram". Em `leitura_metas`
+a dieta não mostra "Cardápio de Rafael · versão de …" (contradizia "sem cardápio por refeição").

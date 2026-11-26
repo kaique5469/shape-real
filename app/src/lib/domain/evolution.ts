@@ -1,6 +1,6 @@
 import { getExercise, unitOf } from "./exercises";
 import { todayISO } from "./ids";
-import { RETURN_AFTER_DAYS, completedSets, e1rm, fmtKg, isAssisted, splitTypos } from "./progression";
+import { RETURN_AFTER_DAYS, completedSets, e1rm, e1rmRaw, fmtKg, isAssisted, splitTypos } from "./progression";
 import type { ExerciseLog, Implement, Session, SetLog, Unit } from "./types";
 
 /**
@@ -191,10 +191,12 @@ export function compareMarks(before: Mark, after: Mark, kind: ProgressKind): Dir
  */
 export function markDeltaPct(before: Mark, after: Mark): number | null {
   if (before.reps > E1RM_MAX_REPS || after.reps > E1RM_MAX_REPS) return null;
-  const a = markE1rm(before);
-  const b = markE1rm(after);
+  // Sobre o 1RM sem arredondar (o arredondado a 0,1 kg dava +2% e +3% para o mesmo +1 rep). O arredondamento
+  // intermediário a 4 casas tira o resíduo de ponto flutuante (2,4999… → 2,5 → 3, igual para toda carga).
+  const a = e1rmRaw(before.loadKg, before.reps);
+  const b = e1rmRaw(after.loadKg, after.reps);
   if (!a || !b) return null;
-  return Math.round(((b - a) / a) * 100) || 0;
+  return Math.round(Math.round(((b - a) / a) * 1e6) / 1e4) || 0;
 }
 
 /**
@@ -346,9 +348,14 @@ export function deltaLine(kind: ProgressKind, before: Mark, after: Mark, unit: U
   }
 }
 
-/** R-12. "Força estimada (1RM): +20%" / "…: −5%" / "…: menos de 1% de diferença". null sem `deltaPct`. */
-export function strengthIndicator(c: Pick<ExerciseComparison, "deltaPct">): string | null {
+/**
+ * R-12. "Força estimada (1RM): +20%" / "…: −5%" / "…: menos de 1% de diferença". null sem `deltaPct` e com a primeira
+ * e a última marca idênticas (a linha de diferença já diz "Mesma carga e mesmas reps"; "menos de 1%" sugeriria uma
+ * diferença que é zero). "Menos de 1%" fica para marcas diferentes que arredondam para 0.
+ */
+export function strengthIndicator(c: Pick<ExerciseComparison, "deltaPct"> & Partial<Pick<ExerciseComparison, "first" | "last">>): string | null {
   if (c.deltaPct === null) return null;
+  if (c.first && c.last && diffKg(c.first.mark.loadKg, c.last.mark.loadKg) === 0 && c.first.mark.reps === c.last.mark.reps) return null;
   if (c.deltaPct === 0) return "Força estimada (1RM): menos de 1% de diferença";
   return `Força estimada (1RM): ${signed(c.deltaPct, `${Math.abs(c.deltaPct)}%`)}`;
 }

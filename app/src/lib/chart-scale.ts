@@ -7,7 +7,7 @@
 const clean = (v: number) => Number(v.toPrecision(12)) || 0;
 
 /**
- * Valores "redondos" do eixo Y dentro de [min, max]: passo de 1, 2, 2,5 ou 5 × 10^k, com cerca de `count`
+ * Valores "redondos" do eixo Y dentro de [min, max]: passo de 1, 2, 2,5 ou 5 × 10^k (2,5 só a partir de 2,5), com cerca de `count`
  * intervalos. `niceTicks(99, 119)` → 100, 105, 110, 115; `niceTicks(10.6, 11.2)` → 10,6, 10,8, 11, 11,2.
  */
 export function niceTicks(min: number, max: number, count = 4): number[] {
@@ -16,7 +16,9 @@ export function niceTicks(min: number, max: number, count = 4): number[] {
   if (min === max) return [clean(min)];
   const step0 = (max - min) / Math.max(1, count);
   const mag = 10 ** Math.floor(Math.log10(step0));
-  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= step0 * (1 - 1e-9)) ?? 10 * mag;
+  // Abaixo de 1, sem o 2,5 (passo 0,25 forçaria 2 casas: "54,50 · 54,75" para um peso com 1 casa).
+  const mults = mag < 1 ? [1, 2, 5, 10] : [1, 2, 2.5, 5, 10];
+  const step = mults.map((m) => m * mag).find((s) => s >= step0 * (1 - 1e-9)) ?? 10 * mag;
   const out: number[] = [];
   for (let k = Math.ceil(min / step - 1e-9); k <= Math.floor(max / step + 1e-9); k++) out.push(clean(k * step));
   return out.length ? out : [clean(min), clean(max)];

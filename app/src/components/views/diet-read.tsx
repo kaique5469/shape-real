@@ -254,7 +254,9 @@ export function DietRead({
           <h2 id={headId} className="text-lg font-bold">
             Cardápio do dia
           </h2>
-          <p className="text-sm text-steel">{originLine(origin, fmtDayMonth)}</p>
+          {/* Só com cardápio: em leitura_metas, "Cardápio de Rafael" contradiria a frase de baixo ("sem cardápio por
+              refeição"); "Definidas por Rafael." e "Orientações de Rafael" já dizem de quem é o plano. */}
+          {screen === "leitura" ? <p className="text-sm text-steel">{originLine(origin, fmtDayMonth)}</p> : null}
         </div>
         <div data-area="dieta-numeros" className="space-y-3">
           {screen === "leitura" ? (

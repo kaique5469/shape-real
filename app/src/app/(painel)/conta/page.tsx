@@ -22,6 +22,16 @@ import { consentConfirmed, consentFromCheckbox } from "@/lib/domain/transfer";
 import { makeBackup } from "@/lib/transfer-client";
 import type { ActivityLevel, Equipment, Goal, Level, PlanId, Profile, Sex, SystemId } from "@/lib/domain/types";
 
+/** Apaga tudo o que o app guarda neste aparelho (dados, registro de envio, rascunho do treino, sessão local). */
+async function wipeDevice() {
+  await localRepo.wipe();
+  try {
+    Object.keys(localStorage)
+      .filter((k) => k === "sr:return" || k === "sr:session")
+      .forEach((k) => localStorage.removeItem(k));
+  } catch {}
+}
+
 export default function ContaPage() {
   const { user, repo, mode, isDemo, isTester, plan, returnTo, updateProfile, signOut } = useApp();
   const router = useRouter();
@@ -445,12 +455,7 @@ export default function ContaPage() {
             onClick={async () => {
               setWiping(true);
               track("workspace_reset", {});
-              await localRepo.wipe();
-              try {
-                Object.keys(localStorage)
-                  .filter((k) => k.startsWith("sr:draft:") || k === "sr:return" || k === "sr:session")
-                  .forEach((k) => localStorage.removeItem(k));
-              } catch {}
+              await wipeDevice();
               // Recarrega do zero em /testar: o ambiente é recriado com os exemplos.
               window.location.assign("/testar");
             }}
@@ -473,8 +478,16 @@ export default function ContaPage() {
             variant="danger"
             disabled={delText.trim().toUpperCase() !== "APAGAR"}
             onClick={async () => {
-              if (mode === "local" && isDemo) await localRepo.wipe();
-              else await repo.deleteAccount(user!.id);
+              // No modo local, "dados deste aparelho" é o aparelho inteiro: no do personal, os alunos dele também
+              // (deleteAccount apagaria só o próprio perfil e deixaria fichas, treinos e dietas dos alunos órfãos).
+              // Recarrega do zero (como "Apagar e recomeçar"): nada do que estava na memória da página sobrevive, e o
+              // painel não disputa a navegação mandando para /entrar.
+              if (mode === "local") {
+                await wipeDevice();
+                window.location.assign("/");
+                return;
+              }
+              await repo.deleteAccount(user!.id);
               await signOut();
               router.replace("/");
             }}
