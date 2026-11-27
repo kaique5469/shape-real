@@ -1122,13 +1122,13 @@ function DietBodyForm({ owner, onManual }: { owner: Profile; onManual: () => voi
           </Select>
         </Field>
         <Field label="Ano de nascimento" error={fieldErr("birthYear")}>
-          <Input data-field="birthYear" inputMode="numeric" value={f.birthYear} onChange={(e) => edit({ birthYear: e.target.value.replace(/\D/g, "").slice(0, 4) })} placeholder="1994" />
+          <Input data-field="birthYear" inputMode="numeric" value={f.birthYear} onChange={(e) => edit({ birthYear: e.target.value.replace(/\D/g, "").slice(0, 4) })} placeholder="Ex.: 1994" />
         </Field>
         <Field label="Altura (cm)" error={fieldErr("heightCm")}>
-          <Input data-field="heightCm" inputMode="numeric" value={f.heightCm} onChange={(e) => edit({ heightCm: e.target.value.replace(/\D/g, "").slice(0, 3) })} placeholder="172" />
+          <Input data-field="heightCm" inputMode="numeric" value={f.heightCm} onChange={(e) => edit({ heightCm: e.target.value.replace(/\D/g, "").slice(0, 3) })} placeholder="Ex.: 172" />
         </Field>
         <Field label="Peso (kg)" error={fieldErr("weightKg")}>
-          <Input data-field="weightKg" inputMode="decimal" value={f.weightKg} onChange={(e) => edit({ weightKg: e.target.value.replace(/[^\d.,]/g, "").slice(0, 6) })} placeholder="72,5" />
+          <Input data-field="weightKg" inputMode="decimal" value={f.weightKg} onChange={(e) => edit({ weightKg: e.target.value.replace(/[^\d.,]/g, "").slice(0, 6) })} placeholder="Ex.: 72,5" />
         </Field>
       </div>
       <Field label="Nível de atividade">

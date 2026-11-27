@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, DatabaseBackup, FileSpreadsheet, IdCard, LogOut, MessageSquareText, RotateCcw, ShieldAlert, Trash2 } from "lucide-react";
+import { Check, DatabaseBackup, FileSpreadsheet, IdCard, LogOut, MessageSquareText, RotateCcw, ShieldAlert, Trash2, TriangleAlert } from "lucide-react";
 import { Alert, Badge, Button, Dialog, Field, Input, PageHeader, Panel, Segmented, Select, Textarea } from "@/components/ui";
 import { useApp, localRepo } from "@/lib/app-context";
 import { ACTIVITY_LABEL } from "@/lib/domain/nutrition";
@@ -193,7 +193,7 @@ export default function ContaPage() {
             </Field>
             {user!.role === "coach" ? (
               <Field label="Seu WhatsApp" hint="Os alunos usam para mandar os treinos de volta para você.">
-                <Input value={maskPhone(form.phone ?? "")} onChange={(e) => set({ phone: e.target.value.replace(/\D/g, "").slice(-13) || undefined })} inputMode="tel" autoComplete="tel" placeholder="(11) 91234-5678" />
+                <Input value={maskPhone(form.phone ?? "")} onChange={(e) => set({ phone: e.target.value.replace(/\D/g, "").slice(-13) || undefined })} inputMode="tel" autoComplete="tel" placeholder="Ex.: (11) 91234-5678" />
               </Field>
             ) : null}
             {user!.role === "coach" ? (
@@ -214,7 +214,7 @@ export default function ContaPage() {
                 {crefWarn ? (
                   // Aviso, não erro: o registro pode estar escrito de outro jeito e salvar continua liberado.
                   <p id="cref-aviso" role="status" className="mt-1.5 flex items-start gap-2 text-[0.8125rem] text-iron">
-                    <span className="mt-1.5 size-2 shrink-0 rounded-full bg-plate-yellow" aria-hidden />
+                    <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warn-ink" aria-hidden />
                     <span>Fora do formato 000000-G/UF. Confira o número; dá para salvar assim mesmo.</span>
                   </p>
                 ) : null}
@@ -259,7 +259,8 @@ export default function ContaPage() {
                   </Field>
                 </div>
                 <Field group label="Dias por semana">
-                  <Segmented label="Dias por semana" size="sm" value={form.daysPerWeek ?? 3} onChange={(d) => set({ daysPerWeek: d })} options={[1, 2, 3, 4, 5, 6, 7].map((d) => ({ value: d, label: `${d}x` }))} />
+                  {/* 1x a 7x numa linha só (grade de 7 abaixo de sm), 44 px de altura no toque (U8 3.9). */}
+                  <Segmented label="Dias por semana" size="sm" columns={7} value={form.daysPerWeek ?? 3} onChange={(d) => set({ daysPerWeek: d })} options={[1, 2, 3, 4, 5, 6, 7].map((d) => ({ value: d, label: `${d}x` }))} />
                 </Field>
                 <Field label="Limitações ou lesões">
                   <Textarea value={form.limitations ?? ""} onChange={(e) => set({ limitations: e.target.value })} rows={2} className="min-h-16" maxLength={400} />
@@ -282,7 +283,7 @@ export default function ContaPage() {
                       <Input inputMode="numeric" value={form.heightCm ?? ""} onChange={(e) => set({ heightCm: Number(e.target.value.replace(/\D/g, "")) || undefined })} />
                     </Field>
                     <Field label="Peso (kg)">
-                      <Input inputMode="decimal" value={weight} onChange={(e) => setWeight(e.target.value.replace(/[^\d.,]/g, "").slice(0, 6))} placeholder="72,5" />
+                      <Input inputMode="decimal" value={weight} onChange={(e) => setWeight(e.target.value.replace(/[^\d.,]/g, "").slice(0, 6))} placeholder="Ex.: 72,5" />
                     </Field>
                   </div>
                   <Field label="Nível de atividade">

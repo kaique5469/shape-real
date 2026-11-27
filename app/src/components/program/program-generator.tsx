@@ -323,7 +323,7 @@ export function ProgramGenerator({
           ))}
         </div>
         {error ? <Alert tone="error">{error}</Alert> : null}
-        <div className="sticky bottom-20 z-10 flex justify-end lg:bottom-4">
+        <div className="sticky bottom-nav-safe z-10 flex justify-end lg:bottom-4">
           <Button size="lg" onClick={save} loading={busy === "save"} disabled={busy === "generate"} className="shadow-lift">
             {isCoach ? `Salvar ficha de ${who ?? "aluno"}` : template ? "Salvar modelo" : "Salvar e ativar ficha"}
           </Button>

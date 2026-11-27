@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { CircleCheck, Download, Share, WifiOff, X } from "lucide-react";
+import { CircleAlert, CircleCheck, Download, Share, WifiOff, X } from "lucide-react";
 import { Button, cx } from "@/components/ui";
 import { reportError, track } from "@/lib/analytics";
 import { useApp } from "@/lib/app-context";
@@ -316,8 +316,9 @@ export function InstallCard({ variant, where }: { variant: "banner" | "panel"; w
             </Button>
           ) : null}
           {copy === "error" ? (
-            <span role="alert" className="basis-full text-plate-red-ink">
-              Não foi possível fazer a cópia. Tente de novo.
+            <span role="alert" className="flex basis-full items-start gap-1.5 text-danger">
+              <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+              <span className="min-w-0">Não foi possível fazer a cópia. Tente de novo.</span>
             </span>
           ) : null}
         </li>

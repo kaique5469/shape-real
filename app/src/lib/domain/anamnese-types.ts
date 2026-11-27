@@ -13,7 +13,8 @@ export const CONSENT_TEXT_ID = "c1";
 export const RULES_VERSION = 1;
 /**
  * Data de publicação da Entrega 1 (`aluno_novo` em `ficha_link_sent` e filtro das métricas, spec §13).
- * Provisória: a data da fundação. A costura troca pela data real de publicação.
+ * A Entrega 1 fecha e publica nesta rodada (26/11/2026). Se o deploy sair em outro dia, troque aqui pela data do deploy
+ * (alunos criados entre as duas datas contariam como "novos" sem ter visto o questionário).
  */
 export const QUESTIONARIO_DESDE = "2026-11-26";
 /** Exemplo do /testar (`sample`) ou da demonstração (ids `demo-*`, sem `sample`): nenhum pedido real e nenhum evento. */

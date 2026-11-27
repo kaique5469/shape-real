@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ClipboardPaste, Smartphone } from "lucide-react";
+import { CircleAlert, ClipboardPaste, Smartphone } from "lucide-react";
 import { Button, cx } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
 import { parsePacket } from "@/lib/domain/transfer";
@@ -10,9 +10,16 @@ import { packedFromText, pastedLinkHref, unpackData } from "@/lib/share-link";
 
 const BAD_LINK = "Esse link não é do Shape Real ou veio cortado. Peça para reenviar.";
 
+/** "Colar aqui" com os tipos novos (questionario-receber.ts), carregado só quando o pacote não é ficha nem treinos. */
+async function destinoDoColado(raw: unknown, packed: string) {
+  const { destinoColado } = await import("@/lib/questionario-receber");
+  return destinoColado(raw, packed);
+}
+
 /**
- * "Recebeu um link do WhatsApp? Colar aqui": abre a ficha (/abrir) ou os treinos (/receber) a partir do
- * texto colado (a mensagem inteira serve). No iPhone, o app da tela de início não divide os dados com o
+ * "Recebeu um link do WhatsApp? Colar aqui": abre a ficha (/abrir), os treinos e as respostas do questionário
+ * (/receber) ou o pedido do questionário (/questionario) a partir do texto colado (a mensagem inteira serve). Um tipo
+ * que este app não conhece pede para atualizar a página, em vez de "não é do Shape Real". No iPhone, o app da tela de início não divide os dados com o
  * Safari e o WhatsApp sempre abre o link no Safari: colar dentro do app é o caminho que funciona.
  * Campo de texto em vez de ler a área de transferência (no iPhone isso pede permissão a cada vez).
  * O texto colado não vai para a medição de uso nem para o registro de erros, e o campo é limpo depois do uso.
@@ -46,9 +53,26 @@ export function ColarLink({ className }: { className?: string }) {
     if (!packed) return setErr(BAD_LINK);
     setBusy(true);
     try {
-      const packet = parsePacket(await unpackData(packed));
-      if (!packet) return setErr(BAD_LINK);
-      router.push(pastedLinkHref(packet.kind, packed));
+      const raw = await unpackData(packed);
+      const kind = (raw as { kind?: unknown } | null)?.kind;
+      // Ficha e treinos: como sempre (sem carregar nada a mais).
+      if (kind === "ficha" || kind === "treinos" || typeof kind !== "string") {
+        const packet = parsePacket(raw);
+        if (!packet) return setErr(BAD_LINK);
+        return router.push(pastedLinkHref(packet.kind, packed));
+      }
+      // Questionário (pedido e respostas) ou um tipo que este app não conhece: a validação vem sob demanda, para não
+      // pesar as telas que mostram o "Colar aqui".
+      let destino: Awaited<ReturnType<typeof destinoDoColado>>;
+      try {
+        destino = await destinoDoColado(raw, packed);
+      } catch {
+        // Sem rede e sem a validação guardada: a tela de destino valida de novo e mostra o aviso certo.
+        if (kind === "anamnese" || kind === "pedido_anamnese") return router.push(pastedLinkHref(kind, packed));
+        return setErr(BAD_LINK);
+      }
+      if ("href" in destino) router.push(destino.href);
+      else setErr(destino.erro);
     } catch {
       // Sem reportError: o erro só diria que o texto colado não é um link válido.
       setErr(BAD_LINK);
@@ -97,16 +121,18 @@ export function ColarLink({ className }: { className?: string }) {
               spellCheck={false}
               enterKeyHint="go"
               className={cx(
-                "block min-h-24 w-full rounded-[var(--radius-ficha)] border bg-paper px-3 py-2.5 text-[0.9375rem] leading-relaxed text-iron placeholder:text-pencil focus:border-iron focus:outline-none focus-visible:outline-2 focus-visible:outline-plate-blue",
-                err ? "border-plate-red/60" : "border-rule-strong",
+                // 16 px (abaixo disso o iPhone amplia a tela ao tocar); borda `field`, `danger` com erro (U7 R9, U8 3.4).
+                "block min-h-24 w-full rounded-[var(--radius-ficha)] border bg-paper px-3 py-2.5 text-base leading-relaxed text-iron placeholder:text-suggest focus:border-iron focus:outline-none focus-visible:outline-2 focus-visible:outline-plate-blue",
+                err ? "border-danger" : "border-field",
               )}
             />
             <p id={hintId} className="mt-1 text-[0.8125rem] text-steel">
               Pode colar a mensagem inteira.
             </p>
             {err ? (
-              <p id={errId} role="alert" className="mt-1 text-sm text-plate-red-ink">
-                {err}
+              <p id={errId} role="alert" data-field-error className="mt-1 flex items-start gap-1.5 text-sm text-danger">
+                <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                <span className="min-w-0">{err}</span>
               </p>
             ) : null}
           </div>

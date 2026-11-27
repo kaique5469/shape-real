@@ -51,6 +51,7 @@ cartão em Vercel → AI Gateway (a variável `AI_GATEWAY=1` já usa o token do 
    | `NEXT_PUBLIC_SITE_URL` | `https://app.shapereal.com.br` |
    | `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN` / `NEXT_PUBLIC_POSTHOG_HOST` (opcional) | PostHog → Project settings (token público do projeto) |
    | `NEXT_PUBLIC_CHECKOUT_PRO_URL` / `..._COACH_URL` (opcional) | Link de pagamento (Stripe/Mercado Pago) |
+   | `NEXT_PUBLIC_QUESTIONARIO` (opcional) | Chave do questionário inicial. Vazio = ligado para todos; `convite` = só `/testar` e `/entrar?beta=questionario`; `desligada` = desliga para todos (vale no próximo build) |
 3. **Domínio** — aponte `app.shapereal.com.br` para a Vercel. O blog (Netlify) já redireciona `/app` para lá.
 
 ## Arquitetura

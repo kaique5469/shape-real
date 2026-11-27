@@ -85,9 +85,10 @@ export function ProximosPassos({
   const resumoCurto = useMemo(() => toGenerateInput(student, ws, hoje, { hoje, liberacoes: student.liberacoes ?? [] })?.resumoCurto, [student, ws, hoje]);
   const passos = useMemo(
     () =>
-      nextSteps({ profile: student, ws, activeProgram, envioFicha, metricsCount, hasDiet, mode, hoje, fichaSugeridaResumo: resumoCurto, conferirN: 0 }).filter(
-        (p) => questionario || p.id !== "questionario",
-      ),
+      nextSteps({ profile: student, ws, activeProgram, envioFicha, metricsCount, hasDiet, mode, hoje, fichaSugeridaResumo: resumoCurto, conferirN: 0 })
+        .filter((p) => questionario || p.id !== "questionario")
+        // Na nuvem o /receber não registra respostas: sem pedido por link ("Mandar pelo WhatsApp", "Lembrar").
+        .map((p) => (mode === "local" ? p : { ...p, acoes: p.acoes.filter((a) => a.tipo !== "pedir") })),
     [student, ws, activeProgram, envioFicha, metricsCount, hasDiet, mode, hoje, resumoCurto, questionario],
   );
   const { visiveis, mais } = passosVisiveis(passos, todos ? passos.length : 4);

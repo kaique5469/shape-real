@@ -11,6 +11,7 @@ import {
   destinoColado,
   escolhasIniciais,
   estadoRecepcao,
+  etapaRecepcao,
   guardaReceber,
   juntoAntesDoLink,
   LINK_RUIM,
@@ -20,6 +21,7 @@ import {
   normalizarNome,
   pontosParaVer,
   RECEBER_TEXTO,
+  textoProblemaReceber,
 } from "./questionario-receber";
 
 const AGORA = "2026-11-23T10:00:00-03:00";
@@ -291,5 +293,90 @@ describe("CONFERIR_TEXTO (spec §8.2)", () => {
     expect(CONFERIR_TEXTO.limitacoes({ sai: [], entra: ["lombar", "ombros"] })).toBe("Limitações · Entra: lombar, ombros");
     expect(CONFERIR_TEXTO.limitacoes({ sai: [], entra: [] })).toBeNull();
     expect(CONFERIR_TEXTO.excede).toBe("Limitações não atualizadas: passariam de 1.000 caracteres. Encurte o texto em Editar dados.");
+  });
+});
+
+describe("etapaRecepcao (a pergunta da vez em /receber, spec §5.5)", () => {
+  const etapa = (alunos: Profile[], p: RespostasPacket, decisoes = {}, apagadoEm: string | null = null) => etapaRecepcao({ alunos, p, apagadoEm, decisoes });
+  const registrada = (aluno: Profile, p: RespostasPacket) => ({ ...aluno, anamnese: { ...(clone(p.anamnese) as Anamnese), receivedAt: "2026-11-21T09:00:00-03:00" } });
+
+  it("pelo ref, com o mesmo nome → registrar direto", () => {
+    expect(etapa([juliana, ana], pacote())).toEqual({ t: "registrar", aluno: ana, achou: "ref" });
+  });
+
+  it("pelo ref com outro nome → avisa antes; [É {cadastro}: registrar] segue", () => {
+    const p = pacote({ nome: "Carla Mendes" });
+    expect(etapa([ana], p)).toEqual({ t: "nome_diferente", aluno: ana });
+    expect(etapa([ana], p, { identidadeOk: true })).toEqual({ t: "registrar", aluno: ana, achou: "ref" });
+    // "Ana" (só o primeiro nome) não é outro nome.
+    expect(etapa([ana], pacote({ nome: "ana" })).t).toBe("registrar");
+  });
+
+  it("sem ref: casou pelo nome completo → sempre pergunta 'É a mesma pessoa?'", () => {
+    const p = pacote({ ref: "outro-aparelho", nome: "Juliana Prado" });
+    expect(etapa([juliana, carla], p)).toEqual({ t: "confirmar_nome", aluno: juliana });
+    expect(etapa([juliana, carla], p, { identidadeOk: true })).toEqual({ t: "registrar", aluno: juliana, achou: "nome" });
+  });
+
+  it("aceite: duas pessoas com o mesmo primeiro nome nunca se misturam (sem ref → escolher)", () => {
+    expect(etapa([juliana, carla], pacote({ ref: "x", nome: "Juliana Costa" }))).toEqual({ t: "escolher", sugerido: null });
+    expect(etapa([], pacote())).toEqual({ t: "escolher", sugerido: null });
+  });
+
+  it("escolhido na lista → registrar sem conferência de nome; [Trocar] volta à lista", () => {
+    const p = pacote({ ref: "x", nome: "Juliana Costa" });
+    expect(etapa([juliana, carla], p, { escolhido: carla.id })).toEqual({ t: "registrar", aluno: carla, achou: "escolhido" });
+    expect(etapa([juliana, ana], pacote(), { trocar: true })).toEqual({ t: "escolher", sugerido: ana });
+    // Escolha de quem não está mais na lista: volta ao casamento automático.
+    expect(etapa([ana], pacote(), { escolhido: "sumiu" })).toEqual({ t: "registrar", aluno: ana, achou: "ref" });
+  });
+
+  it("aceite: abrir de novo o mesmo link → já registradas, em qualquer aluno (nada a gravar, nem com outra escolha)", () => {
+    const p = pacote({ ref: "x", nome: "Juliana Costa" });
+    // Registradas antes num aluno escolhido à mão (sem ref e com outro nome).
+    const carlaComRespostas = registrada(carla, p);
+    expect(etapa([juliana, carlaComRespostas], p)).toEqual({ t: "ja_registrado", aluno: carlaComRespostas, em: "2026-11-21T09:00:00-03:00" });
+    expect(etapa([juliana, carlaComRespostas], p, { escolhido: juliana.id, trocar: true }).t).toBe("ja_registrado");
+  });
+
+  it("aceite: respostas apagadas → avisa a data e não segue sozinho (nem para o cadastro)", () => {
+    const p = pacote();
+    expect(etapa([], p, {}, "2026-11-22T10:00:00-03:00")).toEqual({ t: "apagadas", em: "2026-11-22T10:00:00-03:00" });
+    expect(etapa([ana], p, {}, "2026-11-22T10:00:00-03:00").t).toBe("apagadas");
+    expect(etapa([], p, { apagadasOk: true }, "2026-11-22T10:00:00-03:00")).toEqual({ t: "escolher", sugerido: null });
+    // Registradas de novo depois de apagadas: vale o "já registradas".
+    expect(etapa([registrada(ana, p)], p, {}, "2026-11-22T10:00:00-03:00").t).toBe("ja_registrado");
+  });
+
+  it("reenvio com mudanças, respostas mais antigas e questionário feito junto pedem decisão", () => {
+    const atual = anamneseBase({}, { id: "pedido-1", answeredAt: RESPONDIDO_EM });
+    const substituir = etapa([alunoBase({ anamnese: atual })], pacote({ answeredAt: "2026-11-22T08:00:00-03:00" }));
+    expect(substituir).toMatchObject({ t: "substituir", anterior: RESPONDIDO_EM });
+    const nova = anamneseBase({}, { id: "rodada-nova", answeredAt: "2026-11-22T08:00:00-03:00" });
+    expect(etapa([alunoBase({ anamnese: nova })], pacote())).toMatchObject({ t: "mais_antigas", atual: "2026-11-22T08:00:00-03:00" });
+    const junto = anamneseBase({}, { id: "junto-1", via: "junto", by: "personal", answeredAt: "2026-11-19T08:00:00-03:00" });
+    expect(etapa([alunoBase({ anamnese: junto })], pacote())).toMatchObject({ t: "junto_antes", data: "2026-11-19T08:00:00-03:00" });
+    for (const an of [atual, nova, junto]) {
+      const p = an === atual ? pacote({ answeredAt: "2026-11-22T08:00:00-03:00" }) : pacote();
+      expect(etapa([alunoBase({ anamnese: an })], p, { estadoOk: true }).t).toBe("registrar");
+    }
+  });
+
+  it("a conferência de nome vem antes da decisão de reenvio", () => {
+    const atual = anamneseBase({}, { id: "pedido-1", answeredAt: RESPONDIDO_EM });
+    const juli = alunoBase({ id: "a-jp", name: "Juliana Prado", anamnese: atual });
+    const p = pacote({ ref: "x", nome: "Juliana Prado", answeredAt: "2026-11-22T08:00:00-03:00" });
+    expect(etapa([juli], p).t).toBe("confirmar_nome");
+    expect(etapa([juli], p, { identidadeOk: true }).t).toBe("substituir");
+  });
+});
+
+describe("textoProblemaReceber", () => {
+  it("versão nova pede para atualizar; cortado pede para o aluno mandar de novo", () => {
+    expect(textoProblemaReceber("versao_nova", "Ana")).toBe(PROBLEMA_TEXTO.versao_nova);
+    expect(textoProblemaReceber("tipo_desconhecido", undefined)).toBe(PROBLEMA_TEXTO.tipo_desconhecido);
+    expect(textoProblemaReceber("invalido", "Ana Souza")).toBe("Este link veio cortado ou incompleto. Peça para Ana mandar de novo.");
+    expect(textoProblemaReceber("invalido", 42)).toBe("Este link veio cortado ou incompleto. Peça para o aluno mandar de novo.");
+    expect(textoProblemaReceber("invalido", "")).not.toContain("{personal}");
   });
 });

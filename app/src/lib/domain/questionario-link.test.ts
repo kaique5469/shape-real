@@ -24,6 +24,7 @@ import {
   textoLivreTotal,
   VERSAO_PROTOCOLO,
   whatsappDoPersonalOk,
+  nomeDoPersonalOk,
   type PedidoPacket,
   type RespostasPacket,
 } from "./questionario-link";
@@ -650,6 +651,11 @@ describe("pedido no aparelho do personal (spec §5.3)", () => {
     expect(whatsappDoPersonalOk({ phone: "99999-0000" })).toBe(false);
     expect(whatsappDoPersonalOk({ phone: undefined })).toBe(false);
     expect(whatsappDoPersonalOk(null)).toBe(false);
+    // Nome provisório do /testar ("Personal") ou vazio: o diálogo pede o nome antes do pedido.
+    expect(nomeDoPersonalOk({ name: "Rafael Nunes" })).toBe(true);
+    expect(nomeDoPersonalOk({ name: "Personal" })).toBe(false);
+    expect(nomeDoPersonalOk({ name: "  " })).toBe(false);
+    expect(nomeDoPersonalOk(null)).toBe(false);
   });
 
   it("reenvio e lembrete reaproveitam o pedido pendente da mesma reavaliação", () => {
@@ -678,5 +684,13 @@ describe("PEDIR_TEXTO (spec §5.3, literais)", () => {
     expect(PEDIR_TEXTO.abrirWhatsapp("Ana Souza")).toBe("Abrir WhatsApp de Ana");
     expect(PEDIR_TEXTO.pronto("Ana Souza")).toBe("Pronto. Quando Ana responder, você recebe um link no WhatsApp. Toque nele para registrar.");
     expect(PEDIR_TEXTO.exemplo).toBe("Exemplo: o questionário não é enviado.");
+  });
+
+  it("lembrete, erro do número e conta na nuvem (sem dado de saúde)", () => {
+    expect(PEDIR_TEXTO.tituloLembrete("Ana Souza")).toBe("Lembrar Ana");
+    expect(PEDIR_TEXTO.escolherContato).toBe("Escolher contato no WhatsApp");
+    expect(PEDIR_TEXTO.erroWhatsapp).toBe("Inclua o DDD. Ex.: (11) 91234-5678.");
+    expect(PEDIR_TEXTO.nuvem("Ana Souza")).toBe("Com conta no Shape Real, o questionário por link ainda não está disponível. Preencha junto com Ana.");
+    expect(PEDIR_TEXTO.titulo("")).toBe("Mandar questionário para o aluno");
   });
 });

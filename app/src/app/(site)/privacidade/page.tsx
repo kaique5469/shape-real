@@ -5,7 +5,7 @@ export const metadata: Metadata = { title: "Privacidade", alternates: { canonica
 
 export default function Privacidade() {
   return (
-    <LegalPage title="Política de privacidade" updated="22/11/2026">
+    <LegalPage title="Política de privacidade" updated="26/11/2026">
       <p>
         Esta política explica como o Shape Real trata seus dados, em conformidade com a Lei Geral de Proteção de Dados (Lei 13.709/2018). Revise este texto com seu
         assessor jurídico antes da publicação comercial.
@@ -41,6 +41,14 @@ export default function Privacidade() {
       <p>
         No uso sem cadastro, a autorização nunca é registrada sozinha: ela depende sempre de uma dessas ações. Você pode revogar o consentimento a qualquer momento
         apagando os dados ou a conta.
+      </p>
+      <h2>Questionário inicial</h2>
+      <p>
+        O personal pode pedir o questionário pelo WhatsApp ou preencher com você. As respostas de saúde só são guardadas com a sua autorização, marcada no próprio
+        questionário, com data. Elas viajam dentro do link do WhatsApp, que não passa pelo nosso servidor, e ficam no celular do personal e nas cópias de segurança que
+        ele fizer. Quem tiver o link consegue ler: não encaminhe a mensagem. Para ver, corrigir ou apagar, peça ao personal: ele apaga em um toque. Nada das respostas
+        vai para a nossa medição de uso: na página do questionário contamos só quantas pessoas abrem e terminam, sem nenhuma resposta e sem guardar o endereço IP. Não
+        pedimos CPF, endereço, fotos nem exames.
       </p>
       <h2>Quem acessa</h2>
       <p>

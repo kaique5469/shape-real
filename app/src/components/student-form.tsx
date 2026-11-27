@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { CircleAlert, Trash2 } from "lucide-react";
 import { Alert, Button, Dialog, Field, Input, Select, Textarea, cx } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
 import { GOAL_LABEL, LEVEL_LABEL } from "@/lib/domain/generator";
@@ -77,8 +77,10 @@ export function StudentForm({
   student?: Profile | null;
   onSaved: (p: Profile, created: boolean, modo?: StudentSavedModo) => void;
 }) {
-  const { user, repo } = useApp();
+  const { user, repo, mode } = useApp();
   const ligado = useQuestionarioLigado();
+  // Na nuvem o /receber não registra respostas: o cadastro rápido não oferece o pedido por link.
+  const modos = mode === "local" ? MODOS_CADASTRO : MODOS_CADASTRO.filter((m) => m !== "whatsapp");
   const [f, setF] = useState<FormState>(() => initial(student));
   const [errors, setErrors] = useState<Erros>({});
   const [saving, setSaving] = useState(false);
@@ -89,11 +91,20 @@ export function StudentForm({
   const [modoTocado, setModoTocado] = useState<ModoCadastro | null>(null);
   const [revogar, setRevogar] = useState(false);
   const rapido = !student && ligado && !completo;
-  const modo: ModoCadastro = modoTocado ?? modoSugerido(user?.workStyle, f.phone);
+  const sugerido = modoSugerido(user?.workStyle, f.phone);
+  const modo: ModoCadastro = modoTocado ?? (modos.includes(sugerido) ? sugerido : "agora");
   const nomeId = useId();
   const telId = useId();
   const dicaId = useId();
   const radioName = useId();
+  // Formulário completo: cada campo com erro aponta para a mensagem (aria-describedby) e marca aria-invalid (U7 R9).
+  const fNomeId = useId();
+  const fTelId = useId();
+  const fAnoId = useId();
+  const fAlturaId = useId();
+  const fPesoId = useId();
+  const consentErroId = useId();
+  const inval = (k: keyof FormState, noteId: string) => (errors[k] ? { "aria-invalid": true as const, "aria-describedby": noteId } : {});
 
   const formRef = useRef<HTMLFormElement>(null);
   // O que foi digitado só é trocado quando o formulário abre para OUTRO aluno ou depois de salvar:
@@ -266,8 +277,8 @@ export function StudentForm({
       {/* Grupo de rádio de verdade (input radio): as setas trocam a opção, e a dica da escolha fica ligada ao grupo. */}
       <fieldset aria-describedby={dicaId}>
         <legend className="mb-1.5 block text-sm font-semibold text-iron">Questionário inicial</legend>
-        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
-          {MODOS_CADASTRO.map((m) => (
+        <div className={cx("grid grid-cols-1 gap-1.5", modos.length === 3 ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
+          {modos.map((m) => (
             <label key={m} className="block">
               <input type="radio" name={radioName} value={m} checked={modo === m} onChange={() => setModoTocado(m)} className="peer sr-only" />
               <span className="flex min-h-11 cursor-pointer items-center justify-center rounded-[var(--radius-ficha)] border border-rule-strong bg-paper px-3 py-2 text-center text-[0.9375rem] font-semibold text-iron transition-colors hover:border-iron peer-checked:border-iron peer-checked:bg-iron peer-checked:text-chalk peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-plate-blue">
@@ -311,11 +322,20 @@ export function StudentForm({
         {formRapido ?? (
           <form ref={formRef} onSubmit={submit} noValidate className="space-y-6">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-              <Field label="Nome" error={errors.name}>
-                <Input data-field="name" value={f.name} onChange={(e) => set("name", e.target.value)} autoComplete="off" placeholder="Nome e sobrenome" required autoFocus={!student} />
+              <Field label="Nome" error={errors.name} noteId={fNomeId}>
+                <Input data-field="name" value={f.name} onChange={(e) => set("name", e.target.value)} autoComplete="off" placeholder="Nome e sobrenome" required autoFocus={!student} {...inval("name", fNomeId)} />
               </Field>
-              <Field label="WhatsApp" hint="Opcional. Abre a conversa ao enviar ficha e dieta." error={errors.phone}>
-                <Input data-field="phone" value={f.phone} onChange={(e) => set("phone", maskPhone(e.target.value))} inputMode="tel" autoComplete="off" placeholder="(11) 91234-5678" />
+              <Field label="WhatsApp" hint="Opcional. Abre a conversa ao enviar ficha e dieta." error={errors.phone} noteId={fTelId}>
+                <Input
+                  data-field="phone"
+                  value={f.phone}
+                  onChange={(e) => set("phone", maskPhone(e.target.value))}
+                  inputMode="tel"
+                  autoComplete="off"
+                  placeholder="Ex.: (11) 91234-5678"
+                  aria-describedby={fTelId}
+                  aria-invalid={errors.phone ? true : undefined}
+                />
               </Field>
             </div>
 
@@ -376,21 +396,22 @@ export function StudentForm({
             <fieldset className="space-y-4">
               <legend className="col-head mb-3">Limitações e medidas</legend>
               <div>
-                <label className={cx("flex min-h-11 cursor-pointer items-start gap-3 rounded-[8px] border bg-paper p-3 text-[0.9375rem] font-semibold", errors.consent ? "border-plate-red" : "border-rule")}>
+                <label className={cx("flex min-h-11 cursor-pointer items-start gap-3 rounded-[8px] border bg-paper p-3 text-[0.9375rem] font-semibold", errors.consent ? "border-danger" : "border-rule")}>
                   <input
                     type="checkbox"
                     data-field="consent"
                     checked={f.consent}
                     onChange={(e) => set("consent", e.target.checked)}
-                    aria-invalid={Boolean(errors.consent)}
-                    aria-describedby={errors.consent ? "aluno-autorizacao-erro" : undefined}
+                    aria-invalid={errors.consent ? true : undefined}
+                    aria-describedby={errors.consent ? consentErroId : undefined}
                     className="mt-0.5 size-5 shrink-0 accent-[var(--color-iron)]"
                   />
                   <span>O aluno autorizou registrar estes dados de saúde</span>
                 </label>
                 {errors.consent ? (
-                  <p id="aluno-autorizacao-erro" className="mt-1 text-sm text-plate-red-ink">
-                    {errors.consent}
+                  <p id={consentErroId} data-field-error className="mt-1 flex items-start gap-1.5 text-sm text-danger">
+                    <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                    <span className="min-w-0">{errors.consent}</span>
                   </p>
                 ) : null}
               </div>
@@ -406,14 +427,14 @@ export function StudentForm({
                     <option value="M">Masculino</option>
                   </Select>
                 </Field>
-                <Field label="Ano de nascimento" error={errors.birthYear}>
-                  <Input data-field="birthYear" value={f.birthYear} onChange={(e) => set("birthYear", e.target.value.replace(/\D/g, "").slice(0, 4))} inputMode="numeric" placeholder="1994" />
+                <Field label="Ano de nascimento" error={errors.birthYear} noteId={fAnoId}>
+                  <Input data-field="birthYear" value={f.birthYear} onChange={(e) => set("birthYear", e.target.value.replace(/\D/g, "").slice(0, 4))} inputMode="numeric" placeholder="Ex.: 1994" {...inval("birthYear", fAnoId)} />
                 </Field>
-                <Field label="Altura (cm)" error={errors.heightCm}>
-                  <Input data-field="heightCm" value={f.heightCm} onChange={(e) => setHealth("heightCm", e.target.value.replace(/\D/g, "").slice(0, 3))} inputMode="numeric" placeholder="172" />
+                <Field label="Altura (cm)" error={errors.heightCm} noteId={fAlturaId}>
+                  <Input data-field="heightCm" value={f.heightCm} onChange={(e) => setHealth("heightCm", e.target.value.replace(/\D/g, "").slice(0, 3))} inputMode="numeric" placeholder="Ex.: 172" {...inval("heightCm", fAlturaId)} />
                 </Field>
-                <Field label="Peso (kg)" error={errors.weightKg}>
-                  <Input data-field="weightKg" value={f.weightKg} onChange={(e) => setHealth("weightKg", e.target.value.replace(/[^\d.,]/g, "").slice(0, 6))} inputMode="decimal" placeholder="72,5" />
+                <Field label="Peso (kg)" error={errors.weightKg} noteId={fPesoId}>
+                  <Input data-field="weightKg" value={f.weightKg} onChange={(e) => setHealth("weightKg", e.target.value.replace(/[^\d.,]/g, "").slice(0, 6))} inputMode="decimal" placeholder="Ex.: 72,5" {...inval("weightKg", fPesoId)} />
                 </Field>
                 <Field label="Rotina fora do treino" className="col-span-2 sm:col-span-4">
                   <Select value={f.activity} onChange={(e) => set("activity", e.target.value as ActivityLevel | "")}>

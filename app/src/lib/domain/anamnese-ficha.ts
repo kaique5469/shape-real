@@ -29,6 +29,7 @@ import type {
   Liberacao,
   WorkStyle,
 } from "./anamnese-types";
+import { curtoDe } from "./anamnese";
 import { GROUP_LABEL, normalize } from "./exercises";
 import { firstName } from "./format";
 import { GOAL_LABEL, LEVEL_LABEL, analyzeLimitations, type GenerateInput } from "./generator";
@@ -114,29 +115,9 @@ const REGIAO_ROTULO: Record<Regiao, string> = {
 const LADO_ROTULO = { d: "direito", e: "esquerdo", ambos: "os dois lados" } as const;
 const EQUIPMENT_ROTULO: Record<Equipment, string> = { academia: "Academia", home: "Em casa", peso_corporal: "Sem equipamento" };
 
-/**
- * "Veio de: {pergunta curta} → {resposta}". Chaves = ids do catálogo (track A), para a costura poder trocar pelo
- * `curto` de `PERGUNTAS` sem mudar a lógica.
- */
-const CURTO = {
-  objetivo: "Objetivo",
-  experiencia: "Tempo de musculação",
-  parado: "Parado há",
-  dias: "Dias por semana",
-  minutos: "Tempo por treino",
-  onde: "Onde vai treinar",
-  equipamentos: "O que tem para treinar",
-  foco: "Mais atenção a",
-  naoQuer: "Não quer fazer",
-  dorOnde: "Onde dói",
-  condicoes: "Condições",
-  pressaoControle: "Pressão",
-  regular: "Exercício regular",
-  gestacao: "Gravidez ou bebê no último ano",
-  assoalho: "Perda de xixi ou peso na vagina",
-  quedas: "Quedas e equilíbrio",
-  ano: "Ano de nascimento",
-} as const;
+/** "Veio de: {pergunta curta} → {resposta}": a mesma pergunta curta do catálogo (`curtoDe`), como no "Por quê" da triagem. */
+const CURTO_IDS = ["objetivo", "experiencia", "parado", "dias", "minutos", "onde", "equipamentos", "foco", "naoQuer", "dorOnde", "condicoes", "pressaoControle", "regular", "gestacao", "assoalho", "quedas", "ano"] as const;
+const CURTO = Object.fromEntries(CURTO_IDS.map((id) => [id, curtoDe(id)])) as Record<(typeof CURTO_IDS)[number], string>;
 const CADASTRO = "Seu cadastro";
 const JEITO = "Seu jeito de trabalhar";
 

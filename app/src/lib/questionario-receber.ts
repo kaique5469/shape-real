@@ -229,3 +229,72 @@ export function juntoAntesDoLink(aluno: Profile | null, p: RespostasPacket): { d
   if (!atual || atual.via !== "junto" || atual.id === p.anamnese.id) return null;
   return { data: atual.answeredAt };
 }
+
+// ---- etapas da recepção (spec §5.5) ----------------------------------------------------------------------------------
+/** O que o personal já decidiu na tela de recepção. Tudo começa vazio; cada botão liga uma decisão. */
+export interface DecisoesRecepcao {
+  /** [Registrar mesmo assim] nas respostas apagadas antes neste aparelho. */
+  apagadasOk?: boolean;
+  /** Aluno escolhido na lista ("escolhido"): vence o casamento automático e dispensa a conferência de nome. */
+  escolhido?: string | null;
+  /** [Trocar] ou [Escolher outro]: mostra a lista. */
+  trocar?: boolean;
+  /** [Sim, registrar] (casou pelo nome) ou [É {cadastro}: registrar] (nome diferente). */
+  identidadeOk?: boolean;
+  /** [Substituir], [Usar estas mesmo assim] ou [Usar as do link]. */
+  estadoOk?: boolean;
+}
+
+export type EtapaRecepcao =
+  | { t: "ja_registrado"; aluno: Profile; em: string }
+  | { t: "apagadas"; em: string }
+  | { t: "escolher"; sugerido: Profile | null }
+  | { t: "confirmar_nome"; aluno: Profile }
+  | { t: "nome_diferente"; aluno: Profile }
+  | { t: "substituir"; aluno: Profile; anterior: string }
+  | { t: "mais_antigas"; aluno: Profile; atual: string }
+  | { t: "junto_antes"; aluno: Profile; data: string }
+  | { t: "registrar"; aluno: Profile; achou: "ref" | "nome" | "escolhido" };
+
+/**
+ * Qual pergunta a tela de recepção faz agora (spec §5.5), depois das guardas do aparelho. Nesta ordem:
+ *  1. já registradas em algum aluno (mesmo `id` e mesmo `answeredAt`): nada é gravado, nem com outra escolha;
+ *  2. apagadas antes neste aparelho: avisa a data e só segue com [Registrar mesmo assim] (sem cadastro automático);
+ *  3. ninguém encontrado, ou [Trocar]: a lista e [Cadastrar {aluno} com estas respostas];
+ *  4. casou pelo nome: sempre pede confirmação; casou pelo `ref` com outro nome: avisa antes de registrar;
+ *  5. reenvio com mudanças, respostas mais antigas que as atuais, ou questionário feito junto depois do pedido;
+ *  6. registrar (com "Conferir antes de salvar" quando houver diferenças, decidido pela tela).
+ */
+export function etapaRecepcao(i: { alunos: Profile[]; p: RespostasPacket; apagadoEm: string | null; decisoes: DecisoesRecepcao }): EtapaRecepcao {
+  const d = i.decisoes;
+  for (const a of i.alunos) {
+    const e = estadoRecepcao(a, i.p);
+    if (e.tipo === "ja_registrado") return { t: "ja_registrado", aluno: a, em: e.em };
+  }
+  if (i.apagadoEm && !d.apagadasOk) return { t: "apagadas", em: i.apagadoEm };
+  const escolhido = d.escolhido ? (i.alunos.find((a) => a.id === d.escolhido) ?? null) : null;
+  const auto = escolhido ? null : acharAluno(i.alunos, i.p);
+  const aluno = escolhido ?? auto?.aluno ?? null;
+  if (d.trocar || !aluno) return { t: "escolher", sugerido: aluno };
+  if (auto && !d.identidadeOk) {
+    if (auto.achou === "nome") return { t: "confirmar_nome", aluno };
+    if (auto.achou === "ref" && nomeDiferente(aluno.name, i.p.studentName)) return { t: "nome_diferente", aluno };
+  }
+  if (!d.estadoOk) {
+    const e = estadoRecepcao(aluno, i.p);
+    if (e.tipo === "substituir") return { t: "substituir", aluno, anterior: e.anterior };
+    if (e.tipo === "mais_antigas") return { t: "mais_antigas", aluno, atual: e.atual };
+    const junto = juntoAntesDoLink(aluno, i.p);
+    if (junto) return { t: "junto_antes", aluno, data: junto.data };
+  }
+  return { t: "registrar", aluno, achou: escolhido ? "escolhido" : auto?.achou === "nome" ? "nome" : "ref" };
+}
+
+/**
+ * Texto do beco sem saída em /receber. O `{personal}` de §5.4 é quem mandou o link: aqui, o aluno (com o link cortado,
+ * o nome pode nem existir: "o aluno").
+ */
+export function textoProblemaReceber(problema: ProblemaLink, nomeAluno: unknown): string {
+  const nome = typeof nomeAluno === "string" ? primeiroNome(nomeAluno.slice(0, 120)) : "";
+  return PROBLEMA_TEXTO[problema].replaceAll("{personal}", nome || "o aluno");
+}

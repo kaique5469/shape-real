@@ -94,6 +94,7 @@ export function RestoreBackupButton({ origin, className }: { origin: "entrar" | 
               {pending.exportedAt ? `, de ${new Date(pending.exportedAt).toLocaleDateString("pt-BR")}` : ""}: {plural(summary.programs, "ficha", "fichas")}, {plural(summary.sessions, "treino", "treinos")}
               {summary.students ? ` e ${plural(summary.students, "aluno", "alunos")}` : ""}. Os mesmos registros que já estiverem neste aparelho são substituídos. Fotos não entram na cópia.
             </p>
+            {summary.students ? <p className="text-[0.9375rem] text-steel">Restaurar mantém as respostas de questionário mais novas de cada aluno.</p> : null}
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <Button variant="secondary" onClick={() => setPending(null)} disabled={busy}>
                 Cancelar

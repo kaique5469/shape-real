@@ -848,7 +848,7 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
         <h1 ref={titulo} tabIndex={-1} className="plate-type mb-4 text-[1.5rem] leading-tight break-words outline-none">
           {CONFERIR_TEXTO.titulo}
         </h1>
-        <ConferirDiferencas diferencas={conferencia.difs} limitacoes={conferencia.lim} value={conferencia.escolhas} onChange={(v) => setConferencia({ ...conferencia, escolhas: v })} />
+        <ConferirDiferencas diferencas={conferencia.difs} limitacoes={conferencia.lim} value={conferencia.escolhas} aluno={aluno.name} onChange={(v) => setConferencia({ ...conferencia, escolhas: v })} />
         {erroSalvar ? (
           <Alert tone="error" className="mt-4">
             {QTEXTO.erroSalvar}

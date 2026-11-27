@@ -428,6 +428,15 @@ export function whatsappDoPersonalOk(coach: Pick<Profile, "phone"> | null | unde
 }
 
 /**
+ * O personal já tem nome para assinar o pedido? "Personal" é o nome provisório de quem ainda não preencheu o próprio
+ * (o /testar começa assim): com ele, o aluno leria "Aqui é Personal" e "Autorizo Personal…".
+ */
+export function nomeDoPersonalOk(coach: Pick<Profile, "name"> | null | undefined): boolean {
+  const n = coach?.name?.trim() ?? "";
+  return n.length >= 2 && n !== "Personal";
+}
+
+/**
  * Pedido que um reenvio ou lembrete reaproveita (mesmo `id` e mesmo `packed`: o aluno continua o rascunho): o pendente
  * do aluno, da mesma reavaliação. `pendente` vem de `pedidoPendente` (anamnese-perfil.ts). null = pedido novo.
  */
@@ -451,6 +460,9 @@ export const PEDIR_TEXTO = {
   titulo: (aluno: string) => `Mandar questionário para ${primeiroNome(aluno) || "o aluno"}`,
   seuWhatsapp: "Seu WhatsApp (com DDD)",
   seuWhatsappDica: (aluno: string) => `Para as respostas de ${primeiroNome(aluno) || "seu aluno"} voltarem direto para você.`,
+  seuNome: "Seu nome",
+  seuNomeDica: (aluno: string) => `Aparece na mensagem e no questionário de ${primeiroNome(aluno) || "seu aluno"}.`,
+  erroNome: "Escreva seu nome.",
   salvarEContinuar: "Salvar e continuar",
   editarEmConta: "Editar em Conta",
   comoResponde: (aluno: string, minutos: number) => `${primeiroNome(aluno) || "O aluno"} responde no celular, sem cadastro, em uns ${minutos} minutos.`,
@@ -460,6 +472,13 @@ export const PEDIR_TEXTO = {
   copiar: "Copiar mensagem",
   pronto: (aluno: string) => `Pronto. Quando ${primeiroNome(aluno) || "o aluno"} responder, você recebe um link no WhatsApp. Toque nele para registrar.`,
   exemplo: "Exemplo: o questionário não é enviado.",
+  /** Título do diálogo aberto por "Lembrar {aluno}" (o rótulo da ação, spec §5.3). */
+  tituloLembrete: (aluno: string) => `Lembrar ${primeiroNome(aluno) || "o aluno"}`,
+  /** Mesma mensagem do formulário do aluno (student-form.tsx). */
+  erroWhatsapp: "Inclua o DDD. Ex.: (11) 91234-5678.",
+  naoSalvou: "Não foi possível salvar. Tente de novo.",
+  /** Com conta na nuvem, /receber não registra respostas: o pedido por link levaria a um beco sem saída. */
+  nuvem: (aluno: string) => `Com conta no Shape Real, o questionário por link ainda não está disponível. Preencha junto com ${primeiroNome(aluno) || "o aluno"}.`,
 } as const;
 
 // ---- mensagens (puras; nenhum valor de resposta no texto) ----------------------------------------------------------

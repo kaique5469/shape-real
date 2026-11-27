@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { Suspense, use, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, ClipboardList, Eye, FileText, MessageCircle, MoreHorizontal, Pencil, Plus, Send, Trash2, Trophy, UserMinus } from "lucide-react";
+import { ArrowLeft, CalendarClock, CalendarX, ClipboardList, Eye, FileText, MessageCircle, MoreHorizontal, Pencil, Plus, Send, Trash2, TriangleAlert, UserMinus } from "lucide-react";
 import { ApagarRespostasDialog } from "@/components/anamnese/apagar-respostas-dialog";
 import { PedirQuestionario } from "@/components/anamnese/pedir-questionario";
 import { ProximosPassos } from "@/components/anamnese/proximos-passos";
 import { ResumoAluno } from "@/components/anamnese/resumo-aluno";
 import { ProgramList } from "@/components/program/program-list";
+import { RecordMark } from "@/components/record-mark";
 import { StudentForm, useQuestionarioLigado } from "@/components/student-form";
 import { DietView } from "@/components/views/diet-view";
 import { EvolutionView } from "@/components/views/evolution-view";
@@ -26,6 +27,8 @@ import { GOAL_LABEL, LEVEL_LABEL } from "@/lib/domain/generator";
 import { weekStart } from "@/lib/domain/progression";
 import { summarize } from "@/lib/domain/resumo";
 import { reportError, track } from "@/lib/analytics";
+import { RECEBER_TEXTO } from "@/lib/questionario-receber";
+import { validityIcon, validityTone } from "@/lib/ui/tone";
 import { apagarRascunho, chaveRascunho, lerRascunho, type Rascunho } from "@/lib/questionario-client";
 import { ctxDoJunto, secaoDoRascunho } from "@/lib/questionario-flow";
 import type { BodyMetric, Equipment, Profile, Program, Session } from "@/lib/domain/types";
@@ -51,10 +54,13 @@ export default function AlunoPage({ params }: { params: Promise<{ id: string }> 
   );
 }
 
-/** Tira um parâmetro da barra de endereço sem navegar (o Next sincroniza `useSearchParams` com o history nativo). */
-function semParametro(id: string, search: URLSearchParams, nome: string) {
+/**
+ * Tira parâmetros da barra de endereço sem navegar (o Next sincroniza `useSearchParams` com o history nativo). Os
+ * parâmetros que saem juntos vão numa chamada só: duas chamadas com o mesmo `search` devolveriam o primeiro.
+ */
+function semParametro(id: string, search: URLSearchParams, nomes: string | string[]) {
   const q = new URLSearchParams(search.toString());
-  q.delete(nome);
+  for (const nome of Array.isArray(nomes) ? nomes : [nomes]) q.delete(nome);
   const resto = q.toString();
   window.history.replaceState(null, "", `/alunos/${id}${resto ? `?${resto}` : ""}`);
 }
@@ -67,6 +73,9 @@ function Aluno({ id }: { id: string }) {
   const requested = search.get("aba") as Tab | null;
   const tab: Tab = TABS.some((t) => t.value === requested) ? requested! : "resumo";
   const justCreated = Boolean(search.get("novo"));
+  // ?recebido=1 (vem do /receber depois de registrar): "Pronto. Se quiser, apague a mensagem…" e `summary_viewed`
+  // com origem "receber". Lido uma vez: o parâmetro sai da barra; o aviso some ao trocar de aba.
+  const [recebido, setRecebido] = useState(() => search.get("recebido") === "1");
   const questionario = useQuestionarioLigado();
   const [hoje] = useState(() => new Date());
   const [menu, setMenu] = useState(false);
@@ -91,16 +100,18 @@ function Aluno({ id }: { id: string }) {
     semParametro(id, search, "pedir");
   }, [student, questionario, search, id]);
 
-  // ?questionario=novo (fim do junto ou recepção): rola até o resumo e tira o parâmetro.
+  // ?questionario=novo (fim do junto ou recepção): rola até o resumo e tira o parâmetro (com o `recebido`, junto).
   const rolou = useRef(false);
   useEffect(() => {
-    if (rolou.current || !student || search.get("questionario") !== "novo") return;
+    const novo = search.get("questionario") === "novo";
+    if (rolou.current || !student || (!novo && !search.has("recebido"))) return;
     rolou.current = true;
-    requestAnimationFrame(() => {
-      const reduz = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      document.getElementById("resumo-aluno")?.scrollIntoView({ block: "start", behavior: reduz ? "auto" : "smooth" });
-    });
-    semParametro(id, search, "questionario");
+    if (novo)
+      requestAnimationFrame(() => {
+        const reduz = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        document.getElementById("resumo-aluno")?.scrollIntoView({ block: "start", behavior: reduz ? "auto" : "smooth" });
+      });
+    semParametro(id, search, ["questionario", "recebido"]);
   }, [student, search, id]);
 
   // O personal viu o resumo: tira o selo "Respostas novas" (vistoEm), uma vez por aluno.
@@ -146,6 +157,7 @@ function Aluno({ id }: { id: string }) {
 
   const setTab = (t: Tab) => {
     setDeliveryTick((n) => n + 1);
+    setRecebido(false);
     router.replace(`/alunos/${id}${t === "resumo" ? "" : `?aba=${t}`}`, { scroll: false });
   };
 
@@ -200,8 +212,11 @@ function Aluno({ id }: { id: string }) {
           </IconButton>
         </div>
         {student.limitations ? (
-          <p className="mt-3 rounded-[6px] border border-plate-red/30 bg-plate-red/5 px-3 py-2 text-sm">
-            <span className="font-bold text-plate-red-ink">Limitação:</span> {student.limitations}
+          <p className="mt-3 flex gap-2 rounded-[6px] border border-warn-line bg-warn-surface px-3 py-2 text-sm text-iron">
+            <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warn-ink" aria-hidden />
+            <span className="min-w-0 break-words">
+              <span className="font-bold">Limitação:</span> {student.limitations}
+            </span>
           </p>
         ) : null}
         {student.coachNotes ? (
@@ -239,8 +254,9 @@ function Aluno({ id }: { id: string }) {
         </Alert>
       ) : null}
 
-      <div className="no-print -mx-4 mb-5 overflow-x-auto px-4">
-        <Segmented label="Seção do aluno" value={tab} onChange={setTab} size="sm" className="min-w-max" options={TABS} />
+      {/* Abaixo de sm, grade 3×2: as seis abas inteiras à vista a 320 e 360 px, sem arrastar (U8 3.9). */}
+      <div className="no-print mb-5">
+        <Segmented label="Seção do aluno" value={tab} onChange={setTab} size="md" columns={3} options={TABS} />
       </div>
 
       {tab === "resumo" ? (
@@ -249,6 +265,7 @@ function Aluno({ id }: { id: string }) {
           ws={user?.workStyle}
           hoje={hoje}
           justCreated={justCreated}
+          recebido={recebido}
           questionario={questionario}
           version={deliveryTick}
           rascunho={rascunho}
@@ -300,7 +317,8 @@ function Aluno({ id }: { id: string }) {
         title={rotuloFazerQuestionario(student)}
         actions={[
           { label: `Preencher agora com ${first}`, icon: <ClipboardList className="size-5" />, onSelect: () => router.push(`/questionario?aluno=${encodeURIComponent(id)}`) },
-          ...(exemplo ? [] : [{ label: "Mandar pelo WhatsApp", icon: <Send className="size-5" />, onSelect: () => setPedir("aluno") }]),
+          // Na nuvem o /receber não registra respostas: o pedido por link não é oferecido (o diálogo também avisa).
+          ...(exemplo || mode !== "local" ? [] : [{ label: "Mandar pelo WhatsApp", icon: <Send className="size-5" />, onSelect: () => setPedir("aluno") }]),
         ]}
       />
 
@@ -353,6 +371,7 @@ function Summary({
   ws,
   hoje,
   justCreated,
+  recebido,
   questionario,
   version,
   rascunho,
@@ -366,6 +385,7 @@ function Summary({
   ws?: WorkStyle;
   hoje: Date;
   justCreated: boolean;
+  recebido: boolean;
   questionario: boolean;
   version: number;
   rascunho: Rascunho | null;
@@ -415,6 +435,11 @@ function Summary({
           {avisoCadastroNovo(student, questionario)}
         </Alert>
       ) : null}
+      {recebido ? (
+        <Alert tone="done" className="no-print">
+          {RECEBER_TEXTO.pronto}
+        </Alert>
+      ) : null}
 
       {questionario && rascunho ? (
         <section aria-label="Questionário pela metade" className="no-print ph-no-capture flex flex-col gap-3 rounded-[var(--radius-ficha)] border border-rule-strong bg-paper p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -433,7 +458,7 @@ function Summary({
         </section>
       ) : null}
 
-      <ResumoAluno student={student} ws={ws} hoje={hoje} onChange={onChange} passos={passosNoResumo ? passos : undefined} />
+      <ResumoAluno student={student} ws={ws} hoje={hoje} origem={recebido ? "receber" : "aba"} onChange={onChange} passos={passosNoResumo ? passos : undefined} />
       {passosNoResumo ? null : passos}
 
       {loading ? (
@@ -468,10 +493,10 @@ function SummaryPanels({ student, data, onTab, onEdit }: { student: Profile; dat
   const first = firstName(student.name);
   const active = data.programs.find((p) => p.active) ?? null;
   const validity = active ? programValidity(active.createdAt, active.durationWeeks) : null;
+  const vIcon = validityIcon(validity);
+  const VIcon = vIcon === "CalendarX" ? CalendarX : vIcon === "CalendarClock" ? CalendarClock : null;
   const last = [...data.sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0] ?? null;
   const target = student.daysPerWeek ?? 0;
-  // Só cobra frequência das semanas em que o aluno já estava cadastrado.
-  const since = weekStart(student.createdAt);
   const sortedMetrics = [...data.metrics].sort((a, b) => b.date.localeCompare(a.date));
   const latest = (key: "weightKg" | "bodyFatPct" | "waistCm") => {
     const rows = sortedMetrics.filter((m) => m[key]);
@@ -490,7 +515,7 @@ function SummaryPanels({ student, data, onTab, onEdit }: { student: Profile; dat
   return (
     <div className="no-print space-y-4">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <Panel title="Frequência nas últimas 4 semanas">
+        <Panel title={mode === "local" ? "Treinos recebidos nas últimas 4 semanas" : "Frequência nas últimas 4 semanas"}>
           <ul className="space-y-2">
             {weeks.map((w, i) => {
               const slots = Math.max(target, w.count, 1);
@@ -502,7 +527,8 @@ function SummaryPanels({ student, data, onTab, onEdit }: { student: Profile; dat
                       <span key={k} className={cx("h-3.5 w-5 rounded-[3px] border", k < w.count ? "border-plate-green bg-plate-green" : "border-rule-strong bg-transparent")} />
                     ))}
                   </span>
-                  <span className={cx("num shrink-0 font-semibold", target > 0 && w.count < target && i < 3 && w.start >= since && "text-plate-red-ink")}>
+                  {/* Indicador sem cor de estado (U7 R6): os quadradinhos já mostram a proporção. */}
+                  <span className="num shrink-0 font-semibold text-iron">
                     {w.count}
                     {target ? ` de ${target}` : ""}
                   </span>
@@ -534,8 +560,8 @@ function SummaryPanels({ student, data, onTab, onEdit }: { student: Profile; dat
                 {last.volumeKg ? ` · ${fmtNum(last.volumeKg, 0)} kg de volume` : ""}
               </p>
               {last.prs.length ? (
-                <p className="mt-2 inline-flex items-center gap-1.5 rounded bg-plate-red px-2 py-1 text-sm font-bold text-white">
-                  <Trophy className="size-4" aria-hidden /> {last.prs.length} {last.prs.length === 1 ? "recorde" : "recordes"}
+                <p className="mt-2">
+                  <RecordMark count={last.prs.length} />
                 </p>
               ) : null}
               {last.note ? <p className="mt-2 text-sm text-steel">“{last.note}”</p> : null}
@@ -554,7 +580,7 @@ function SummaryPanels({ student, data, onTab, onEdit }: { student: Profile; dat
           title="Ficha ativa"
           action={
             active ? (
-              <Link href={`/alunos/${id}/ficha/${active.id}`} className="-my-2 inline-flex min-h-10 items-center text-sm font-semibold underline">
+              <Link href={`/alunos/${id}/ficha/${active.id}`} className="-my-2 inline-flex min-h-10 items-center text-sm font-semibold underline pointer-coarse:min-h-11">
                 Abrir ficha
               </Link>
             ) : null
@@ -567,9 +593,13 @@ function SummaryPanels({ student, data, onTab, onEdit }: { student: Profile; dat
                 {active.days.length} {active.days.length === 1 ? "treino" : "treinos"} · criada em {fmtDate(active.createdAt, { day: "2-digit", month: "short" })}
               </p>
               {validity ? (
-                <p className={cx("mt-2 text-sm font-semibold", validity.state === "expired" ? "text-plate-red-ink" : validity.state === "soon" ? "text-iron" : "text-steel")}>
-                  Ficha {validity.label}
-                  {validity.state !== "ok" ? ". Hora de renovar o estímulo." : ""}
+                // Atenção = ícone âmbar e texto iron (U7 R3); em dia, steel sem ícone.
+                <p className={cx("mt-2 flex items-start gap-1.5 text-sm font-semibold", validityTone(validity) === "warn" ? "text-iron" : "text-steel")}>
+                  {VIcon ? <VIcon className="mt-0.5 size-4 shrink-0 text-warn-ink" aria-hidden /> : null}
+                  <span className="min-w-0">
+                    Ficha {validity.label}
+                    {validity.state !== "ok" ? ". Hora de renovar o estímulo." : ""}
+                  </span>
                 </p>
               ) : (
                 <p className="mt-2 text-sm text-steel">Sem validade definida. Você pode definir ao editar a ficha.</p>
@@ -588,7 +618,7 @@ function SummaryPanels({ student, data, onTab, onEdit }: { student: Profile; dat
         <Panel
           title="Medidas"
           action={
-            <button type="button" onClick={() => onTab("evolucao")} className="-my-2 inline-flex min-h-10 items-center text-sm font-semibold underline">
+            <button type="button" onClick={() => onTab("evolucao")} className="-my-2 inline-flex min-h-10 items-center text-sm font-semibold underline pointer-coarse:min-h-11">
               {hasMeasures ? "Ver evolução" : "Registrar"}
             </button>
           }

@@ -7,7 +7,7 @@ import { extraDoEnvioDaFicha } from "@/lib/domain/anamnese-perfil";
 import { coachSignature } from "@/lib/domain/cref";
 import { fichaSendSituation, type FichaDelivery, type PrepVia } from "@/lib/domain/delivery";
 import { firstName, waPhone } from "@/lib/domain/format";
-import { buildFichaPacket, fichaLinkItems } from "@/lib/domain/transfer";
+import { buildFichaPacket, fichaLinkItems, fichaLinkMessage } from "@/lib/domain/transfer";
 import type { DietPlan, Profile, Program } from "@/lib/domain/types";
 import { packData } from "@/lib/share-link";
 import { fichaSendRecord, markFichaPrepared, readFichaDelivery } from "@/lib/transfer-client";
@@ -79,9 +79,8 @@ export function useFichaLink(student: Profile, enabled: boolean, opts: { where?:
       const link = `${origin()}/abrir#d=${await packData(packet)}`;
       const first = firstName(student.name);
       // Assinatura única do personal ("Nome · CREF …"), a mesma da ficha impressa, da dieta e do relatório.
-      const coachName = (user.name.trim() && user.name !== "Personal" ? coachSignature({ name: user.name, cref: user.cref }) : undefined) ?? "seu personal";
-      const what = program && diet ? "sua ficha e sua dieta" : program ? "sua ficha" : "sua dieta";
-      const texto = `Oi, ${first}! ${what[0]!.toUpperCase()}${what.slice(1)} ${program && diet ? "estão" : "está"} no Shape Real. Abra este link no seu celular para ${program ? "treinar, registrar as cargas e me mandar cada treino" : "guardar e consultar quando quiser"} (não precisa cadastro):\n${link}\n\n— ${coachName}`;
+      const coachName = user.name.trim() && user.name !== "Personal" ? coachSignature({ name: user.name, cref: user.cref }) : undefined;
+      const texto = fichaLinkMessage({ studentFirstName: first, coachSignature: coachName, hasProgram: Boolean(program), hasDiet: Boolean(diet), link });
       const entrega = tracking ? readFichaDelivery(student.id, { programAt: program?.updatedAt ?? null, dietAt: diet?.updatedAt ?? null }) : null;
       if (alive) setBuilt({ estado: { link, texto, programa: program, dieta: diet }, entrega });
     })().catch((e) => {

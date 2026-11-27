@@ -43,8 +43,17 @@ const liberadoPorProfissional = (al: Alerta) => !!al.coberto && al.coberto.por !
  * repositório, navegação, diálogos nem botão de gerar. `summary_viewed` ao montar (uma vez por aluno; nunca em
  * exemplo). Raiz `#resumo-aluno` com `ph-no-capture`.
  */
-export function ResumoAluno(props: { student: Profile; ws?: WorkStyle; hoje: Date; somenteLeitura?: boolean; onChange?: (p: Profile) => void; passos?: ReactNode }): ReactElement | null {
-  const { student, ws, hoje, somenteLeitura = false, onChange, passos } = props;
+export function ResumoAluno(props: {
+  student: Profile;
+  ws?: WorkStyle;
+  hoje: Date;
+  somenteLeitura?: boolean;
+  /** Origem do `summary_viewed` na página do aluno: "receber" logo depois de registrar pelo /receber; no junto, "junto". */
+  origem?: "aba" | "receber";
+  onChange?: (p: Profile) => void;
+  passos?: ReactNode;
+}): ReactElement | null {
+  const { student, ws, hoje, somenteLeitura = false, origem = "aba", onChange, passos } = props;
   const { user, repo } = useApp();
   const resumo = useMemo(() => summarize({ profile: student, ws, hoje }), [student, ws, hoje]);
   const ficha = useMemo(() => (resumo && !resumo.problema ? toGenerateInput(student, ws, hoje, { hoje, liberacoes: student.liberacoes ?? [] }) : null), [resumo, student, ws, hoje]);
@@ -63,8 +72,8 @@ export function ResumoAluno(props: { student: Profile; ws?: WorkStyle; hoje: Dat
     if (medido.current === student.id) return;
     medido.current = student.id;
     if (ehExemplo(student)) return;
-    track("summary_viewed", evSummaryViewed(temQuestionario, somenteLeitura ? "junto" : "aba"));
-  }, [student, temQuestionario, somenteLeitura]);
+    track("summary_viewed", evSummaryViewed(temQuestionario, somenteLeitura ? "junto" : origem));
+  }, [student, temQuestionario, somenteLeitura, origem]);
 
   // [Imprimir]: abre todas as partes, imprime e volta como estava.
   useEffect(() => {

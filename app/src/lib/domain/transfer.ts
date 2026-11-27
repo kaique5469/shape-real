@@ -231,6 +231,12 @@ export function fichaLinkItems(programs: readonly Program[], diet: DietPlan | nu
 }
 
 /** Pacote que o personal manda ao aluno: ficha ativa, dieta e os exercícios/alimentos próprios usados nelas. */
+function semSugerido(p: Program): Program {
+  if (!("sugerido" in p)) return p;
+  const { sugerido: _sugerido, ...resto } = p;
+  return resto;
+}
+
 export function buildFichaPacket(input: {
   coach: Profile;
   student: Profile;
@@ -248,7 +254,8 @@ export function buildFichaPacket(input: {
     sentAt: (input.now ?? new Date()).toISOString(),
     coach: { id: input.coach.id, name: input.coach.name, ...(input.coach.phone ? { phone: input.coach.phone } : {}), ...(input.coach.cref?.trim() ? { cref: input.coach.cref.trim() } : {}) },
     student: { ref: input.student.id, ...pickStudent(input.student) },
-    program: input.program,
+    // `sugerido` (o que o gerador pré-preencheu, para o padrão aprendido da Entrega 2) fica no aparelho do personal.
+    program: input.program ? semSugerido(input.program) : null,
     diet: input.diet,
     exercises: input.customExercises.filter((e) => usedEx.has(e.id)),
     foods: input.customFoods.filter((f) => usedFood.has(f.id)),
@@ -452,6 +459,17 @@ export function sessionToText(s: Session): string {
 }
 
 /** Mensagem com os treinos e o link que leva tudo para o painel do personal. */
+/**
+ * Mensagem do envio da ficha e da dieta por link (spec da anamnese §8.6): o link leva o conteúdo; o texto da ficha não
+ * vai na mensagem. `coachSignature` = assinatura única do personal ("Nome · CREF …"); vazia vira "seu personal".
+ */
+export function fichaLinkMessage(i: { studentFirstName: string; coachSignature?: string; hasProgram: boolean; hasDiet: boolean; link: string }): string {
+  const what = i.hasProgram && i.hasDiet ? "sua ficha e sua dieta" : i.hasProgram ? "sua ficha" : "sua dieta";
+  const verbo = i.hasProgram && i.hasDiet ? "estão" : "está";
+  const para = i.hasProgram ? "treinar, registrar as cargas e me mandar cada treino" : "guardar e consultar quando quiser";
+  return `Oi, ${i.studentFirstName}! ${what[0]!.toUpperCase()}${what.slice(1)} ${verbo} no Shape Real. Abra este link no seu celular para ${para} (não precisa cadastro):\n${i.link}\n\n— ${i.coachSignature?.trim() || "seu personal"}`;
+}
+
 export function treinosMessage(sessions: Session[], link: string, coachFirstName?: string): string {
   const ordered = [...sessions].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
   const intro = ordered.length === 1 ? `${coachFirstName ? `${coachFirstName}, ` : ""}treino feito:` : `${coachFirstName ? `${coachFirstName}, ` : ""}${ordered.length} treinos feitos:`;

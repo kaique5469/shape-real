@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { cameFromPaste, packData, packedFromHash, packedFromText, pastedLinkHref, unpackData } from "../share-link";
 import { getExercise } from "./exercises";
 import { backupAgeBucket, backupFileName, backupReminderDue, backupStatusShort, backupStatusText, buildBackup, parseBackup, programsToCsv, promptShowsAgain } from "./export";
-import { buildFichaPacket, buildTreinosPacket, consentConfirmed, consentFromCheckbox, consentMetric, hasHealthData, MAX_SESSIONS_PER_LINK, mergeMetric, mirrorLoads, parsePacket, sessionToText, studentFieldsOf, topLoads, TRANSFER_VERSION, treinosMessage, type FichaPacket, type TreinosPacket } from "./transfer";
+import { buildFichaPacket, buildTreinosPacket, consentConfirmed, fichaLinkMessage, consentFromCheckbox, consentMetric, hasHealthData, MAX_SESSIONS_PER_LINK, mergeMetric, mirrorLoads, parsePacket, sessionToText, studentFieldsOf, topLoads, TRANSFER_VERSION, treinosMessage, type FichaPacket, type TreinosPacket } from "./transfer";
 import type { Anamnese } from "./anamnese-types";
 import type { BodyMetric, DietPlan, Exercise, Profile, Program, Session } from "./types";
 
@@ -79,6 +79,28 @@ describe("envio por link", () => {
     expect(p.exercises.map((e) => e.id)).toEqual(["custom_remada"]);
     expect(p.foods.map((f) => f.id)).toEqual(["custom_iogurte"]);
     expect(p.coach).toEqual({ id: "c1", name: "Rafael Nunes", phone: "11988887777" });
+  });
+
+  it("o que o gerador pré-preencheu (`sugerido`) fica no aparelho do personal e não vai no link", () => {
+    const comSugerido: Program = { ...program, sugerido: { system: program.system, durationWeeks: 8 } };
+    const p = buildFichaPacket({ coach, student, program: comSugerido, diet: null, customExercises: [], customFoods: [] });
+    expect(p.program).not.toHaveProperty("sugerido");
+    expect(p.program).toEqual(program);
+    expect(comSugerido.sugerido).toEqual({ system: program.system, durationWeeks: 8 });
+  });
+
+  it("mensagem do envio por link: leva /abrir#d= e não leva o texto da ficha (§8.6)", async () => {
+    const p = buildFichaPacket({ coach, student, program, diet, customExercises: customEx, customFoods: [] });
+    const link = `https://shapereal.app/abrir#d=${await packData(p)}`;
+    const msg = fichaLinkMessage({ studentFirstName: "Marina", coachSignature: "Rafael Nunes · CREF 012345-G/SP", hasProgram: true, hasDiet: true, link });
+    expect(msg).toContain("/abrir#d=");
+    expect(msg).toContain(link);
+    expect(msg.startsWith("Oi, Marina! Sua ficha e sua dieta estão no Shape Real.")).toBe(true);
+    expect(msg.endsWith("— Rafael Nunes · CREF 012345-G/SP")).toBe(true);
+    // Nada do conteúdo da ficha nem da dieta no texto: nome da ficha, treinos, exercícios.
+    const fora = msg.replace(link, "");
+    for (const t of [program.name, ...program.days.map((d) => d.title), ...program.days.flatMap((d) => d.exercises.map((e) => e.name))]) expect(fora).not.toContain(t);
+    expect(fichaLinkMessage({ studentFirstName: "Marina", hasProgram: false, hasDiet: true, link })).toMatch(/^Oi, Marina! Sua dieta está no Shape Real\. .*guardar e consultar quando quiser.*\n— seu personal$/s);
   });
 
   it("vai e volta pelo link sem perder nada e cabe numa mensagem", async () => {

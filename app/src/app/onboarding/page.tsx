@@ -226,7 +226,7 @@ export default function Onboarding() {
               }}
             >
               <Field label="Seu WhatsApp (opcional)" hint="É para onde seus alunos devolvem os treinos. Sem ele, o aluno precisa te procurar nos contatos.">
-                <Input value={phone} onChange={(e) => setPhone(maskPhone(e.target.value))} inputMode="tel" autoComplete="tel" placeholder="(11) 91234-5678" />
+                <Input value={phone} onChange={(e) => setPhone(maskPhone(e.target.value))} inputMode="tel" autoComplete="tel" placeholder="Ex.: (11) 91234-5678" />
               </Field>
             </form>
           ),

@@ -18,15 +18,8 @@ import { describe, expect, it } from "vitest";
  */
 type Rule = "a" | "b" | "c" | "d" | "e" | "f";
 
-const PENDENTE: Record<string, { regras: Rule[]; item: string }> = {
-  // U7c (arquivos da anamnese) foi para a rodada do questionário: ficam pendentes com motivo em DECISIONS.md.
-  "app/(painel)/alunos/[id]/page.tsx": { regras: ["a"], item: "U7c (próxima rodada)" },
-  "app/receber/page.tsx": { regras: ["a"], item: "U7c (próxima rodada)" },
-  "components/colar-link.tsx": { regras: ["a"], item: "U7c (próxima rodada)" },
-  "components/program/program-share.tsx": { regras: ["a"], item: "U7c (próxima rodada)" },
-  "components/pwa.tsx": { regras: ["a"], item: "U7c (próxima rodada)" },
-  "components/student-form.tsx": { regras: ["a"], item: "U7c (próxima rodada)" },
-};
+// Vazia: os arquivos do U7c (anamnese) foram convertidos na costura da rodada do questionário (26/11).
+const PENDENTE: Record<string, { regras: Rule[]; item: string }> = {};
 
 const SRC = fileURLToPath(new URL("../../", import.meta.url));
 const posix = (p: string) => p.split(sep).join("/");

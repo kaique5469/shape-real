@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Copy, Download, MessageCircle, Printer } from "lucide-react";
+import { Check, CircleAlert, Copy, Download, MessageCircle, Printer } from "lucide-react";
 import { Button, cx } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
 import { downloadText, programToCsv } from "@/lib/domain/export";
@@ -114,7 +114,12 @@ export function ProgramShare({
           </Button>
         ) : null}
       </div>
-      {copyErr ? <p className="mt-2 text-sm text-plate-red-ink">Não consegui copiar automaticamente. Use “{waLabel}” ou “Imprimir / PDF”.</p> : null}
+      {copyErr ? (
+        <p role="alert" className="mt-2 flex items-start gap-1.5 text-sm text-danger">
+          <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+          <span className="min-w-0">Não consegui copiar automaticamente. Use “{waLabel}” ou “Imprimir / PDF”.</span>
+        </p>
+      ) : null}
       {!disabled && !direct && student ? <p className="mt-2 text-sm text-steel">Sem WhatsApp cadastrado: o envio abre a sua lista de contatos. Cadastre o número em “Editar dados do aluno” para abrir direto na conversa.</p> : null}
     </div>
   );

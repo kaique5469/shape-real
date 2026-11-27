@@ -471,3 +471,174 @@ link e do aparelho.
 **Outros.** `QUESTIONARIO_DESDE` é provisório (2026-11-26, a data da fundação): a costura troca pela data de
 publicação. `hasHealthData` passa a contar o questionário com saúde (`anamnese` sem `healthOmitted`). `CopyButton`
 mudou para `src/components/copy-button.tsx` sem mudar o comportamento.
+
+## 2026-11-26 — Questionário: desvios das trilhas, conferidos na costura
+
+Registro único das leituras e desvios que as trilhas A a E fizeram em relação à spec da anamnese. Cada item tem teste
+ou foi conferido no navegador (360 px). O que já tem entrada própria acima não se repete.
+
+**Triagem, resumo e passos (A).**
+- Leitura cautelosa onde o texto literal deixaria um caso sem alerta: a pergunta `orientacao` também aparece com
+  "Prefiro falar pessoalmente"; A-GESTANTE dispara com a gestante sem resposta sobre o obstetra (com "Pular por
+  agora" no junto, ela ficaria sem alerta nenhum); A-PRESSAO dispara quando a pergunta da pressão estava à vista e
+  ficou sem resposta (conta como "Não sei").
+- Uma liberação cobre o alerta se foi registrada depois de `receivedAt` (ou de `answeredAt` no modo junto), e não de
+  `answeredAt` como diz §6.4: os dois tempos ficam no relógio do aparelho do personal; o relógio do celular do aluno
+  não prende nem solta a trava. Lado seguro: liberação registrada entre a resposta e a chegada pede "Registre de novo".
+- O ano é guardado entre 1900 e 2100 (o esquema do link); a faixa da tela, (ano atual − 100) a (ano atual − 10), é
+  conferida no "Continuar" (`erroAno`). Um ano fora do esquema deixaria o perfil ilegível.
+- O aviso da coluna só aparece com a pergunta `dorAlerta` à vista (dor na lombar ou nas costas altas): uma resposta
+  antiga ainda não limpa não dispara alerta falso.
+- O passo `liberacao` (e o selo "Liberação pendente") não dispara por A-SEM-TRIAGEM nem por A-PARQ-INCOMPLETO: esses
+  têm passo próprio (triagem pessoalmente; completar o questionário), e o "Avisar" pediria liberação médica a quem só
+  não autorizou.
+- `motivoTetoModerado` devolve o título do alerta; com saúde omitida, "Sem triagem de saúde"; com `regular` sem
+  resposta, "Sem resposta sobre treino regular" (nunca afirma "sem treino regular" sem evidência).
+- `enviar_ficha` só aparece com `nao_enviado` ou `mudou`; "desconhecido" (conteúdo anterior ao registro) não afirma nada.
+- Respostas ilegíveis: com "versao_nova", nenhum passo de questionário (o caso é atualizar o app); com "invalida",
+  "Fazer o questionário inicial" e a ficha do zero. O termo do PAR-Q com idade desconhecida é pedido.
+- Junto sem autorização: somem também peso e altura (são dados de saúde) e as opções "sem dor", barreira "dor" e
+  motivo "médico/dor". O bloco 8 (`falta`) fica vazio na Entrega 1, com os blocos 4 a 9.
+- Mantidos de propósito: o passo "Montar dieta" aparece para quem enviou sem dados de saúde (não há como saber o
+  gatilho, igual a quem não respondeu); `next_step_clicked{passo:"questionario"}` também sai em "Completar o
+  questionário" (inferência fraca, o mesmo valor serve para "Fazer").
+
+**Ficha a partir das respostas (B).**
+- "Pressão alta" sem resposta sobre o controle conta como "não sei". "Idoso" também vale com A-QUEDA e idade
+  desconhecida (§6.3 manda o token; §8.3 exigia 65+); queda respondida abaixo de 65 (resposta oculta) não conta.
+- Texto livre vazio: "Não adaptado pelo gerador: dor em outro lugar. Ajuste à mão." e "Lesão antiga, sem descrição.
+  Se ainda limita, descreva em Limitações."
+- Rodada com o mesmo id substitui a anterior, mantendo `overrides` e `conversei` (registros datados); respostas
+  atuais ilegíveis vão para `anamnesePrev` em vez de sumir.
+- Divisão: a preferida do aluno só vale se couber nos dias (senão, o mesmo aviso da que não cabe). Aviso de dias fora
+  de 2–6 só quando o valor veio do aluno. "sem X" no resumo curto: até dois nomes e "e mais N".
+- O jeito de trabalhar vale no gerador do personal para aluno mesmo sem questionário (reserva de dias, tempo, local,
+  divisão e validade); o aluno para si e o modelo não usam. `sugerido` só nas fichas do personal para alunos. A
+  caixa "Intensidade moderada" só aparece com questionário.
+- Trava por respostas ilegíveis: só [Voltar] (não há alerta a cobrir). "Seguir mesmo assim" sem a caixa "Conversei"
+  marcada mostra o erro em `role="alert"` e leva o foco à caixa (botão habilitado).
+- `?enviada=1` continua com a barra da rodada 1 ("Revise se quiser e envie quando estiver pronta.", com o link como
+  primeiro botão verde), não o texto da spec; ficha inativa: "Torne a ficha ativa para enviar o link.".
+- Jeito de trabalhar: com 2 públicos marcados, o 3º não entra (aviso); "Divisão preferida" fica no formulário (fora do
+  `compact`); "O que isso muda" lista só o que age na Entrega 1. No diálogo de liberação, "Quem liberou?" começa sem
+  marca e "Liberou para…" em "Atividade sem restrição" (3 toques). O aviso de saúde na cópia de segurança aparece só
+  para o personal.
+
+**Página do aluno (C).**
+- `contactReason` recebe os dias do pedido pendente como 4º parâmetro (o 3º já era `hasProgram`). Selo com 0 ou 1
+  dia: "pedido hoje" / "1 dia".
+- "Apagar também" tira só o que foi copiado: os trechos de limitação que o app pôs e peso/altura iguais à resposta
+  (o texto do personal fica). Revogar e apagar também tiram as marcas de "feito" dos passos clínicos (derivado de
+  saúde); na revogação, respostas ilegíveis saem inteiras. `marcarApagado` só grava depois que o perfil foi salvo.
+- `marcarVisto` roda sempre que a aba Resumo mostra respostas (senão o selo "Respostas novas" nunca sairia entrando
+  pela lista). `summary_viewed` também sai sem questionário (`tem_questionario: false`).
+- Trava vermelha no bloco 3: no lugar de "Gerar ficha com estas respostas", o texto da trava, [Registrar liberação] e
+  "Montar a ficha do zero". Com A-ALIMENTAR, o peso some também de "Respostas completas" e da impressão.
+- "Apagar respostas do questionário" aparece mesmo com a chave desligada (direito do aluno). Aluno de exemplo: sem
+  "Mandar pelo WhatsApp"; "Avisar" continua. Telefone segue opcional no modo WhatsApp (o diálogo oferece o seletor de
+  contatos). A demonstração antiga também recebe jeito de trabalhar e respostas de exemplo, uma vez.
+
+**Questionário no celular (D).**
+- PostHog em memória e sem `warm` em `/questionario` sem perfil de personal, sem exigir `#d=` (a página limpa o
+  fragmento antes dos efeitos e a recarga chega sem ele). Sem IP: `$ip: null` e `$geoip_disable: true` (HIPÓTESE,
+  conferir na documentação do PostHog e ligar "Discard client IP data" no projeto). Exceções em `/questionario` e
+  `/receber` só com o tipo e o código.
+- O que vai para todas as telas mora em `questionario-base.ts`, sem catálogo. O fim do junto entra na rota por import
+  estático (o `warm` do service worker só guarda o que o HTML cita; um pedaço sob demanda quebraria o modo avião).
+- `salvarRascunho` devolve se gravou ("Salvo…" só com gravação feita). `deleteAccount` lê só o id cru das rodadas
+  (`readAnamnese` devolveria "invalida" e perderia o id). O pedido fica na aba (`sessionStorage sr:v1:qpedido-aba`,
+  só a identidade) para a recarga no meio não perdê-lo. `pulouPorAgora` guarda só ids.
+- Montagem: o termo só é gravado com algum "Sim" no PAR-Q; a autorização do responsável só vale com o nome dele;
+  `consent.at` = hora da montagem.
+- Sem rede, Enviar é bloqueado e anunciado; "Copiar mensagem" conta como toque. "Deu certo?" usa o `Dialog` do app
+  (Esc e X valem "tentar de novo"). No junto, "declaro" é obrigatório só para [Salvar e ver o resumo].
+  `anamnese_part_done` também sai para "enviar". `tipo_desconhecido` usa o motivo `versao_nova`.
+
+**Link e recepção (E).**
+- `TRANSFER_VERSION` e a conferência de data ISO são cópias locais em `questionario-link.ts` (com teste de
+  igualdade): os originais puxariam o motor para `/questionario`. `packetProblem` não confere o conteúdo de ficha e
+  treinos (continua com `parsePacket`).
+- Mesmo id com `answeredAt` mais antigo dá "mais antigas" (a regra literal trocaria a mais nova sem aviso). "Já
+  registradas" é procurado em todos os alunos. Os botões que dizem "registrar" registram direto quando não há nada
+  para conferir.
+- Leitura tolerante do perfil: texto até 5.000 caracteres, PAR-Q pela metade com `null` (o "Salvar o que já tem" do
+  junto) e id de alerta desconhecido descartado em `overrides`/`conversei` (a porta volta, lado seguro).
+- `mesclarRestauracao`, quando fica a rodada do aparelho, leva também o texto de limitações (os tokens só fazem
+  sentido com ele) e a autorização do aparelho se a cópia não tiver.
+- Link que nem abre em `/receber`: "Este link veio cortado ou incompleto. Peça para o aluno mandar de novo."; tipo
+  desconhecido: "Atualize…". Depois de registrar: `/alunos/{id}?aba=resumo&questionario=novo&recebido=1`.
+- Pedido: prévia com o link encurtado (o envio e a cópia levam o inteiro); `anamnese_requested` uma vez por abertura
+  do diálogo; com conta na nuvem, o diálogo avisa que o questionário por link ainda não está disponível.
+
+## 2026-11-26 — Costura do questionário: pontas ligadas e o que ficou como estava
+
+Caminho conferido de ponta a ponta no navegador (360 px, dois aparelhos): cadastro rápido → pedido pelo WhatsApp →
+`/questionario` no aparelho do aluno → `/receber` → resumo → "Gerar ficha com estas respostas" → editor com
+`?enviada=1` → "Enviar link no WhatsApp" → o passo `enviar_ficha` some.
+
+- **`?recebido=1`** mostra "Pronto. Se quiser, apague a mensagem…" no topo do Resumo (some ao trocar de aba) e o
+  `summary_viewed` sai com origem "receber". `questionario` e `recebido` saem da barra numa chamada só: duas
+  `replaceState` com o mesmo `search` devolveriam o primeiro parâmetro.
+- **Nuvem**: o pedido por link não é oferecido no menu, nos passos ("Mandar pelo WhatsApp", "Lembrar") nem no
+  cadastro rápido (o `/receber` da nuvem não registra respostas).
+- **Nome provisório "Personal"** (o `/testar` começa assim): o diálogo do pedido pede o nome junto com o WhatsApp,
+  como as outras telas já tratam esse nome como "sem nome". Sem isso o aluno lia "Aqui é Personal" e "Autorizo
+  Personal…".
+- **`sugerido` não vai no link da ficha** (fica no aparelho do personal, para o padrão aprendido da Entrega 2). A
+  mensagem do envio por link virou função pura (`fichaLinkMessage`), com teste de que leva `/abrir#d=` e não leva o
+  texto da ficha.
+- **"Veio de"** usa a pergunta curta do catálogo (`curtoDe`), a mesma do "Por quê" da triagem; o mapa próprio do
+  gerador saiu.
+- **`QUESTIONARIO_DESDE` = 2026-11-26**, a data desta publicação. Se o deploy sair em outro dia, trocar.
+- **`NEXT_PUBLIC_QUESTIONARIO`** documentada no README e no `.env.example`.
+- **Ficam como estão, com dono para decidir:** a página e o editor usam `!student.sample` para "aluno real", não
+  `ehExemplo` (os alunos `demo-*` da demonstração continuam vendo o painel de envio da rodada 1); a IA, quando ligar,
+  ignora `avoidIds` e `intensityCap` (usar o motor local sempre que existirem); o texto da barra de `?enviada=1`.
+- **Pendências fora do código:** ligar "Discard client IP data" no PostHog; medir o JS da primeira carga de
+  `/questionario` no build (meta: 30 KB gzip acima de `/abrir`); teste em aparelho real (Safari do iPhone, app
+  instalado, TalkBack/VoiceOver, modo avião com o service worker); revisão clínica (entrada 20).
+
+## 2026-11-26 — U7c: cor e celular nos arquivos da anamnese; lista PENDENTE vazia
+
+Convertidos na costura, depois das trilhas: página do aluno (quadro "Limitação" em atenção com ícone âmbar e texto
+`iron`; "N de M" sempre `iron`; título "Treinos recebidos nas últimas 4 semanas" no modo local; `RecordMark` no último
+treino; validade com `validityTone`/`validityIcon`; abas em grade 3×2 abaixo de `sm`, sem arrastar; links dos painéis
+com 44 px no toque), `/receber` (`RecordMark variant="icon"`), "Colar aqui" (16 px, borda `field`/`danger`, erro com
+ícone), app no celular e envio por texto da ficha (erro com ícone), cadastro completo do aluno (`aria-invalid` e
+`aria-describedby` nos campos com erro, borda e texto `danger` com ícone na autorização, "Ex.: " nos placeholders que
+parecem dado), Conta (aviso do CREF com `TriangleAlert`; "1x" a "7x" numa linha, `columns={7}`), onboarding e dieta
+(placeholders "Ex.: "), gerador (`bottom-nav-safe`). `color-usage.test.ts` fica sem PENDENTE e `grep bottom-20 src`
+volta vazio. O "000000-G/UF" do CREF continua: é a máscara do formato, não um dado.
+
+## 2026-11-26 — Integração do questionário (Entrega 1): build, medição e o que fica para o dono
+
+`tsc` limpo, 60 arquivos de teste com 1.597 testes verdes (33 s; nenhum arquivo perto de 60 s) e `next build` sem
+erro. Nenhuma correção de código foi necessária na integração. Conferido no build de produção (`next start`, 360 px):
+links da ficha e de treinos gerados pelo código de antes da rodada 2 (commit `6d39f27`) abrem e registram; o caminho
+cadastro rápido → pedido → `/questionario` → `/receber` → resumo → gerador → envio da ficha por link; modo avião com o
+service worker; alerta vermelho no junto (aviso do SAMU na hora, trava no resumo e no gerador, sem "Seguir mesmo
+assim", e a ficha só depois de registrar a liberação); retomar o link no mesmo navegador; `noindex` e `robots.txt`.
+
+**JS de `/questionario` acima da meta.** Soma gzip dos scripts citados no HTML: `/abrir` 476 KB, `/questionario`
+529 KB, ou seja, 53 KB a mais, contra a meta de 30 KB (que era ESTIMATIVA). Na primeira abertura do link num aparelho
+limpo vão 617 KB (`/abrir`: 565 KB). No "4G lento" do DevTools (1,6 Mbit/s e 150 ms), o botão "Começar" aparece em
+cerca de 3,5 s, o mesmo tempo de `/abrir`. O aparelho do aluno não aquece o service worker (nenhum cache gravado).
+
+O excesso vem de três partes:
+- o catálogo (20 KB) e o formulário (11 KB), que a spec já aceitava;
+- o fim do junto em import estático (cerca de 32 KB): resumo, diálogos de liberação, termo e apagar, triagem,
+  recepção e "Conferir antes de salvar".
+
+**Mantido, por enquanto.** O fim do junto sem rede está na lista "nunca cortar", e o `warm` só guarda o que o HTML
+cita. Se a medição em aparelho real mostrar prejuízo, o caminho é a Entrega 2:
+- carregar sob demanda o fim do junto no modo link;
+- fazer o `warm` também buscar esses pedaços.
+
+**Para o dono decidir (sem mudança agora):**
+- **A cópia de segurança não leva as marcas `sr:v1:qapagado:*`.** Restaurar uma cópia feita antes de "Apagar
+  respostas" traz as respostas de volta, porque o aparelho não tem rodada mais nova para manter. A cópia é arquivo do
+  próprio personal e restaurar é um ato explícito, mas a revogação do aluno (§11.3) fica dependendo disso. A correção
+  possível: levar as marcas na cópia e, ao restaurar, não trazer rodada marcada como apagada.
+- **Com alerta vermelho aberto, o passo "Gerar ficha com estas respostas" continua na lista de próximos passos**, com
+  [Gerar]. O botão leva ao gerador, que abre a trava; não há caminho que gere sem a liberação. Mesmo assim, pode valer
+  esconder o passo enquanto houver trava, como o bloco 3 já faz.
