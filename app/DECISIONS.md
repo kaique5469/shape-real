@@ -729,3 +729,10 @@ Testes novos (arquivos novos): `anamnese-ficha.conferir`, `questionario-completa
 `triagem.revisao`, `export.restauracao`, `questionario-link.revisao`, `student-form-state.revogar`,
 `anamnese-perfil.ia`, `questionario-apagar`. Ajustados: o vizinho negativo de A-MENOR (19 anos), o texto de
 A-SEM-TRIAGEM do menor e a integração catálogo × esquema (ano de menor leva o responsável).
+
+## 2026-11-27 — Fechamento do QA da rodada 2 (questionário)
+
+- **Passo "Gerar" com vermelho aberto (A1).** O passo não promete mais "Gerar" quando o gerador vai travar: vira "Montar a ficha de {aluno}", com a linha "Gerar com estas respostas libera depois de registrar a liberação" e o botão "Montar do zero" (o mesmo que a trava oferece). Com laranja o passo continua "Gerar", porque a porta fica dentro do gerador. Motivo: um botão que promete uma ação bloqueada ensina o personal a desconfiar do resumo.
+- **Faixa do editor depois de "Seguir mesmo assim" (A2).** A faixa "avaliação médica pendente" continua acesa até a liberação ser registrada. O override libera o gerador, mas não é liberação (spec §6.1). O passo `liberacao` some com o override, como já estava na spec §7. A faixa é o lembrete que fica.
+- **Rótulo de limitação pelo que foi escrito (A3).** A regra "idade ou artrose" passa a nomear só o que apareceu no texto ("idade", "artrose", "osteoporose", "prótese", juntos com "e"). Motivo: a spec §6.2 proíbe escrever uma condição que o aluno não marcou. O aluno de 76 anos aparecia com "idade ou artrose".
+- **Fontes no aquecimento do service worker (D2).** `warm()` lê o CSS e guarda os `.woff2` latin e latin-ext. O cache sobe para v5. Sem isso, a primeira sessão sem rede abria com a fonte reserva, mais larga, e cortava o título do cabeçalho do junto (D1). O cabeçalho agora quebra a linha em vez de sobrepor.

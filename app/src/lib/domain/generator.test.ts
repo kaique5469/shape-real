@@ -414,8 +414,13 @@ describe("10. limitações", () => {
     expect(labels("bursite")).toEqual(["ombro"]);
     expect(labels("bursite no quadril")).toEqual(["quadril"]);
     expect(labels("bursite trocantérica")).toEqual(["quadril"]);
-    expect(labels("artrose de quadril")).toEqual(["quadril", "idade ou artrose"]);
-    expect(labels("idoso com artrose")).toEqual(["idade ou artrose"]);
+    expect(labels("artrose de quadril")).toEqual(["quadril", "artrose"]);
+    expect(labels("idoso com artrose")).toEqual(["idade e artrose"]);
+    // Nunca nomear o que não foi escrito: idade sozinha não vira "artrose" (QA da rodada 2, aluno de 76 anos).
+    expect(labels("idoso")).toEqual(["idade"]);
+    expect(labels("terceira idade, joelho")).toEqual(["joelho", "idade"]);
+    expect(labels("osteopenia")).toEqual(["osteopenia"]);
+    expect(labels("prótese de quadril")).toContain("prótese");
     expect(labels("dor no punho")).toEqual(["punho"]);
     expect(labels("tendinite no punho")).toEqual(["punho"]);
     expect(labels("epicondilite")).toEqual(["cotovelo"]);

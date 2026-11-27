@@ -735,7 +735,7 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
   const cabecalhoJunto =
     aluno && (tela.t === "parte" || tela.t === "conferir") ? (
       <header className="sticky top-0 z-10 -mx-4 mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-rule bg-chalk px-4 py-2 print:hidden">
-        <p className="min-w-0 flex-1 font-semibold">{QTEXTO.juntoCabecalho(aluno.name)}</p>
+        <p className="max-w-full flex-1 break-words font-semibold">{QTEXTO.juntoCabecalho(aluno.name)}</p>
         <Button variant="secondary" size="sm" onClick={salvarDepois}>
           {QTEXTO.salvarDepois}
         </Button>

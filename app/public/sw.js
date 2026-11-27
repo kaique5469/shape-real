@@ -6,7 +6,7 @@
  * - /api e /ingest nunca passam por aqui: IA e medição de uso só existem com rede.
  * Ao mudar a lógica deste arquivo, troque VERSION para descartar os caches antigos.
  */
-const VERSION = "v4";
+const VERSION = "v5";
 const PAGES = `sr-pages-${VERSION}`;
 const ASSETS = `sr-assets-${VERSION}`;
 // /abrir e /receber: o link do WhatsApp precisa abrir mesmo sem sinal (os dados vêm no próprio link).
@@ -108,13 +108,39 @@ async function warm() {
           if (await assets.match(u)) return;
           try {
             const r = await fetch(u);
-            if (r.ok) await assets.put(u, r);
+            if (!r.ok) return;
+            if (u.endsWith(".css")) await fontsDoCss(await r.clone().text(), u, assets);
+            await assets.put(u, r);
           } catch {}
         }),
       );
     } catch {}
   }
   await trim(assets);
+}
+
+/**
+ * Fontes citadas pelo CSS (url(...) do @font-face): não aparecem no HTML, então sem isto a primeira sessão sem rede
+ * abria com a fonte reserva, mais larga, e cortava títulos a 360 px. Só latin e latin-ext (o app é pt-BR).
+ */
+async function fontsDoCss(css, cssUrl, assets) {
+  const refs = css.match(/url\(\s*["']?[^"')]+\.woff2[^"')]*["']?\s*\)/g) || [];
+  for (const ref of refs) {
+    const raw = ref.replace(/^url\(\s*["']?/, "").replace(/["']?\s*\)$/, "");
+    let font;
+    try {
+      font = new URL(raw, new URL(cssUrl, self.location.origin));
+    } catch {
+      continue;
+    }
+    if (font.origin !== self.location.origin) continue;
+    if (/vietnamese|cyrillic|greek|hebrew|math|symbols/.test(font.pathname)) continue;
+    if (await assets.match(font.pathname)) continue;
+    try {
+      const r = await fetch(font.pathname);
+      if (r.ok) await assets.put(font.pathname, r);
+    } catch {}
+  }
 }
 
 self.addEventListener("message", (event) => {

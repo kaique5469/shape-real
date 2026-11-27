@@ -37,7 +37,7 @@ import { readAnamnese } from "./questionario-link";
 import { PROBLEMA_RESUMO } from "./resumo";
 import { getSystem, suggestSystem } from "./systems";
 import { consentConfirmed } from "./transfer";
-import { motivoTetoModerado, travaEPorta } from "./triagem";
+import { alertas, motivoTetoModerado, travaEPorta } from "./triagem";
 import { resolveDefaults } from "./work-style";
 import type { ActivityLevel, Equipment, Goal, Level, MuscleGroup, Profile, Sex, SystemId } from "./types";
 
@@ -651,9 +651,16 @@ export function antesDeGerar(profile: Profile, hoje: Date): AntesDeGerar {
   return { modo: "livre" };
 }
 
-/** Faixa do editor "{Nome}: avaliação médica pendente (ver resumo)": trava ou porta abertas, ou respostas ilegíveis. */
+/**
+ * Faixa do editor "{Nome}: avaliação médica pendente (ver resumo)": trava ou porta abertas, ou respostas ilegíveis.
+ * "Seguir mesmo assim" libera o gerador, mas não é liberação (spec §6.1: a faixa vale para vermelho ou laranja sem
+ * liberação), então o laranja coberto por override continua acendendo a faixa.
+ */
 export function avaliacaoPendente(profile: Profile, hoje: Date): boolean {
-  return antesDeGerar(profile, hoje).modo !== "livre";
+  if (antesDeGerar(profile, hoje).modo !== "livre") return true;
+  const an = readAnamnese(profile);
+  if (!an || an === "versao_nova" || an === "invalida") return false;
+  return alertas(an, { hoje, liberacoes: profile.liberacoes ?? [] }).some((x) => x.nivel === "laranja" && x.coberto?.por === "override");
 }
 
 /** AAAA-MM-DD do dia no fuso do aparelho (padrão do campo "Quando?" da liberação). */

@@ -136,9 +136,19 @@ export function nextSteps(i: PassosInput): Passo[] {
       clinico: true,
     });
 
-  // 6. Gerar ficha: sem ficha ativa.
+  // 6. Gerar ficha: sem ficha ativa. Com vermelho aberto o gerador trava, então o passo não promete "Gerar":
+  // diz o que destrava e oferece só o que a trava permite (montar do zero).
+  const travado = !!an && travaEPorta(an, { hoje: i.hoje, liberacoes: p.liberacoes ?? [] }).trava.length > 0;
   if (!i.activeProgram) {
-    if (an)
+    if (an && travado)
+      passos.push({
+        id: "gerar_ficha",
+        titulo: `Montar a ficha de ${aluno}`,
+        sub: "Gerar com estas respostas libera depois de registrar a liberação.",
+        acoes: [{ tipo: "href", rotulo: "Montar do zero", href: `/alunos/${id}/ficha/nova` }],
+        clinico: false,
+      });
+    else if (an)
       passos.push({
         id: "gerar_ficha",
         titulo: "Gerar ficha com estas respostas",

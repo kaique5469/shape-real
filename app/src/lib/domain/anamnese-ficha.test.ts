@@ -105,13 +105,13 @@ describe("limitationText: cada token é reconhecido pelo motor", () => {
     ["tornozelo direito", "tornozelo ou pé"],
     ["tornozelo esquerdo", "tornozelo ou pé"],
     ["tornozelos", "tornozelo ou pé"],
-    ["artrose", "idade ou artrose"],
-    ["osteoporose", "idade ou artrose"],
+    ["artrose", "artrose"],
+    ["osteoporose", "osteoporose"],
     ["pressão alta", "pressão ou coração"],
     ["cardiopatia", "pressão ou coração"],
     ["gestante", "gestação"],
     ["pós-parto", "pós-parto"],
-    ["idoso", "idade ou artrose"],
+    ["idoso", "idade"],
   ];
 
   it.each(TABELA)("“%s” → %s", (token, label) => {

@@ -139,6 +139,8 @@ const MANUAL_ONLY = new Set([
 
 interface LimitationRule {
   label: string;
+  /** Rótulo pelo que foi escrito, quando a regra junta condições diferentes: nunca nomear o que o aluno não marcou. */
+  labelOf?: (t: string) => string;
   match: RegExp;
   unless?: RegExp;
   avoid: string[];
@@ -230,6 +232,16 @@ const LIMITATION_RULES: LimitationRule[] = [
   { label: "tornozelo ou pé", match: /tornozelo|calcanh|fascite|aquiles|canelite/, avoid: ["panturrilha_unilateral", "escada_simulador", "passada", ...IMPACT] },
   {
     label: "idade ou artrose",
+    labelOf: (t) => {
+      const partes: string[] = [];
+      if (/\bidos[oa]s?\b|terceira idade/.test(t)) partes.push("idade");
+      if (/artrose/.test(t)) partes.push("artrose");
+      if (/artrite/.test(t)) partes.push("artrite");
+      if (/osteopo/.test(t)) partes.push("osteoporose");
+      else if (/osteopen/.test(t)) partes.push("osteopenia");
+      if (/protese/.test(t)) partes.push("prótese");
+      return partes.length ? partes.join(" e ") : "idade ou artrose";
+    },
     match: /\bidos[oa]s?\b|terceira idade|artrose|artrite|osteopo|osteopen|protese/,
     avoid: [
       "agachamento_livre", "agachamento_frontal", "levantamento_terra", "levantamento_terra_sumo", "good_morning", "stiff", "remada_curvada_barra",
@@ -292,7 +304,8 @@ export function analyzeLimitations(text?: string): LimitationPlan {
   const negated = t !== raw;
   for (const rule of LIMITATION_RULES) {
     if (!rule.match.test(t) || (rule.unless && rule.unless.test(t))) continue;
-    if (!labels.includes(rule.label)) labels.push(rule.label);
+    const label = rule.labelOf ? rule.labelOf(t) : rule.label;
+    if (!labels.includes(label)) labels.push(label);
     rule.avoid.forEach((id) => avoid.add(id));
     if (rule.population) population = true;
     if (rule.minReps) for (const g of rule.groups ?? (["*"] as const)) floors.set(g, Math.max(floors.get(g) ?? 0, rule.minReps));

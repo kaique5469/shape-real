@@ -40,6 +40,10 @@ describe("gerador assistido com a triagem real", () => {
     const seguiu = comOverride(p, antes.modo === "porta" ? antes.alertas.map((a) => a.id) : [], DEPOIS);
     expect(seguiu.anamnese!.overrides).toEqual([{ at: DEPOIS, alertas: ["A-PARQ7"] }]);
     expect(antesDeGerar(seguiu, HOJE)).toEqual({ modo: "livre" });
+    // "Seguir mesmo assim" não é liberação (spec §6.1): a faixa do editor continua até a liberação registrada.
+    expect(avaliacaoPendente(seguiu, HOJE)).toBe(true);
+    const liberado = comLiberacao(seguiu, novaLiberacao({ por: "medico", data: "2026-11-23", alertas: ["A-PARQ7"], agora: DEPOIS }));
+    expect(avaliacaoPendente(liberado, HOJE)).toBe(false);
   });
 
   it("PAR-Q 5 ou 6 'sim' isolado não abre porta (só lembra o termo)", () => {

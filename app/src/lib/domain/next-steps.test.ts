@@ -224,6 +224,21 @@ describe("passo 6: gerar a ficha", () => {
     });
   });
 
+  it("com vermelho aberto: não promete 'Gerar' (o gerador trava); oferece montar do zero e volta a 'Gerar' com a liberação", () => {
+    const vermelho = anamneseBase({ parq: parq(1) });
+    expect(passo(com(vermelho), "gerar_ficha")).toEqual({
+      id: "gerar_ficha",
+      titulo: "Montar a ficha de Ana",
+      sub: "Gerar com estas respostas libera depois de registrar a liberação.",
+      acoes: [{ tipo: "href", rotulo: "Montar do zero", href: "/alunos/aluno-1/ficha/nova" }],
+      clinico: false,
+    });
+    const lib = { id: "l1", por: "medico" as const, data: "2026-11-21", alertas: ["A-PEITO" as const], registradoEm: "2026-11-21T09:00:00-03:00" };
+    expect(passo(com(vermelho, { liberacoes: [lib] }), "gerar_ficha")?.titulo).toBe("Gerar ficha com estas respostas");
+    // Laranja abre só a porta ("Seguir mesmo assim" dentro do gerador): o passo continua sendo "Gerar".
+    expect(passo(com(anamneseBase({ parq: parq(6) })), "gerar_ficha")?.titulo).toBe("Gerar ficha com estas respostas");
+  });
+
   it("sem questionário: 'Montar a ficha de {aluno}'; com ficha ativa, nada", () => {
     expect(passo(alunoBase(), "gerar_ficha")).toMatchObject({ titulo: "Montar a ficha de Ana", acoes: [{ tipo: "href", rotulo: "Montar", href: "/alunos/aluno-1/ficha/nova" }] });
     expect(idsDe(alunoBase(), { activeProgram: ficha })).not.toContain("gerar_ficha");
