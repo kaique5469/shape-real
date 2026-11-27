@@ -736,3 +736,158 @@ A-SEM-TRIAGEM do menor e a integração catálogo × esquema (ano de menor leva 
 - **Faixa do editor depois de "Seguir mesmo assim" (A2).** A faixa "avaliação médica pendente" continua acesa até a liberação ser registrada. O override libera o gerador, mas não é liberação (spec §6.1). O passo `liberacao` some com o override, como já estava na spec §7. A faixa é o lembrete que fica.
 - **Rótulo de limitação pelo que foi escrito (A3).** A regra "idade ou artrose" passa a nomear só o que apareceu no texto ("idade", "artrose", "osteoporose", "prótese", juntos com "e"). Motivo: a spec §6.2 proíbe escrever uma condição que o aluno não marcou. O aluno de 76 anos aparecia com "idade ou artrose".
 - **Fontes no aquecimento do service worker (D2).** `warm()` lê o CSS e guarda os `.woff2` latin e latin-ext. O cache sobe para v5. Sem isso, a primeira sessão sem rede abria com a fonte reserva, mais larga, e cortava o título do cabeçalho do junto (D1). O cabeçalho agora quebra a linha em vez de sobrepor.
+
+## 2026-11-27 — Rodada M, fase M-A: JS fora do caminho crítico e service worker
+
+Itens RM-01 a RM-05 da spec da Rodada M. Nenhuma tela mudou. Números MEDIDOS no build local (Android médio emulado,
+pares intercalados contra o HEAD 11de1ab, kit `M/m-verif`), salvo indicação.
+
+- **VERSION do service worker continua "v5" (RM-01).** O formato dos caches não mudou. A entrada nova
+  `/hoje?aquecimento` em sr-pages (a marca do último aquecimento completo) não exige trocar a versão. Trocar faria todos
+  os aparelhos baixarem as 14 telas de novo. Efeito visível: depois de um aquecimento completo, sr-pages tem 15 entradas
+  (14 telas + a marca). Quem conta "14 telas" conta os caminhos do CORE, não o total de entradas.
+- **Aquecimento depois da conversão (RM-01).** O SW continua registrado no load. O "warm" sai no primeiro gatilho entre:
+  primeira navegação interna terminada + ocioso (no máximo 3 s) + 3 s; 20 s depois do load sem navegação; página oculta.
+  Nunca sem rede, com economia de dados ou em 2g/slow-2g, e a regra do questionário sem perfil continua. A situação é
+  avaliada no momento do gatilho, não no load. Motivo: no load, o aquecimento disputava a banda com "Salvar no meu
+  celular". Toque até "Começar treino" clicável: 2,29 s na base contra 1,24 s (faixa 1,11–1,37); sem SW, 0,93 s.
+  A cobertura continua: as 14 telas guardadas 9,7 s depois do toque. Quem fecha o app antes de 20 s fica coberto pelo
+  gatilho da página oculta e pelo "guardar-esta", e, se o sistema encerrar o SW no meio do aquecimento, pela próxima
+  abertura (ver "Trava de 6 h" abaixo).
+- **A regra do questionário sem perfil vale também para a página do load (revisão).** O gatilho (a) dispara depois de
+  uma navegação interna, então a página do gatilho já pode ser outra: o aluno do link que tocava "Saiba mais" no
+  rodapé do questionário ia para /privacidade, e o warm saía (MEDIDO: 14 de 14 telas e 52 arquivos no plano de dados de
+  quem só abriu o questionário; na base, 0). Agora o `PwaRegister` guarda a página do load, e o bloqueio vale se ela ou
+  a do gatilho for o questionário sem perfil. Os perfis continuam lidos no gatilho: quem criou um perfil depois aquece.
+  Conferido no navegador: 0 de 14 telas, `sr:sw-warm` vazio, só a cópia do próprio questionário (guardar-esta).
+- **Trava de 6 h só com a marca do aquecimento completo (revisão).** O `sr:sw-warm` é gravado quando o pedido sai, não
+  quando o aquecimento termina. Com a página oculta logo depois de "Salvar no meu celular" e o SW encerrado 1,2 s depois
+  (o iOS faz isso em segundo plano), ficavam 2 de 14 telas por 6 h, e /sessao, /treinos e /historico mostravam "Esta
+  tela ainda não foi aberta" sem sinal. Agora o app confere `/hoje?aquecimento` (`caches.match`) no gatilho: sem a
+  marca, o pedido recente não trava. Sem Cache API legível, vale a trava de sempre. Para não somar aquecimentos, o SW
+  atende um de cada vez: um pedido que chega no meio espera o que está correndo. Custo aceito: se uma tela do CORE falhar
+  sempre, cada carregamento pede um aquecimento (só os HTML, ~46 KB; os arquivos já guardados não são baixados de novo).
+  Conferido no navegador: na abertura seguinte, 14 de 14 telas, a marca e 52 arquivos.
+- **O aquecimento não baixa o polyfill noModule** (38,7 KB a menos; 0 KB medido) e baixa 3 arquivos de cada vez, com
+  prioridade baixa. Primeiro acesso por /abrir em 30 s: 1059 → 962 KB, as duas contando a fonte latin-ext do CSS
+  (os 120 KB do PostHog só mudaram de lugar).
+- **O aquecimento lê as fontes de todo CSS, mesmo já guardado (integração).** O "guardar-esta" guarda o CSS da tela sem
+  as fontes, de propósito (o aluno do questionário não baixa o app inteiro). Depois dele, o aquecimento achava o CSS no
+  cache e pulava a leitura das fontes: a latin-ext ficava de fora (MEDIDO: sr-assets só com a latin, a que a página
+  usou; na base, as duas), e a primeira sessão sem rede voltava à fonte reserva fora do latin (o D2 da rodada 2). Agora
+  o warm lê as fontes de todo CSS, guardado ou não; fonte já guardada não é baixada de novo.
+- **Trim por uso, não por ordem de inserção (revisão; o defeito já existia).** O cache de arquivos apagava os mais
+  antigos ao passar de 320. Arquivo que não muda entre deploys nunca é regravado, e o VERSION não muda mais a cada
+  deploy, então em ~20 deploys (ESTIMADO) o CSS e os chunks do /hoje guardado seriam apagados e a tela abriria sem sinal
+  e sem botões (MEDIDO na simulação da revisão: 12 de 21 arquivos do /hoje apagados, 0 botões hidratados). Agora só sai,
+  do mais antigo para o mais novo, o arquivo de /_next/static que nenhum HTML de sr-pages cita, nem como fonte de um CSS
+  citado (chunks de deploys antigos, o polyfill noModule, `import()` que nenhuma tela guardada pede). Ícones ficam. Se
+  tudo estiver em uso, o cache passa do teto: melhor que uma tela guardada quebrada. Na mesma simulação: 320 arquivos,
+  nenhum em uso apagado (só falta o polyfill noModule, que nunca é guardado) e /hoje abre sem sinal com "Começar treino"
+  e 22 botões hidratados.
+- **Reaquecimento de 6 h compara com a marca do último aquecimento completo**, e não com a cópia de /hoje. Motivo:
+  /hoje é rede primeiro e vive aberta, então a cópia dela já teria o deploy novo e esconderia as outras 13 telas
+  desatualizadas. Sem deploy, só /hoje sai do SW (conferido pelo proxy: 1 pedido, nenhum arquivo); com a marca
+  diferente, as 14 telas.
+- **HTML guardado em 400 ms (RM-02).** Com cópia guardada, a rede tem 400 ms (antes 2,5 s) para entregar o HTML inteiro.
+  A resposta atrasada continua atualizando a cópia, agora com o SW mantido vivo até gravar. Risco aceito: em rede lenta,
+  o HTML de um deploy atrás aparece mais vezes. O RM-26 resolve. Abrir /hoje com sinal fraco: 2,93 → 0,79 s até
+  "Começar treino".
+- **Os limites de 400 ms e 1,5 s contam até o fim do corpo (revisão).** Antes valiam até o cabeçalho: com perda depois do
+  primeiro pacote (o cabeçalho chega e o corpo fica preso), o SW entregava a resposta travada e a cópia nunca era usada.
+  Agora o HTML e o RSC só ganham da cópia com o corpo inteiro (o RSC tem ~10 KB; a resposta devolvida é a original, já
+  lida pelo clone, com `url` e `redirected`). Custo: o HTML e o RSC de rede deixam de chegar aos pedaços nesses 400 ms e
+  1,5 s. As 14 telas do CORE são estáticas. MEDIDO (proxy da revisão, corpo preso 10 s, 2 pares intercalados): /hoje até
+  "Começar treino" 0,72–0,79 s (base 10,4–10,5 s); "Começar treino" até "Série 1 feita" 2,26–2,32 s (base 10,2 s); menu
+  Treinos 2,15–2,22 s (base 10,1 s). No modelo do kit (resposta inteira presa), os mesmos números de antes.
+- **Limite de 1,5 s no RSC da navegação (RM-02).** Só quando há cópia daquele caminho em sr-pages e a página que pede está
+  em outro caminho (ver abaixo), e conta até o fim do corpo. Estourou: o SW devolve erro de rede e o Next 16.4.6 cai na navegação completa, servida da cópia. Sem cópia,
+  rede sem limite. Depende de `experimental.useOffline` desligado: com ele ligado, o Next esperaria a conexão em vez de
+  recarregar. Sinal fraco: "Começar treino" até "Série 1 feita" 7,7 → 2,4 s; menu Treinos 5,4 → 2,2 s. Com rede normal,
+  nenhuma navegação interna virou recarga (17 toques, também durante o aquecimento) e o console não mostrou "Failed to
+  fetch RSC payload". Risco (a) da spec conferido: sair do treino no meio com sinal fraco recarrega /hoje pela cópia
+  (2,3 s) e "Continuar treino" volta com a série 1 marcada (o rascunho fica no localStorage).
+- **RSC da mesma tela sem limite (revisão).** Uma troca só de busca (`router.replace` na sessão, `?aba=`) virava recarga
+  com o RSC acima de 1,5 s. Na sessão, "Continuar aquele treino" (rascunho de mais de 6 h) troca a URL; a recarga
+  perguntava de novo, em laço, e o rascunho de ontem nunca reabria em rede lenta (MEDIDO: 3 de 3 toques recarregavam;
+  na base, abria na hora). Agora o SW lê a página que pediu (`event.clientId` → `clients.get`) e, no mesmo caminho,
+  deixa a rede sem limite, como a base. Conferido: rede lenta (2 s por resposta), abre sem recarga e sem a pergunta, na
+  base e em M-A. **Fica para a costura de M-B:** sem sinal, o mesmo toque ainda entra em laço, na base e em M-A (o RSC
+  falha, o Next recarrega, a tela pergunta de novo). A correção é na tela (`resumeSaved` em `sessao/page.tsx`:
+  `history.replaceState` no lugar de `router.replace`, ou marcar o rascunho como retomado), fora dos arquivos de M-A e
+  numa tela que a rodada 3 muda.
+- **Desvio da spec: o prefetch do roteador não passa pelo SW (integração).** A spec fala em "um GET … com RSC", e a trilha
+  aplicava o limite também ao prefetch. Medido com sinal fraco: cada prefetch abortado em 1,5 s liberava a vez para os
+  prefetches das telas sem cópia, que disputavam a banda com o toque. O personal tocando num aluno nunca aberto passou de
+  11,8 s para mais de 20 s (coach-liefi), e de 5,6 para 13,6 s depois do toque no modelo do proxy. Além disso, o prefetch
+  das telas guardadas nunca terminava, então toda navegação custava limite + recarga, mesmo depois de minutos na tela.
+  Agora o prefetch (cabeçalho `Next-Router-Prefetch`) segue direto para a rede, como antes. O aluno nunca aberto voltou
+  a 11,9–12,0 s; do goto até o aluno aberto, 10,5 s nos dois (o limite é a banda). E, depois de 30 s numa tela com o menu, o
+  toque seguinte abre em ~60 ms pelo prefetch pronto, contra 2,2 s + recarga com o limite no prefetch. A navegação cria o
+  próprio pedido RSC mesmo com o prefetch pendente, e esse pedido continua com o limite. Os tempos do sinal fraco acima
+  já são com este ajuste.
+- **"guardar-esta" (RM-04).** No carregamento que não passou pelo SW, em qualquer rota, o app pede ao SW que guarde a tela
+  (só o caminho, sem busca nem #) e os arquivos /_next/static e .woff2 que ela já baixou (do cache HTTP). Não segue a
+  regra do questionário sem perfil (custa só o HTML) e não lê as fontes do CSS. Resposta com redirecionamento nunca é
+  guardada. Medido: o aluno que abriu o questionário uma vez reabre sem sinal com "Continuar de onde parei" (sr-pages 1,
+  sr-assets 21, sem aquecimento).
+- **PostHog depois do load + 3 s + ocioso (RM-03).** O SDK sai do primeiro carregamento: −119,5 KB por rota (medida do tech lead sobre o
+  c6bd5e6; com o RM-05, −181,8 a −183,0 KB aqui). Os eventos de quem fecha a aba antes disso se perdem: a fila fica só em memória, com teto de 200
+  chamadas e 20 erros não tratados. Isso inclui as recargas do RM-02: com sinal fraco, uma navegação interna pode virar
+  recarga, e a página que vive menos que load + 3 s + ocioso perde a $pageview e o que esperava na fila (MEDIDO pela
+  revisão, recarga 1,5 s depois do load em /abrir e /questionario: 1 $pageview em M-A, 2 na base; eventos de produto
+  iguais no roteiro do questionário). Não guardamos a fila no aparelho para reenviar no próximo carregamento: seria um
+  armazenamento novo de dados de medição (proibido para o aluno do link, que é justamente quem abre por link com sinal
+  fraco), com risco de evento duplicado na volta do bfcache, e mais código em toda rota, com o peso já 2 KB acima da
+  medida do tech lead. Efeito esperado (ESTIMADO): funis com menos registros nas sessões de sinal fraco. Não há
+  economia de dados (os ~120 KB vêm depois do load).
+- **Nova tentativa do SDK também com a rede ligada (revisão).** Antes só no evento `online`, que só dispara na passagem
+  de sem rede para com rede: um import que falhasse com a rede ligada (sinal instável; chunk antigo com 404 depois de um
+  deploy, com o HTML velho vindo do SW em 400 ms) deixava a medição desligada até recarregar, e a fila enchia. Agora
+  `nova-tentativa.ts` tenta de novo no `online`, quando a página volta a ficar visível e depois de 15 s, 60 s e 5 min
+  (depois disso, só pelos eventos). O mesmo vale para o módulo da nuvem em app-context.tsx. MEDIDO (os 2 chunks com 503
+  nas 2 primeiras tentativas, rede ligada): novo pedido em 18,4 s (load + 15 s) e eventos a partir de 18,5 s; antes,
+  nenhum pedido em 45 s.
+- **Erros não tratados entre o init e a captura automática do SDK (revisão).** A captura automática do posthog-js chega
+  num arquivo à parte (/ingest/static/exception-autocapture.js), pedido ~3,1 s depois do load, e só então embrulha o
+  `window.onerror`. Entre o init e ela, e para sempre se ela não vier (sinal fraco), nada capturava. Agora os ouvintes
+  de instrumentation-client.ts ficam depois do init e mandam direto para o SDK (`captureException`, `handled: false`)
+  até `window.__PosthogExtensions__.errorWrappingFunctions` existir; daí saem, para não mandar duas vezes. MEDIDO: erro
+  6,0 s depois do load (extensão abortada) sai, com o horário dele; antes, não saía. A ausência de duplicata com a
+  extensão ligada é coberta por teste (ESTIMADO no navegador: a regra do kit aborta /ingest, inclusive a extensão). Medido: o SDK é pedido 3,0 s depois do load e o primeiro pedido a /ingest sai ~3,1 s depois
+  (na base, antes do load); nenhuma chave `ph_` em /questionario#d=.
+- **A $pageview da abertura é nossa (RM-03).** Ela sai com a URL e o horário de quando a página abriu (sem `?k=` e sem
+  `#`). A do SDK é descartada uma vez por uma trava no `capture` público, porque a trava interna do SDK tem o nome
+  encurtado no pacote publicado (um teste lê o pacote e falha se a forma mudar). Página que muda dentro da fila ganha uma
+  $pageview com o horário da primeira chamada dela; página visitada antes do SDK sem nenhuma chamada fica sem $pageview.
+  `title`, `$prev_pageview_*` e `$initial_current_url` são os da hora do envio, aproximados.
+- **Exceções que esperaram na fila saem com o horário da ação (revisão).** O `captureException` não aceita horário, mas
+  chama o `capture` da própria instância na mesma hora: só durante a chamada, o `capture` acrescenta `timestamp` ao
+  `$exception` e volta a ser o de antes (um teste lê o pacote publicado e falha se a forma mudar). MEDIDO: erro de
+  /receber 0,40 s depois do load sai com horário de 0,401 s (antes, 3,12 s). A página (`$current_url`/`$pathname`) é a
+  da ação. Erro de /questionario ou /receber enviado depois de a pessoa sair da tela sai
+  só com o tipo e o código, sem a pilha, porque o `before_send` olha a página atual. As regras (telas de respostas,
+  código e tipo) vêm de `questionario-base.ts`, as mesmas de `limparEventoPosthog`.
+- **O teto de 200 vale só para os eventos (revisão).** `identify`, `resetIdentity` e `setContext` têm teto próprio de 50:
+  com a fila cheia de eventos (sessão longa sem rede), um `register` perdido deixava o contexto velho em todos os
+  eventos seguintes, e um `reset` perdido ligava os eventos depois de "Sair" à conta anterior. No uso normal são poucos
+  (login, saída, mudança de modo).
+- **Nenhuma propriedade nova na medição.** O horário e a página vão em campos que o SDK já manda (`timestamp`,
+  `$current_url`, `$pathname`, `$referrer`). O init do PostHog é o mesmo de antes, linha por linha.
+- **supabase-js só com a nuvem configurada (RM-05).** −65 KB por rota (tech lead); neste deploy o módulo nunca é pedido. Com a nuvem
+  ligada e o import falhando (sem rede, arquivo fora do aparelho), o app abre com o perfil guardado (`cachedSelf`) e um
+  repositório que responde "Sem conexão…" a toda leitura e gravação, nunca com o armazenamento local; a entrada tenta de
+  novo no `online`. Sair da conta sem o módulo vale só neste aparelho. Telas com `.catch(() => [])` mostram lista vazia
+  nesse caso: quando a nuvem for ligada, o módulo tem que entrar na pré-carga (RM-12).
+- **Peso: −181,8 a −183,0 KB por rota, não −184 (desvio pequeno).** As duas bibliotecas saíram inteiras (nenhuma rota de
+  link nem /entrar carrega posthog-js ou @supabase antes do load). Os ~2,6 KB de diferença para a medição do tech lead
+  são, por conta (ESTIMADO), o código novo que entra em toda rota: gatilhos e "guardar-esta" (RM-01/RM-04) e a fila com a $pageview da
+  abertura (RM-03). Rotas: / 219,7; /entrar 260,0; /abrir 258,6; /questionario 316,3; /receber 296,0 KB.
+- **Kit: a conferência de privacidade da medição não via eventos (revisão).** Com o user agent padrão (HeadlessChrome) e
+  `navigator.webdriver`, o posthog-js 1.453.2 descarta todo evento como robô: os "72 pedidos a /ingest sem dado
+  sensível" eram só /flags, a config e a extensão, e a frase da integração "com /ingest abortado o SDK não manda evento"
+  estava errada. `posthog-check.js`, `posthog-corpo.js` e `e2e/questionario.js` agora usam user agent de Android e
+  `webdriver` falso. Com eventos de verdade, nenhum vazamento (ver os números da revisão final abaixo).
+- **Medição local, não na Vercel.** Local, o servidor responde na hora, e a conversão no /abrir da base já fica em 2,29 s
+  (Vercel 4,70 s). A meta de 2,2 s passa com folga mesmo contra a referência local (controle sem SW + 0,35 s ≈ 1,3 s:
+  1,24 s). Android médio + SW, /hoje até "Começar treino": 1,50 → 1,22 s (meta 1,3 s).

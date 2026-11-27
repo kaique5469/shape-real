@@ -1,12 +1,14 @@
 "use client";
 
-import posthog from "posthog-js";
+import type { PostHog } from "posthog-js";
 
 import type { Alimentacao, Atendimento, SecaoId } from "@/lib/domain/anamnese-types";
 import type { FichaSendSituation, FichaVersao, PrepVia } from "@/lib/domain/delivery";
+import { CODIGO, ehTelaDeRespostas, TIPO } from "@/lib/questionario-base";
 
 /**
- * Eventos de produto e erros (PostHog, iniciado em src/instrumentation-client.ts).
+ * Eventos de produto e erros (PostHog). O SDK chega depois do primeiro carregamento (src/instrumentation-client.ts e
+ * src/lib/posthog-init.ts); até lá as chamadas esperam numa fila curta, na ordem (rodada M, RM-03).
  * Sem NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN nada é enviado: em desenvolvimento os eventos aparecem no console.
  * Regras: nunca envie dados de saúde (peso, medidas, dieta) nem derivados deles (ex.: a nota da dieta), nomes,
  * telefones, cargas ou texto digitado pelo usuário nas propriedades — só contagens, booleanos, opções escolhidas
@@ -288,14 +290,152 @@ export function cleanProps(event: EventName, props: TrackProps): TrackProps {
 
 type TrackArgs<E extends EventName> = E extends keyof StrictEventProps ? [props: StrictEventProps[E]] : [props?: TrackProps];
 
-/** Analytics nunca quebra nem atrasa o app. */
-function safely(fn: () => void) {
-  if (typeof window === "undefined" || !enabled) return;
+// ---- SDK depois do primeiro carregamento (rodada M, RM-03) ---------------------------------------------------------
+// O posthog-js (~120 KB gzip) é baixado 3 s depois do `load`, quando o navegador fica ocioso. Até lá cada chamada
+// espera numa fila, com o horário e a página da ação, e é aplicada na ordem quando o SDK iniciar. A fila só guarda o
+// que a chamada já mandaria: as propriedades são as mesmas, e o horário e a página vão nos campos do próprio SDK
+// (`timestamp` do capture, `$current_url` e `$pathname`), que de outro modo seriam os da hora do envio.
+
+/** Abertura da página, lida em instrumentation-client.ts antes de a página mexer na barra (limpar o `#d=`, redirecionar). */
+export interface InicioDaPagina {
+  /** URL da abertura, já sem `?k=` e sem `#`. */
+  url: string;
+  pathname: string;
+  /** `document.referrer`, já sem `?k=` e sem `#` ("" quando não há). */
+  referrer: string;
+  em: Date;
+}
+
+/** Erro não tratado antes de o SDK chegar (window error e unhandledrejection, até 20, em instrumentation-client.ts). */
+export interface ErroCedo {
+  erro: unknown;
+  em: Date;
+  /** Página do erro, já sem `?k=` e sem `#`. */
+  url: string;
+  pathname: string;
+}
+
+/** Uma chamada feita antes do SDK: o que fazer e o horário e a página em que aconteceu. */
+interface Chamada {
+  em: Date;
+  url: string;
+  pathname: string;
+  fazer: (p: PostHog, c?: Chamada) => void;
+}
+
+/**
+ * - `evento`: capture e captureException (o volume da fila);
+ * - `estado`: identify, reset e register. Perder um deles muda todos os eventos seguintes (contexto velho, eventos
+ *   ligados à conta anterior), então não disputam o teto com os eventos.
+ */
+type TipoDeChamada = "evento" | "estado";
+
+/** Teto de eventos na fila: passou disso, o evento se perde (a medição nunca segura memória do app). */
+export const MAX_FILA = 200;
+/** Teto à parte para identify, reset e register. No uso normal são poucos (login, saída, mudança de contexto). */
+export const MAX_FILA_ESTADO = 50;
+
+let posthog: PostHog | null = null;
+const fila: Chamada[] = [];
+const naFila: Record<TipoDeChamada, number> = { evento: 0, estado: 0 };
+const TETO: Record<TipoDeChamada, number> = { evento: MAX_FILA, estado: MAX_FILA_ESTADO };
+
+/** Tira da URL a chave do link de teste (`?k=`) e tudo depois do "#" (onde viajam ficha, dieta e respostas). */
+export function semChaveNemFragmento(href: string): string {
+  try {
+    const url = new URL(href, window.location.origin);
+    url.searchParams.delete("k");
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return href.replace(/#.*$/, "").replace(/([?&])k=[^&#]*/g, "$1");
+  }
+}
+
+/** Página da ação nos campos do SDK (só para o que esperou na fila; depois do init o SDK lê a página atual). */
+function naPagina(c: Chamada | undefined) {
+  return c ? { $current_url: c.url, $pathname: c.pathname } : {};
+}
+
+// As regras são as de limparEventoPosthog (questionario-base.ts): telas que abrem respostas, código nosso e tipo do erro.
+/**
+ * Erro de /questionario ou /receber que esperou na fila e sai depois de a pessoa deixar a tela: o before_send olha a
+ * página ATUAL e não limparia. Sai como sairia lá: o tipo, a mensagem só se for um código nosso, e sem a pilha (o texto
+ * dela repete a mensagem).
+ */
+function comoNaTelaDoErro(erro: Error, pathname: string): Error {
+  if (!ehTelaDeRespostas(pathname) || ehTelaDeRespostas(window.location.pathname)) return erro;
+  const limpo = new Error(CODIGO.test(erro.message) ? erro.message : "");
+  limpo.name = TIPO.test(erro.name) ? erro.name : "Error";
+  limpo.stack = limpo.message ? `${limpo.name}: ${limpo.message}` : limpo.name;
+  return limpo;
+}
+
+function aplicar(fn: () => void) {
   try {
     fn();
   } catch {
     /* segue o jogo */
   }
+}
+
+/**
+ * Exceção que esperou na fila sai com o horário da ação. O `captureException` não aceita horário, mas chama o `capture`
+ * da própria instância, na mesma hora (posthog-js: `sendExceptionEvent` → `this._instance.capture("$exception", …)`):
+ * só durante a chamada, o `capture` acrescenta `timestamp` ao `$exception`, e volta a ser o de antes.
+ */
+function comHorario(p: PostHog, em: Date, enviar: () => void) {
+  const antes = p.capture;
+  p.capture = function (this: PostHog, ...args: Parameters<PostHog["capture"]>) {
+    const [evento, props, opcoes] = args;
+    return antes.call(this, evento, props, evento === "$exception" ? { ...opcoes, timestamp: em } : opcoes);
+  } as PostHog["capture"];
+  try {
+    enviar();
+  } finally {
+    p.capture = antes;
+  }
+}
+
+/** Analytics nunca quebra nem atrasa o app. */
+function safely(fn: (p: PostHog, c?: Chamada) => void, tipo: TipoDeChamada = "evento") {
+  if (typeof window === "undefined" || !enabled) return;
+  if (posthog) return aplicar(() => fn(posthog!));
+  if (naFila[tipo] >= TETO[tipo]) return;
+  aplicar(() => {
+    fila.push({ em: new Date(), url: semChaveNemFragmento(window.location.href), pathname: window.location.pathname, fazer: fn });
+    naFila[tipo]++;
+  });
+}
+
+/**
+ * O SDK iniciou (posthog-init.ts). Manda a $pageview da abertura com a URL e o horário capturados no módulo; depois os
+ * erros de antes do SDK e a fila, na ordem dos horários, cada um com o horário e a página da ação (e uma $pageview
+ * quando a página muda, como o SDK faria na navegação); por fim a página atual, se for outra. Daí em diante as chamadas
+ * vão direto para o SDK.
+ */
+export function anexarPosthog(p: PostHog, inicio: InicioDaPagina, cedo: readonly ErroCedo[]) {
+  const erros: Chamada[] = cedo.map((e) => ({
+    em: e.em,
+    url: e.url,
+    pathname: e.pathname,
+    fazer: (q, c) => comHorario(q, e.em, () => q.captureException(comoNaTelaDoErro(e.erro instanceof Error ? e.erro : new Error(String(e.erro)), e.pathname), { handled: false, ...naPagina(c) })),
+  }));
+  const chamadas = [...fila.splice(0), ...erros].sort((a, b) => a.em.getTime() - b.em.getTime());
+  naFila.evento = naFila.estado = 0;
+  let pagina: string | null = null;
+  const vista = (v: { url: string; pathname: string; em?: Date }, extra: Record<string, string> = {}) => {
+    if (v.pathname === pagina) return;
+    pagina = v.pathname;
+    aplicar(() => p.capture("$pageview", { $current_url: v.url, $pathname: v.pathname, ...extra }, v.em ? { timestamp: v.em } : undefined));
+  };
+  vista(inicio, inicio.referrer ? { $referrer: inicio.referrer } : {});
+  for (const c of chamadas) {
+    vista(c);
+    aplicar(() => c.fazer(p, c));
+  }
+  vista({ url: semChaveNemFragmento(window.location.href), pathname: window.location.pathname });
+  posthog = p;
 }
 
 /** Evento de produto. Os eventos de StrictEventProps exigem as propriedades do contrato. */
@@ -306,22 +446,22 @@ export function track<E extends EventName>(event: E, ...args: TrackArgs<E>) {
     if (process.env.NODE_ENV !== "production") console.debug("[track]", event, props);
     return;
   }
-  safely(() => posthog.capture(event, props));
+  safely((p, c) => (c ? p.capture(event, { ...props, ...naPagina(c) }, { timestamp: c.em }) : p.capture(event, props)));
 }
 
 /** Conta real (login): liga os eventos ao id estável do usuário. Sem e-mail nem nome. */
 export function identify(userId: string, props: { role?: string } = {}) {
-  safely(() => posthog.identify(userId, props));
+  safely((p) => p.identify(userId, props), "estado");
 }
 
 /** Saída de uma conta identificada: os próximos eventos voltam a ser anônimos. */
 export function resetIdentity() {
-  safely(() => posthog.reset());
+  safely((p) => p.reset(), "estado");
 }
 
 /** Contexto que acompanha todos os eventos seguintes (modo do app, papel, visão do personal como aluno). */
 export function setContext(props: Props) {
-  safely(() => posthog.register(props));
+  safely((p) => p.register(props), "estado");
 }
 
 /**
@@ -334,7 +474,11 @@ export function reportError(error: unknown, where: string, props: Props = {}) {
     if (process.env.NODE_ENV !== "production") console.debug("[erro]", where, error);
     return;
   }
-  safely(() => posthog.captureException(error instanceof Error ? error : new Error(typeof error === "string" ? error : "Erro desconhecido"), { where, handled: true, ...props }));
+  const erro = error instanceof Error ? error : new Error(typeof error === "string" ? error : "Erro desconhecido");
+  safely((p, c) => {
+    if (!c) return void p.captureException(erro, { where, handled: true, ...props });
+    comHorario(p, c.em, () => p.captureException(comoNaTelaDoErro(erro, c.pathname), { where, handled: true, ...props, ...naPagina(c) }));
+  });
 }
 
 /** Erro que derrubou uma tela (capturado por um error boundary, que impede a captura automática). */
@@ -344,5 +488,9 @@ export function reportCrash(error: unknown, where: string) {
     if (process.env.NODE_ENV !== "production") console.debug("[falha]", where, error);
     return;
   }
-  safely(() => posthog.captureException(error instanceof Error ? error : new Error(String(error)), { where, handled: false }));
+  const erro = error instanceof Error ? error : new Error(String(error));
+  safely((p, c) => {
+    if (!c) return void p.captureException(erro, { where, handled: false });
+    comHorario(p, c.em, () => p.captureException(comoNaTelaDoErro(erro, c.pathname), { where, handled: false, ...naPagina(c) }));
+  });
 }

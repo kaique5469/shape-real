@@ -46,8 +46,11 @@ export function ehPaginaQuestionario(pathname: string): boolean {
   return /^\/questionario\/?$/.test(pathname);
 }
 
-/** Telas que abrem respostas de questionário: erros não tratados delas saem sem o valor (spec §11.3). */
-function ehTelaDeRespostas(pathname: string): boolean {
+/**
+ * Telas que abrem respostas de questionário: erros não tratados delas saem sem o valor (spec §11.3). Também usada pela
+ * fila de analytics.ts, para o erro que esperou o SDK e sai depois de a pessoa deixar a tela.
+ */
+export function ehTelaDeRespostas(pathname: string): boolean {
   return /^\/(?:questionario|receber)\/?$/.test(pathname);
 }
 
@@ -64,10 +67,10 @@ export function persistenciaPosthog(l: LocalPagina): "memory" | "localStorage" {
 }
 
 /** Código nosso (`new Error("rascunho_invalido")`): letras minúsculas, números e "_", sem espaço nem valor. */
-const CODIGO = /^[a-z][a-z0-9_]{0,39}$/;
+export const CODIGO = /^[a-z][a-z0-9_]{0,39}$/;
 const ehCodigo = (v: unknown): v is string => typeof v === "string" && CODIGO.test(v);
 /** Nome do tipo do erro ("TypeError", "ZodError"); qualquer outra coisa vira "Error". */
-const TIPO = /^[A-Za-z_$][\w$.]{0,60}$/;
+export const TIPO = /^[A-Za-z_$][\w$.]{0,60}$/;
 const semFragmento = (v: unknown) => (typeof v === "string" ? v.replace(/#.*$/, "") : v);
 
 function limparQuadro(f: unknown): unknown {
@@ -89,7 +92,7 @@ function limparExcecao(item: unknown): unknown {
 }
 
 /**
- * Última passada no `before_send` (depois da limpeza de URL e de `href` que já existe em `instrumentation-client.ts`).
+ * Última passada no `before_send` (depois da limpeza de URL e de `href` que já existe em `posthog-init.ts`).
  * - Na página do aluno do link (persistência "memory"): tira o IP (`$ip: null`, e `$geoip_disable` para não gravar
  *   cidade). HIPÓTESE sobre o mecanismo: a ingestão do PostHog só preenche `$ip` quando a chave não veio no evento;
  *   conferir na documentação e ligar também "Discard client IP data" no projeto (spec §11.3).
@@ -119,8 +122,12 @@ export function limparEventoPosthog<T extends { event: string; properties?: Reco
 
 /**
  * Pedir ao service worker que guarde as telas principais (`warm`)? Não em /questionario sem nenhum perfil local: o aluno
- * que só respondeu não baixa o app inteiro no plano de dados dele (spec §11.3; FATO sw.js:93, pwa.tsx:97). Como em
- * `persistenciaPosthog`, o `#d=` não é exigido: o efeito do `PwaRegister` roda depois de a página limpar a barra.
+ * que só respondeu não baixa o app inteiro no plano de dados dele (spec §11.3). Como em `persistenciaPosthog`, o `#d=`
+ * não é exigido: o gatilho do aquecimento roda depois de a página limpar a barra.
+ *
+ * Quem consulta: `bloqueioDoAquecimento` (`aquecimento.ts`), no momento do gatilho (rodada M, RM-01). Não vale para o
+ * "guardar-esta" (RM-04): esse guarda só a tela aberta (~4 KB de HTML; os arquivos saem do cache HTTP), e é o que deixa o
+ * aluno do link reabrir o questionário sem sinal.
  */
 export function deveAquecer(l: LocalPagina & { temPerfil: boolean }): boolean {
   return !(ehPaginaQuestionario(l.pathname) && !l.temPerfil);

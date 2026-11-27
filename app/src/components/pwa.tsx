@@ -1,12 +1,26 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { usePathname } from "next/navigation";
 import { CircleAlert, CircleCheck, Download, Share, WifiOff, X } from "lucide-react";
 import { Button, cx } from "@/components/ui";
 import { reportError, track } from "@/lib/analytics";
 import { useApp } from "@/lib/app-context";
+import {
+  AQUECER_DEPOIS_DA_NAVEGACAO_MS,
+  AQUECER_SEM_NAVEGACAO_MS,
+  MARCA_DO_AQUECIMENTO,
+  OCIOSO_LIMITE_MS,
+  bloqueioDoAquecimento,
+  pedidoGuardarEsta,
+  precisaDosPerfis,
+  proximoPasso,
+  type ConexaoDoAparelho,
+  type EventoAquecimento,
+  type FaseAquecimento,
+} from "@/lib/aquecimento";
 import { promptShowsAgain } from "@/lib/domain/export";
-import { deveAquecer, ehPaginaQuestionario, perfisDoAparelho } from "@/lib/questionario-base";
+import { perfisDoAparelho } from "@/lib/questionario-base";
 
 /**
  * A cópia de segurança (validação dos links, montagem do arquivo) só é carregada quando o card do iPhone
@@ -50,12 +64,153 @@ export function isIosBrowser(): boolean {
   return isIosDevice() && !isStandaloneDisplay();
 }
 
+type Pagina = { pathname: string; hash: string };
+
 /**
- * Registra o service worker (só em produção) e guarda o evento de instalação.
- * Uma vez a cada seis horas pede ao service worker que guarde as telas principais,
- * para o app abrir sem sinal mesmo em telas ainda não visitadas.
+ * Situação do aparelho no momento do gatilho: a rede, a página e os perfis podem ter mudado desde o load. A página do
+ * load entra também: a regra do questionário sem perfil não pode cair só porque o aluno navegou (ex.: "Saiba mais").
+ */
+function situacaoAgora(paginaDoLoad: Pagina, aquecimentoCompleto: boolean | null) {
+  const { pathname, hash } = window.location;
+  let ultimo = 0;
+  try {
+    ultimo = Number(localStorage.getItem(WARM_KEY) ?? 0);
+  } catch {}
+  let perfis: ReturnType<typeof perfisDoAparelho> | null = null;
+  if (precisaDosPerfis(pathname, paginaDoLoad.pathname)) {
+    try {
+      perfis = perfisDoAparelho(localStorage);
+    } catch {}
+  }
+  const conexao = (navigator as Navigator & { connection?: ConexaoDoAparelho }).connection ?? null;
+  return { agora: Date.now(), ultimoAquecimento: ultimo, aquecimentoCompleto, online: navigator.onLine, conexao, pagina: { pathname, hash }, paginaDoLoad, perfis };
+}
+
+/** A marca do último aquecimento completo está no cache do SW? null = não deu para ler (sem Cache API, bloqueada). */
+async function aquecimentoCompleto(): Promise<boolean | null> {
+  try {
+    if (typeof caches === "undefined") return null;
+    return Boolean(await caches.match(MARCA_DO_AQUECIMENTO));
+  } catch {
+    return null;
+  }
+}
+
+/** Chama `fn` quando o navegador ficar ocioso (no máximo 3 s de espera) e mais 3 s. Devolve o cancelamento. */
+function depoisDeOcioso(fn: () => void): () => void {
+  let timer: number | undefined;
+  let ocioso: number | undefined;
+  const depois = () => {
+    timer = window.setTimeout(fn, AQUECER_DEPOIS_DA_NAVEGACAO_MS);
+  };
+  if (typeof window.requestIdleCallback === "function") ocioso = window.requestIdleCallback(depois, { timeout: OCIOSO_LIMITE_MS });
+  else timer = window.setTimeout(depois, 0); // Safari: sem requestIdleCallback
+  return () => {
+    if (ocioso !== undefined) window.cancelIdleCallback?.(ocioso);
+    window.clearTimeout(timer);
+  };
+}
+
+/**
+ * Registra o service worker no load, como antes, e:
+ * - RM-04: se este carregamento não passou pelo service worker (primeira visita, ou recarga forçada), pede a ele que
+ *   guarde esta tela e os arquivos que ela já baixou ("guardar-esta"), em qualquer rota. Custa o HTML (~4 KB); os
+ *   arquivos saem do cache HTTP;
+ * - RM-01: pede o aquecimento ("warm") no primeiro gatilho de `proximoPasso` (primeira navegação interna terminada +
+ *   ocioso + 3 s; 20 s depois do load sem navegação; página oculta), se `bloqueioDoAquecimento` deixar no momento do
+ *   gatilho, com a página do load e a marca do último aquecimento completo. No load, o aquecimento disputava a banda com
+ *   o toque seguinte.
+ * Devolve a limpeza. `aoNavegar` é chamado pelo PwaRegister quando o pathname muda.
+ */
+function iniciarServiceWorker(aoNavegar: { current: (() => void) | null }): () => void {
+  const sw = navigator.serviceWorker;
+  // Página deste carregamento (o PwaRegister monta uma vez por carregamento, no layout raiz).
+  const paginaDoLoad: Pagina = { pathname: window.location.pathname, hash: window.location.hash };
+  // Lido antes do registro: na primeira instalação, o `clients.claim()` passa a controlar a página logo depois.
+  const passouPeloSw = Boolean(sw.controller);
+  let vivo = true;
+  let registro: ServiceWorkerRegistration | null = null;
+  const naFila: Array<(reg: ServiceWorkerRegistration) => void> = [];
+  const comRegistro = (fn: (reg: ServiceWorkerRegistration) => void) => (registro ? fn(registro) : void naFila.push(fn));
+
+  let fase: FaseAquecimento = "esperando";
+  let cancelarOcioso: (() => void) | null = null;
+  let semNavegacao: number | undefined;
+
+  const pedirAquecimento = () =>
+    comRegistro((reg) => {
+      void aquecimentoCompleto().then((completo) => {
+        if (!vivo || bloqueioDoAquecimento(situacaoAgora(paginaDoLoad, completo))) return;
+        reg.active?.postMessage("warm");
+        try {
+          localStorage.setItem(WARM_KEY, String(Date.now()));
+        } catch {}
+      });
+    });
+
+  const aoMudarVisibilidade = () => {
+    if (document.visibilityState === "hidden") aplicar("pagina-oculta");
+  };
+  const desligarGatilhos = () => {
+    cancelarOcioso?.();
+    cancelarOcioso = null;
+    window.clearTimeout(semNavegacao);
+    document.removeEventListener("visibilitychange", aoMudarVisibilidade);
+    aoNavegar.current = null;
+  };
+  function aplicar(evento: EventoAquecimento) {
+    const passo = proximoPasso(fase, evento);
+    fase = passo.fase;
+    if (passo.esperarOcioso) cancelarOcioso = depoisDeOcioso(() => aplicar("ocioso-depois-da-navegacao"));
+    if (passo.gatilho) {
+      desligarGatilhos();
+      pedirAquecimento();
+    }
+  }
+  aoNavegar.current = () => aplicar("navegacao-terminada");
+  document.addEventListener("visibilitychange", aoMudarVisibilidade);
+
+  const start = () => {
+    if (fase !== "pedido") semNavegacao = window.setTimeout(() => aplicar("tempo-sem-navegacao"), AQUECER_SEM_NAVEGACAO_MS);
+    sw.register("/sw.js")
+      .then(() => sw.ready)
+      .then((reg) => {
+        if (!vivo) return;
+        registro = reg;
+        if (!passouPeloSw) {
+          const recursos = performance.getEntriesByType("resource").map((e) => e.name);
+          reg.active?.postMessage(pedidoGuardarEsta(window.location.pathname, recursos, window.location.origin));
+        }
+        for (const fn of naFila.splice(0)) fn(reg);
+      })
+      .catch(() => {
+        /* sem service worker o app segue funcionando com rede */
+      });
+  };
+  if (document.readyState === "complete") start();
+  else window.addEventListener("load", start, { once: true });
+
+  return () => {
+    vivo = false;
+    desligarGatilhos();
+    window.removeEventListener("load", start);
+  };
+}
+
+/**
+ * Registra o service worker (só em produção) e guarda o evento de instalação. O aquecimento das telas principais e a
+ * cópia da tela aberta ficam em `iniciarServiceWorker`.
  */
 export function PwaRegister() {
+  const pathname = usePathname();
+  const pathnameInicial = useRef(pathname);
+  const aoNavegar = useRef<(() => void) | null>(null);
+
+  // Uma navegação interna terminou: o pathname mudou depois da montagem (o layout raiz não desmonta entre telas).
+  useEffect(() => {
+    if (pathname !== pathnameInicial.current) aoNavegar.current?.();
+  }, [pathname]);
+
   useEffect(() => {
     const onPrompt = (e: Event) => {
       e.preventDefault();
@@ -84,41 +239,11 @@ export function PwaRegister() {
       }
     } catch {}
 
-    if (process.env.NODE_ENV === "production" && "serviceWorker" in navigator) {
-      const start = () => {
-        navigator.serviceWorker
-          .register("/sw.js")
-          .then(() => navigator.serviceWorker.ready)
-          .then((reg) => {
-            let last = 0;
-            try {
-              last = Number(localStorage.getItem(WARM_KEY) ?? 0);
-            } catch {}
-            if (Date.now() - last < 6 * 3_600_000 || !navigator.onLine) return;
-            // Aluno que só abriu o questionário (sem perfil neste aparelho): não baixa o app inteiro no plano de dados.
-            const { pathname, hash } = window.location;
-            if (ehPaginaQuestionario(pathname)) {
-              let perfis = { temPerfil: false, temPerfilPersonal: false };
-              try {
-                perfis = perfisDoAparelho(localStorage);
-              } catch {}
-              if (!deveAquecer({ pathname, hash, ...perfis })) return;
-            }
-            reg.active?.postMessage("warm");
-            try {
-              localStorage.setItem(WARM_KEY, String(Date.now()));
-            } catch {}
-          })
-          .catch(() => {
-            /* sem service worker o app segue funcionando com rede */
-          });
-      };
-      if (document.readyState === "complete") start();
-      else window.addEventListener("load", start, { once: true });
-    }
+    const pararServiceWorker = process.env.NODE_ENV === "production" && "serviceWorker" in navigator ? iniciarServiceWorker(aoNavegar) : null;
     return () => {
       window.removeEventListener("beforeinstallprompt", onPrompt);
       window.removeEventListener("appinstalled", onInstalled);
+      pararServiceWorker?.();
     };
   }, []);
   return null;

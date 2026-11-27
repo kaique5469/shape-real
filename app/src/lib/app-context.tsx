@@ -2,9 +2,11 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { LocalRepository } from "@/lib/data/local";
-import { cachedSelf, clearCloudCache, getSupabase, SupabaseRepository, supabaseConfigured } from "@/lib/data/supabase";
+import type { SupabaseRepository } from "@/lib/data/supabase";
+import { cachedSelf, clearCloudCache, supabaseConfigured } from "@/lib/data/cloud-config";
 import { seedDemo, seedTester } from "@/lib/data/demo";
-import type { Repository } from "@/lib/data/repository";
+import { DataError, type Repository } from "@/lib/data/repository";
+import { agendarNovaTentativa } from "@/lib/nova-tentativa";
 import { registerCustomExercises } from "@/lib/domain/exercises";
 import { SOLO_TESTER_ID } from "@/lib/domain/ficha-context";
 import { registerCustomFoods } from "@/lib/domain/foods";
@@ -66,7 +68,119 @@ interface AppContextValue {
 const Ctx = createContext<AppContextValue | null>(null);
 
 const localRepo = new LocalRepository();
-const cloudRepo = supabaseConfigured() ? new SupabaseRepository() : null;
+
+/**
+ * A nuvem está configurada neste deploy? Só lê as variáveis de ambiente: supabase-js (~65 KB gzip) não entra no
+ * primeiro carregamento. No modo local (o beta inteiro hoje) o módulo da nuvem nunca é pedido (rodada M, RM-05).
+ */
+const CLOUD = supabaseConfigured();
+
+type CloudMod = typeof import("@/lib/data/supabase");
+/** Nuvem carregada: o módulo e o repositório (um por aba, como antes). */
+export interface Nuvem {
+  mod: CloudMod;
+  repo: SupabaseRepository;
+}
+let nuvem: Promise<Nuvem> | null = null;
+
+/**
+ * Baixa o módulo da nuvem e cria o repositório, uma vez por aba. Uma falha (sem rede, e o arquivo ainda não está no
+ * aparelho) não fica guardada: a próxima chamada tenta de novo. `importar` só muda nos testes.
+ */
+export function loadCloud(importar: () => Promise<CloudMod> = () => import("@/lib/data/supabase")): Promise<Nuvem> {
+  nuvem ??= importar().then(
+    (mod) => ({ mod, repo: new mod.SupabaseRepository() }),
+    (erro: unknown) => {
+      nuvem = null;
+      throw erro;
+    },
+  );
+  return nuvem;
+}
+
+const SEM_CONEXAO = "Sem conexão. Verifique a internet e tente de novo.";
+
+/** Módulo da nuvem para entrar, criar conta ou pedir o link; sem rede para baixá-lo, diz isso (e não "e-mail errado"). */
+async function moduloDaNuvem(): Promise<CloudMod> {
+  if (!CLOUD) throw new DataError("Contas na nuvem não estão disponíveis neste app.", "forbidden");
+  try {
+    return (await loadCloud()).mod;
+  } catch {
+    throw new DataError(SEM_CONEXAO, "network");
+  }
+}
+
+/**
+ * Conta da nuvem aberta sem o módulo da nuvem (o import falhou). Toda leitura e gravação responde "Sem conexão": o
+ * armazenamento local não tem os dados da conta, então nada cai nele. `then` fica de fora para o objeto não parecer
+ * uma promessa.
+ */
+export function repoSemNuvem(): Repository {
+  const falha = () => Promise.reject(new DataError(SEM_CONEXAO, "network"));
+  const fixo: Partial<Repository> = { mode: "supabase", capabilities: { invites: true, managedStudents: true }, pendingCount: () => 0 };
+  return new Proxy(fixo, {
+    get: (alvo, chave) => (chave in alvo ? alvo[chave as keyof Repository] : typeof chave === "string" && chave !== "then" ? falha : undefined),
+  }) as Repository;
+}
+
+/** O que a entrada com a nuvem precisa da tela (estado do React). Separado do componente para teste. */
+export interface TelaDaEntrada {
+  loadLocal: () => Promise<boolean>;
+  /** Conta da nuvem: o perfil logado e o repositório que atende (o da nuvem ou o "sem conexão"). */
+  enterCloud: (p: Profile, repo: Repository) => Promise<void>;
+  /** Saiu da conta (aqui ou em outra aba). */
+  signedOut: () => void;
+  /** Nenhuma sessão: visitante. Só muda algo na nova tentativa, depois de abrir sem o módulo da nuvem. */
+  semSessao: () => void;
+}
+
+/**
+ * Entrada com a nuvem configurada (app-context.nuvem.test.ts). Se o import do módulo falhar (sem rede, e o arquivo ainda
+ * não está no aparelho), faz o que a base fazia sem rede: abre com quem estava logado (`cachedSelf`) ou, sem isso, com a
+ * sessão local; e devolve "semNuvem" para quem chamou tentar de novo quando a rede voltar.
+ */
+export async function abrirComNuvem(t: TelaDaEntrada, carregar: () => Promise<Nuvem> = loadCloud): Promise<{ desligar: () => void } | "semNuvem"> {
+  let carregada: Nuvem;
+  try {
+    carregada = await carregar();
+  } catch {
+    const eu = cachedSelf();
+    if (eu) await t.enterCloud(eu, repoSemNuvem());
+    else if (!(await t.loadLocal())) t.semSessao();
+    return "semNuvem";
+  }
+  const { mod, repo: cloudRepo } = carregada;
+  const sb = mod.getSupabase();
+  const { data } = await sb.auth.getSession().catch(() => ({ data: { session: null } }));
+  if (data.session) {
+    // getProfile devolve a cópia guardada no aparelho quando não há rede.
+    const p = (await cloudRepo.getProfile(data.session.user.id).catch(() => null)) ?? cachedSelf();
+    if (p) await t.enterCloud(p, cloudRepo);
+  } else if (!navigator.onLine && cachedSelf()) {
+    // Sem rede e com o acesso vencido: abre com quem estava logado; a sessão se renova quando a rede voltar.
+    await t.enterCloud(cachedSelf()!, cloudRepo);
+  } else if (!(await t.loadLocal())) {
+    t.semSessao();
+  }
+  const sub = sb.auth.onAuthStateChange(async (event, session) => {
+    if (event === "SIGNED_IN" && session) {
+      const p = await cloudRepo.getProfile(session.user.id).catch(() => null);
+      if (p) await t.enterCloud(p, cloudRepo);
+    }
+    if (event === "SIGNED_OUT") {
+      clearCloudCache();
+      t.signedOut();
+    }
+  });
+  const online = () => void cloudRepo.flushPending().catch(() => {});
+  window.addEventListener("online", online);
+  return {
+    desligar: () => {
+      sub.data.subscription.unsubscribe();
+      window.removeEventListener("online", online);
+    },
+  };
+}
 
 const ls = {
   get(key: string): string | null {
@@ -99,6 +213,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [isTester, setIsTester] = useState(false);
   const [returnTo, setReturnTo] = useState<{ id: string; name: string } | null>(null);
   const [customVersion, setCustomVersion] = useState(0);
+  /** Repositório da conta na nuvem, preenchido pela entrada depois do import (ou o "sem conexão", se ele falhou). */
+  const [cloudRepo, setCloudRepo] = useState<Repository | null>(null);
   const loadingRef = useRef(false);
 
   const repo: Repository = mode === "supabase" && cloudRepo ? cloudRepo : localRepo;
@@ -120,73 +236,69 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let unsub: (() => void) | undefined;
-    (async () => {
-      if (loadingRef.current) return;
+    const enterCloud = async (p: Profile, nuvemRepo: Repository) => {
+      ls.del(LOCAL_SESSION_KEY);
+      ls.del(RETURN_KEY);
+      setCloudRepo(nuvemRepo);
+      setMode("supabase");
+      identify(p.id, { role: p.role });
+      // O personal estava vendo como um aluno nesta aba: volta para onde estava.
+      let acting: { owner: string; target: string } | null = null;
+      try {
+        acting = JSON.parse(sessionStorage.getItem(ACTING_KEY) ?? "null");
+      } catch {}
+      const target = acting?.owner === p.id ? await nuvemRepo.getProfile(acting.target).catch(() => null) : null;
+      if (target) {
+        setReturnTo({ id: p.id, name: p.name });
+        setUserState(target);
+      } else {
+        setReturnTo(null);
+        setUserState(p);
+      }
+      // Treinos finalizados sem sinal sobem assim que houver rede.
+      if (navigator.onLine) void nuvemRepo.flushPending?.().catch(() => {});
+    };
+    const semSessao = () => {
+      setReturnTo(null);
+      setUserState(null);
+      setMode("local");
+    };
+    const signedOut = () => {
+      try {
+        sessionStorage.removeItem(ACTING_KEY);
+      } catch {}
+      semSessao();
+    };
+    // Abriu sem o módulo da nuvem: tenta de novo quando a rede voltar, quando a página voltar a ficar visível ou depois
+    // de 15 s, 60 s e 5 min (o import também falha com a rede ligada, e aí o evento `online` nunca vem).
+    let vivo = true;
+    let falhas = 0;
+    let cancelarNovaTentativa: (() => void) | null = null;
+    const tentarDeNovo = () => {
+      if (vivo) void entrar(true);
+    };
+    const entrar = async (novaTentativa = false) => {
+      if (loadingRef.current && !novaTentativa) return;
       loadingRef.current = true;
       try {
-        if (cloudRepo) {
-          const sb = getSupabase();
-          const enterCloud = async (p: Profile) => {
-            ls.del(LOCAL_SESSION_KEY);
-            ls.del(RETURN_KEY);
-            setMode("supabase");
-            identify(p.id, { role: p.role });
-            // O personal estava vendo como um aluno nesta aba: volta para onde estava.
-            let acting: { owner: string; target: string } | null = null;
-            try {
-              acting = JSON.parse(sessionStorage.getItem(ACTING_KEY) ?? "null");
-            } catch {}
-            const target = acting?.owner === p.id ? await cloudRepo.getProfile(acting.target).catch(() => null) : null;
-            if (target) {
-              setReturnTo({ id: p.id, name: p.name });
-              setUserState(target);
-            } else {
-              setReturnTo(null);
-              setUserState(p);
-            }
-            // Treinos finalizados sem sinal sobem assim que houver rede.
-            if (navigator.onLine) void cloudRepo.flushPending().catch(() => {});
-          };
-          const { data } = await sb.auth.getSession().catch(() => ({ data: { session: null } }));
-          if (data.session) {
-            // getProfile devolve a cópia guardada no aparelho quando não há rede.
-            const p = (await cloudRepo.getProfile(data.session.user.id).catch(() => null)) ?? cachedSelf();
-            if (p) await enterCloud(p);
-          } else if (!navigator.onLine && cachedSelf()) {
-            // Sem rede e com o acesso vencido: abre com quem estava logado; a sessão se renova quando a rede voltar.
-            await enterCloud(cachedSelf()!);
-          } else {
-            await loadLocal();
-          }
-          const sub = sb.auth.onAuthStateChange(async (event, session) => {
-            if (event === "SIGNED_IN" && session) {
-              const p = await cloudRepo.getProfile(session.user.id).catch(() => null);
-              if (p) await enterCloud(p);
-            }
-            if (event === "SIGNED_OUT") {
-              clearCloudCache();
-              try {
-                sessionStorage.removeItem(ACTING_KEY);
-              } catch {}
-              setReturnTo(null);
-              setUserState(null);
-              setMode("local");
-            }
-          });
-          const online = () => void cloudRepo.flushPending().catch(() => {});
-          window.addEventListener("online", online);
-          unsub = () => {
-            sub.data.subscription.unsubscribe();
-            window.removeEventListener("online", online);
-          };
-        } else {
+        if (!CLOUD) {
           await loadLocal();
+          return;
         }
+        const aberta = await abrirComNuvem({ loadLocal, enterCloud, signedOut, semSessao });
+        if (aberta === "semNuvem") cancelarNovaTentativa = vivo ? agendarNovaTentativa(tentarDeNovo, falhas++) : null;
+        else if (vivo) unsub = aberta.desligar;
+        else aberta.desligar();
       } finally {
         setReady(true);
       }
-    })();
-    return () => unsub?.();
+    };
+    void entrar();
+    return () => {
+      vivo = false;
+      unsub?.();
+      cancelarNovaTentativa?.();
+    };
   }, [loadLocal]);
 
   // Exercícios e alimentos personalizados do usuário (e do personal que o cadastrou).
@@ -244,13 +356,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         sessionStorage.removeItem(ACTING_KEY);
       } catch {}
       clearCloudCache();
-      await getSupabase().auth.signOut();
+      // Aberta sem o módulo da nuvem (sem rede desde a abertura): a saída fica só neste aparelho.
+      const carregada = await loadCloud().catch(() => null);
+      if (carregada) await carregada.mod.getSupabase().auth.signOut();
       // Saída de uma conta identificada: os próximos eventos voltam a ser anônimos.
       resetIdentity();
     }
     setUserState(null);
     setMode("local");
-  }, [mode]);
+  }, [mode, cloudRepo]);
 
   const startLocal = useCallback(
     async (name: string, role: Role) => {
@@ -330,7 +444,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       enterLocal(target);
       track("view_as_student", {});
     },
-    [enterLocal, mode, user],
+    [enterLocal, mode, user, cloudRepo],
   );
 
   const returnToOwner = useCallback(async () => {
@@ -349,15 +463,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setReturnTo(null);
     if (back) enterLocal(back);
     return back;
-  }, [enterLocal, mode, returnTo]);
+  }, [enterLocal, mode, returnTo, cloudRepo]);
 
   const signInPassword = useCallback(async (email: string, password: string) => {
-    const { error } = await getSupabase().auth.signInWithPassword({ email, password });
+    const { error } = await (await moduloDaNuvem()).getSupabase().auth.signInWithPassword({ email, password });
     if (error) throw new Error(/invalid/i.test(error.message) ? "E-mail ou senha incorretos." : "Não foi possível entrar. Tente de novo.");
   }, []);
 
   const signUpPassword = useCallback(async (name: string, email: string, password: string, role: Role) => {
-    const { data, error } = await getSupabase().auth.signUp({
+    const { data, error } = await (await moduloDaNuvem()).getSupabase().auth.signUp({
       email,
       password,
       options: { data: { name, role }, emailRedirectTo: `${location.origin}/onboarding` },
@@ -372,15 +486,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const sendMagicLink = useCallback(async (email: string) => {
-    const { error } = await getSupabase().auth.signInWithOtp({ email, options: { emailRedirectTo: `${location.origin}/hoje` } });
+    const { error } = await (await moduloDaNuvem()).getSupabase().auth.signInWithOtp({ email, options: { emailRedirectTo: `${location.origin}/hoje` } });
     if (error) throw new Error("Não foi possível enviar o link. Confira o e-mail.");
   }, []);
 
   const accessToken = useCallback(async () => {
     if (mode !== "supabase" || !cloudRepo) return null;
-    const { data } = await getSupabase().auth.getSession();
+    // Sem o módulo da nuvem (aberta sem rede), não há token: os pedidos seguem como antes sem sessão.
+    const carregada = await loadCloud().catch(() => null);
+    if (!carregada) return null;
+    const { data } = await carregada.mod.getSupabase().auth.getSession();
     return data.session?.access_token ?? null;
-  }, [mode]);
+  }, [mode, cloudRepo]);
 
   // Contexto que acompanha todos os eventos: em que modo o app está e quem está usando (sem identificar a pessoa).
   const demo = Boolean(user?.id.startsWith("demo-"));
@@ -413,7 +530,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ready,
       repo,
       mode,
-      cloudAvailable: Boolean(cloudRepo),
+      cloudAvailable: CLOUD,
       user,
       isDemo: Boolean(user?.id.startsWith("demo-")),
       isTester: isTester && mode === "local",

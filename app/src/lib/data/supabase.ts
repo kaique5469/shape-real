@@ -4,20 +4,16 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { uid } from "@/lib/domain/ids";
 import type { Food } from "@/lib/domain/foods";
 import type { BodyMetric, DietPlan, Exercise, Invite, PhotoPose, PlanId, Profile, Program, ProgressPhoto, Session, StudentDraft } from "@/lib/domain/types";
+import { cachedSelf, clearCloudCache, CLOUD_CACHE_PREFIX, CLOUD_ME_KEY, supabaseKey } from "./cloud-config";
 import { clearDeliveryKeys } from "./local";
 import { DataError, summarizeStudent, type Repository } from "./repository";
+
+// Sem supabase-js: ficam em cloud-config.ts (o app-context lê sem baixar este módulo; rodada M, RM-05).
+export { cachedSelf, clearCloudCache, supabaseConfigured } from "./cloud-config";
 
 type Row = Record<string, unknown>;
 
 let client: SupabaseClient | null = null;
-
-export function supabaseConfigured(): boolean {
-  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && supabaseKey());
-}
-
-function supabaseKey(): string | undefined {
-  return process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-}
 
 export function getSupabase(): SupabaseClient {
   if (!client) {
@@ -49,9 +45,9 @@ function fail(error: DbError, fallback = "Não foi possível salvar. Tente de no
 }
 
 // ---- cópia no aparelho: o que foi lido por último continua disponível sem rede ---------------
-const CACHE = "sr:cloud:";
+const CACHE = CLOUD_CACHE_PREFIX;
 const OUTBOX = `${CACHE}outbox`;
-const ME = `${CACHE}me`;
+const ME = CLOUD_ME_KEY;
 
 function cachePut(key: string, value: unknown) {
   try {
@@ -67,22 +63,6 @@ function cacheGet<T>(key: string): T | null {
   } catch {
     return null;
   }
-}
-
-/** Perfil de quem estava logado da última vez: permite abrir o app sem rede. */
-export function cachedSelf(): Profile | null {
-  try {
-    const raw = localStorage.getItem(ME);
-    return raw ? (JSON.parse(raw) as Profile) : null;
-  } catch {
-    return null;
-  }
-}
-/** Ao sair da conta, nada dela fica no aparelho. */
-export function clearCloudCache() {
-  try {
-    for (const key of Object.keys(localStorage)) if (key.startsWith(CACHE)) localStorage.removeItem(key);
-  } catch {}
 }
 
 function readOutbox(): Session[] {
