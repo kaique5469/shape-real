@@ -8,6 +8,7 @@ import { ProgramGenerator } from "@/components/program/program-generator";
 import { Alert, LinkButton, PageHeader, Skeleton } from "@/components/ui";
 import { firstName } from "@/lib/domain/format";
 import { readAnamnese } from "@/lib/domain/questionario-link";
+import { limparEndereco } from "@/lib/share-link";
 import { useStudent } from "../../student";
 
 export default function NovaFichaAluno({ params }: { params: Promise<{ id: string }> }) {
@@ -29,7 +30,7 @@ function NovaFicha({ id }: { id: string }) {
   const [auto] = useState(() => search.get("auto") === "1");
   const { data: student, loading, setData } = useStudent(id);
   useEffect(() => {
-    if (auto) window.history.replaceState(null, "", window.location.pathname);
+    if (auto) limparEndereco(window.location.pathname);
   }, [auto]);
   if (loading) return <Skeleton className="h-96" />;
   if (!student)

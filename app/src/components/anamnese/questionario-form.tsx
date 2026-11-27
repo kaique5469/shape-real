@@ -14,6 +14,7 @@ import { Alert, Button, LinkButton, cx } from "@/components/ui";
 import { reportError, track } from "@/lib/analytics";
 import { evAnamneseOpened, evAnamneseSent, evPartDone, evSendConfirmed } from "@/lib/anamnese-events";
 import { useApp } from "@/lib/app-context";
+import { useStickyBarScrollPadding } from "@/lib/hooks";
 import {
   FAIXA_MENOR_12,
   PARQ_INTRO,
@@ -37,7 +38,7 @@ import {
   secoesDoQuestionario,
   type Pergunta as PerguntaDef,
 } from "@/lib/domain/anamnese";
-import { applyAnamnese, conflicts, diffLimitacoes } from "@/lib/domain/anamnese-ficha";
+import { applyAnamnese, conflicts, diffLimitacoes, limitacoesPedemConferencia } from "@/lib/domain/anamnese-ficha";
 import type { Anamnese, DiffLimitacoes, Diferenca, Escolhas, SecaoId } from "@/lib/domain/anamnese-types";
 import { coachSignature } from "@/lib/domain/cref";
 import { waLink } from "@/lib/domain/format";
@@ -56,6 +57,7 @@ import {
   eventosLigados,
   faltandoNoJunto,
   horaMinuto,
+  idDaRodadaIncompleta,
   linhaSalvo,
   montarAnamnese,
   novoRascunho,
@@ -63,8 +65,10 @@ import {
   pendenciasDoEnvio,
   preMarcacaoJunto,
   proximaParte,
+  rascunhoDaIncompleta,
   rascunhoParaGravar,
   rotuloDoEnvio,
+  rotuloDoSalvarJunto,
   rotuloParte,
   saudeAutorizada,
   secaoDoHistorico,
@@ -100,7 +104,8 @@ interface Conferencia {
   an: Anamnese;
   atual: Profile;
   difs: Diferenca[];
-  lim: DiffLimitacoes;
+  /** Só quando a linha das limitações pede decisão (`limitacoesPedemConferencia`). */
+  lim?: DiffLimitacoes;
   escolhas: Escolhas;
 }
 
@@ -122,6 +127,16 @@ function useOnline(): boolean {
 
 const reduzMovimento = () => typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 
+/** Quantas entradas das partes há abaixo da atual no histórico (`qDepth` gravado em cada uma; a página = 0). */
+function profundidade(): number {
+  const s = window.history.state as { qDepth?: unknown } | null;
+  return typeof s?.qDepth === "number" && Number.isInteger(s.qDepth) && s.qDepth > 0 ? s.qDepth : 0;
+}
+/** Uma entrada por parte (o voltar do Android volta uma parte), com a profundidade para recolher todas no fim. */
+function empilhar(secao: SecaoId): void {
+  window.history.pushState({ qSecao: secao, qDepth: profundidade() + 1 }, "");
+}
+
 export function QuestionarioForm(props: QuestionarioFormProps) {
   const { repo } = useApp();
   const router = useRouter();
@@ -141,7 +156,11 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
   const eventos = pedido ? eventosLigados({ id: pedido.student.ref }) : eventosLigados(aluno!);
 
   // ---- Estado inicial (só no navegador: a página monta este componente depois de ler o endereço) -------------------
-  const [inicial] = useState(() => ({ rascunho: lerRascunho(chave), enviado: pedido ? enviadoEm(pedido.id) : null }));
+  // Junto sem rascunho, com a rodada atual salva pela metade ("Salvar o que já tem"): continua dela, com as respostas.
+  const [inicial] = useState(() => ({
+    rascunho: lerRascunho(chave) ?? (aluno ? rascunhoDaIncompleta(aluno, ctxBase, new Date().toISOString()) : null),
+    enviado: pedido ? enviadoEm(pedido.id) : null,
+  }));
   const [restaurada] = useState<SecaoId | null>(() => {
     const r = inicial.rascunho;
     if (!r || typeof window === "undefined") return null;
@@ -177,6 +196,13 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
   const feitas = useRef(new Set<SecaoId>());
   const enviouEvento = useRef(false);
   const idJunto = useRef<string | null>(null);
+  /** Fim do questionário: recolhendo as entradas das partes (`history.go`); com URL, a página dá lugar a ela. */
+  const recolhendo = useRef<{ url: string | null } | null>(null);
+  // Recuo da rolagem do tamanho da barra fixa de baixo (ela cresce com "Já enviei" e avisos): o foco por teclado nunca
+  // fica atrás dela (WCAG 2.4.11). Cada tela monta a sua barra: o recuo acompanha o elemento da vez.
+  const [barraEl, setBarraEl] = useState<HTMLDivElement | null>(null);
+  const barraRef = useMemo(() => ({ current: barraEl }), [barraEl]);
+  useStickyBarScrollPadding(barraRef, barraEl !== null);
   const abriu = useRef(false);
   const ultimoRecado = useRef<string | undefined>(undefined);
 
@@ -256,6 +282,17 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
     };
   }, [gravarJa]);
 
+  // O voltar entre partes leva ao topo da parte (scrollTo + foco no título no onPop): a restauração de rolagem do
+  // navegador viria depois e deixaria a pessoa no fim da parte anterior, com o título focado fora da tela.
+  useEffect(() => {
+    const h = window.history;
+    const antes = h.scrollRestoration;
+    h.scrollRestoration = "manual";
+    return () => {
+      h.scrollRestoration = antes;
+    };
+  }, []);
+
   // ---- Medição: abertura (uma vez) ------------------------------------------------------------------------------------
   useEffect(() => {
     if (abriu.current || !eventos) return;
@@ -277,7 +314,7 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
         const lista = secoesDoQuestionario(ctxEfetivo(ctxBase, cur, modo), cur.a);
         atualizar({ ...cur, parte: Math.max(0, lista.indexOf(secao)) }, true);
       }
-      if (opts.empilhar !== false) window.history.pushState({ qSecao: secao }, "");
+      if (opts.empilhar !== false) empilhar(secao);
       window.scrollTo({ top: 0 });
       focarTitulo.current = true;
     },
@@ -286,6 +323,13 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
 
   useEffect(() => {
     const onPop = (e: PopStateEvent) => {
+      // Fim: as entradas das partes foram recolhidas; a página (com URL) dá lugar ao destino, sem entrada a mais.
+      const saida = recolhendo.current;
+      if (saida) {
+        recolhendo.current = null;
+        if (saida.url) router.replace(saida.url);
+        return;
+      }
       const t = telaRef.current.t;
       if (t === "fimLink" || t === "fimJunto") return;
       const s = rRef.current ? secaoDoHistorico(e.state, secoesRef.current) : null;
@@ -303,7 +347,24 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, [atualizar]);
+  }, [atualizar, router]);
+
+  /**
+   * Fim do questionário: volta pelo histórico até a entrada da página (as das partes ficam para trás, e o voltar do
+   * Android não passa por uma tela de boas-vindas para cada parte) e, com `url`, troca a página por ela (replace).
+   */
+  const recolherHistorico = useCallback(
+    (url: string | null) => {
+      const d = profundidade();
+      if (d > 0) {
+        recolhendo.current = { url };
+        window.history.go(-d);
+        return;
+      }
+      if (url) router.replace(url);
+    },
+    [router],
+  );
 
   // Ao trocar de tela, o foco vai para o título (o leitor de tela anuncia a parte nova).
   const chaveTela = tela.t === "parte" ? `parte:${tela.secao}` : tela.t;
@@ -383,7 +444,7 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
     if (base) {
       // Continuar de onde parei: as partes anteriores entram no histórico, e o voltar do Android segue voltando uma parte.
       const lista = secoesDoQuestionario(ctxEfetivo(ctxBase, r, modo), r.a);
-      for (const s of lista.slice(0, Math.max(0, lista.indexOf(secao)))) window.history.pushState({ qSecao: s }, "");
+      for (const s of lista.slice(0, Math.max(0, lista.indexOf(secao)))) empilhar(s);
     }
     irPara(secao);
   };
@@ -541,9 +602,12 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
     setTocou(false);
     rRef.current = null;
     setRascunho(null);
+    telaRef.current = { t: "fimLink" };
     setTela({ t: "fimLink" });
     window.scrollTo({ top: 0 });
     focarTitulo.current = true;
+    // O próximo voltar sai da página (para o WhatsApp), em vez de passar pelas partes já enviadas.
+    recolherHistorico(null);
   };
 
   // ---- Junto: salvar ----------------------------------------------------------------------------------------------------
@@ -563,14 +627,17 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
     }
     rRef.current = null;
     if (navigator.onLine) {
-      router.push(`/alunos/${encodeURIComponent(atual.id)}?aba=resumo&questionario=novo`);
+      // O resumo fica no lugar do questionário: o voltar leva para onde o personal estava antes de começar.
+      recolherHistorico(`/alunos/${encodeURIComponent(atual.id)}?aba=resumo&questionario=novo`);
       return;
     }
     setSalvo(salvoAgora);
     setRascunho(null);
+    telaRef.current = { t: "fimJunto" };
     setTela({ t: "fimJunto" });
     window.scrollTo({ top: 0 });
     focarTitulo.current = true;
+    recolherHistorico(null);
   };
 
   const salvarJunto = async (incompleto: boolean) => {
@@ -592,15 +659,18 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
     try {
       if (pendente.current !== null) gravarJa(r);
       const agora = new Date().toISOString();
-      idJunto.current ??= uid();
-      const an = montarAnamnese({ rascunho: r, modo: "junto", id: idJunto.current, ctx: ctxBase, agora, salvarIncompleto: incompleto });
       const atual = (await repo.getProfile(aluno.id)) ?? aluno;
+      // Rodada do junto salva pela metade: completar substitui a mesma (mesmo id), não vira "anterior".
+      idJunto.current ??= idDaRodadaIncompleta(atual) ?? uid();
+      const an = montarAnamnese({ rascunho: r, modo: "junto", id: idJunto.current, ctx: ctxBase, agora, salvarIncompleto: incompleto });
       const difs = conflicts(atual, an, hoje);
       const lim = diffLimitacoes(atual, an, hoje);
-      if (difs.length || lim.sai.length || lim.entra.length || lim.excede) {
-        setConferencia({ an, atual, difs, lim, escolhas: escolhasIniciais(difs, lim) });
+      // Limitação que só entra num campo vazio é preenchida sem perguntar (spec §8.2).
+      const limTela = limitacoesPedemConferencia(atual, lim) ? lim : undefined;
+      if (difs.length || limTela) {
+        setConferencia({ an, atual, difs, ...(limTela ? { lim: limTela } : {}), escolhas: escolhasIniciais(difs, limTela) });
         setTela({ t: "conferir" });
-        window.history.pushState({ qSecao: "enviar" }, "");
+        empilhar("enviar");
         window.scrollTo({ top: 0 });
         focarTitulo.current = true;
         return;
@@ -645,7 +715,7 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
   ) : null;
 
   const barra = (children: ReactNode, linha?: ReactNode) => (
-    <div className="sticky bottom-0 z-10 -mx-4 mt-8 border-t border-rule bg-chalk px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] print:hidden">
+    <div ref={setBarraEl} className="sticky bottom-0 z-10 -mx-4 mt-8 border-t border-rule bg-chalk px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] print:hidden">
       <p aria-live="assertive" className={cx("text-[0.9375rem] font-semibold text-danger", aviso ? "mb-2" : "sr-only")}>
         {aviso}
       </p>
@@ -995,6 +1065,8 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
 
     if (modo === "junto") {
       const podeCompleto = faltamJunto.length === 0;
+      // Autorização marcada sem a do responsável (menor): a saúde não vai, e o botão diz isso antes de salvar.
+      const salvarRotulo = rotuloDoSalvarJunto({ autorizouJunto: rascunho.autorizouJunto === true, saudeVai: autorizada, responsavel: nomeResp });
       return (
         <div>
           {cabecalhoJunto}
@@ -1026,9 +1098,14 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
           {impressao}
           {barra(
             <div className="grid gap-2">
-              <Button size="lg" className="w-full" loading={salvando} onClick={() => void salvarJunto(false)}>
-                {QTEXTO.salvarResumo}
+              <Button size="lg" className="w-full" loading={salvando} onClick={() => void salvarJunto(false)} aria-describedby={salvarRotulo.linha ? "q-salvar-sem-saude" : undefined}>
+                {salvarRotulo.botao}
               </Button>
+              {salvarRotulo.linha ? (
+                <p id="q-salvar-sem-saude" className="text-[0.875rem] text-steel">
+                  {salvarRotulo.linha}
+                </p>
+              ) : null}
               {!podeCompleto ? (
                 <>
                   <Button variant="secondary" className="w-full" disabled={salvando} onClick={() => void salvarJunto(true)} aria-describedby="q-salvar-o-que-tem">
@@ -1112,6 +1189,18 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
             </section>
           ) : null}
           {erroEnvio ? <Alert tone="error">{QTEXTO.erroSalvar}</Alert> : null}
+          {/* Sem rede: o aviso e a cópia da mensagem ficam no conteúdo, logo acima da barra (na barra, ela chegava a cobrir
+              metade da tela). O WhatsApp manda a mensagem copiada quando o sinal voltar. */}
+          {!online ? (
+            <Alert tone="warn">
+              <p className="font-semibold">{QTEXTO.semInternet}</p>
+              {podeEnviar && envioPronto ? (
+                <div className="mt-2 flex">
+                  <CopyButton text={envioPronto.texto} label={QTEXTO.copiar} onCopied={registrarToque} />
+                </div>
+              ) : null}
+            </Alert>
+          ) : null}
         </div>
         {impressao}
         {rodapeLink}
@@ -1142,17 +1231,6 @@ export function QuestionarioForm(props: QuestionarioFormProps) {
             <p id="q-envio-linha" className="text-[0.875rem] text-steel">
               {rotulo.linha}
             </p>
-            {!online ? (
-              <>
-                <p className="text-[0.9375rem] font-semibold">{QTEXTO.semInternet}</p>
-                {/* Sem rede, a mensagem pronta pode ir copiada (o WhatsApp manda quando o sinal voltar). */}
-                {podeEnviar && envioPronto ? (
-                  <div className="flex">
-                    <CopyButton text={envioPronto.texto} label={QTEXTO.copiar} onCopied={registrarToque} />
-                  </div>
-                ) : null}
-              </>
-            ) : null}
             {tocou ? (
               <Button
                 variant="secondary"

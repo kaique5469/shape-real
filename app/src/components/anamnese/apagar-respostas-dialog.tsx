@@ -9,13 +9,13 @@ import { useApp } from "@/lib/app-context";
 import { APAGAR_CAIXA, APAGAR_TITULO, apagarRespostas, idsDeRespostas } from "@/lib/domain/anamnese-perfil";
 import { ehExemplo } from "@/lib/domain/anamnese-types";
 import type { Profile } from "@/lib/domain/types";
-import { marcarApagado } from "@/lib/questionario-client";
+import { esquecerQuestionarioDoAluno } from "@/lib/questionario-client";
 
 /**
  * "Apagar respostas do questionário" (spec §11.2), no fim do resumo e no menu do aluno: tira as respostas atuais e
  * anteriores, as liberações e o pedido; a caixa "Apagar também…" tira o que o app copiou para o cadastro. Depois de
- * gravar, `sr:v1:qapagado:{id}` de cada rodada (só a data): a mensagem antiga do WhatsApp não traz a saúde de volta
- * sem aviso. `anamnese_deleted` só com `com_cadastro`, e nunca para aluno de exemplo. Raiz com `ph-no-capture`.
+ * gravar, o rascunho do junto deste aluno sai e `sr:v1:qapagado:{id}` de cada rodada é gravado (só a data): a mensagem
+ * antiga do WhatsApp não traz a saúde de volta sem aviso. `anamnese_deleted` só com `com_cadastro`, e nunca para aluno de exemplo. Raiz com `ph-no-capture`.
  */
 export function ApagarRespostasDialog({ open, onClose, student, onSaved }: { open: boolean; onClose: () => void; student: Profile; onSaved: (p: Profile) => void }): ReactElement {
   const { repo } = useApp();
@@ -36,9 +36,10 @@ export function ApagarRespostasDialog({ open, onClose, student, onSaved }: { ope
     // Os ids saem do perfil ANTES de apagar (depois, as respostas já não estão lá); o registro só vale se gravou.
     const ids = idsDeRespostas(student);
     try {
-      const saved = await repo.saveProfile(apagarRespostas(student, comCadastro));
       const at = new Date().toISOString();
-      for (const id of ids) marcarApagado(id, at);
+      const saved = await repo.saveProfile(apagarRespostas(student, comCadastro, at));
+      // O rascunho do junto (com saúde) sai junto: "Saem deste aparelho as respostas…" vale também para ele.
+      esquecerQuestionarioDoAluno(student.id, ids, at);
       if (!ehExemplo(student)) track("anamnese_deleted", evAnamneseDeleted(comCadastro));
       onSaved(saved);
       onClose();

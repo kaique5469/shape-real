@@ -4,7 +4,7 @@
  * recomendação ou linha "Por quê" nomeia condição que o aluno não marcou ("Por quê" repete a resposta literal).
  */
 import type { AlertId, Alerta, Anamnese, AnamneseAnswers, CtxTriagem, Liberacao, NivelAlerta, Origem } from "./anamnese-types";
-import { curtoDe, fmtDiaMes, idadeDe, parqCompleto, parqRespostas, primeiroNome, respostaDe, rotuloOpcao } from "./anamnese";
+import { curtoDe, fmtDiaMes, idadeDe, parqCompleto, parqRespostas, precisaResponsavel, primeiroNome, respostaDe, rotuloOpcao, SECAO_TITULO } from "./anamnese";
 import { uid } from "./ids";
 import { readAnamnese } from "./questionario-link";
 import type { Profile } from "./types";
@@ -19,6 +19,8 @@ export const NIVEL_ROTULO: Record<NivelAlerta, string> = {
 /** Mostrado ao personal com A-GESTANTE ou A-GESTANTE-OK (spec §6.3), literal. */
 export const SINAIS_PARAR: string =
   "Pare o exercício e oriente procurar o obstetra se houver: sangramento vaginal, contrações dolorosas regulares, perda de líquido, falta de ar antes do esforço, tontura, dor de cabeça, dor no peito, fraqueza que afeta o equilíbrio, dor ou inchaço na panturrilha.";
+/** Título de A-PARQ-INCOMPLETO quando Saúde ou Dores ficaram pela metade no junto (o PAR-Q sozinho: "PAR-Q incompleto"). */
+export const TITULO_SAUDE_INCOMPLETA = "Triagem de saúde incompleta";
 /** Motivo do teto moderado para quem não treina com regularidade (D-30: não é alerta). */
 export const MOTIVO_INATIVO = "Sem treino regular nos últimos 3 meses";
 
@@ -84,23 +86,30 @@ function detectar(an: Anamnese, hoje: Date): Partial<Record<AlertId, Texto>> {
   const idade = idadeDe(a, hoje);
   const aluno = primeiroNome(a.nome) || "o aluno";
 
-  // Lembretes legais valem também sem dados de saúde (idade não é dado de saúde).
+  // Lembretes legais valem também sem dados de saúde (idade não é dado de saúde). A idade é lida com a mesma cautela
+  // do questionário (calculada N: pode ter N − 1): quem tem o responsável pedido ganha o lembrete e o registro dele.
+  // A idade é a de hoje: quem respondeu com 17 e já fez 19 não é mais "Menor de 18 anos".
   const lembretes = () => {
     if (idade !== null && idade >= 70)
       out["A-70"] = { titulo: "70 anos ou mais", recomendado: "Em academias de SP, a lei pede atestado médico a partir de 70 anos.", porque: [responde(a, "ano")] };
-    if (idade !== null && idade < 18) {
+    if (idade !== null && precisaResponsavel(a, hoje)) {
       const resp = an.consent?.responsavel;
       const registro = resp ? `Menor de 18 anos: autorização de ${resp.nome} registrada em ${fmtDiaMes(resp.at)}.` : "Menor de 18 anos: a autorização do responsável não foi registrada.";
-      const menor15 = idade < 15 ? " Em academias de SP, quem tem menos de 15 anos precisa de autorização por escrito do responsável." : "";
+      const menor15 = idade - 1 < 15 ? " Em academias de SP, quem tem menos de 15 anos precisa de autorização por escrito do responsável." : "";
       out["A-MENOR"] = { titulo: "Menor de 18 anos", recomendado: registro + menor15, porque: [responde(a, "ano")] };
     }
   };
 
   if (an.healthOmitted) {
+    // Menor de idade: a saúde pode ter ficado de fora por falta da autorização do responsável (o aluno pode ter
+    // autorizado). O registro não atribui a falta a ninguém.
+    const menor = precisaResponsavel(a, hoje);
     out["A-SEM-TRIAGEM"] = {
       titulo: "Sem triagem de saúde",
-      recomendado: `${aluno} não autorizou o envio das respostas de saúde. Faça a triagem pessoalmente antes de começar.`,
-      porque: [{ pergunta: "Autorização de saúde", resposta: "Não marcada" }],
+      recomendado: menor
+        ? `As respostas de saúde não vieram: faltou a autorização de ${aluno} ou do responsável. Faça a triagem pessoalmente antes de começar.`
+        : `${aluno} não autorizou o envio das respostas de saúde. Faça a triagem pessoalmente antes de começar.`,
+      porque: [{ pergunta: "Autorização de saúde", resposta: menor ? "Não registrada" : "Não marcada" }],
     };
     lembretes();
     return out;
@@ -209,12 +218,17 @@ function detectar(an: Anamnese, hoje: Date): Partial<Record<AlertId, Texto>> {
         porque: [...ondeDoi, responde(a, "dorDesde"), responde(a, "dorTrauma")],
       };
   }
-  if (an.via === "junto" && !parqCompleto(a))
+  // Junto salvo pela metade: PAR-Q, Saúde ou Dores com obrigatória sem resposta é dado que falta, não liberação
+  // (spec §4.2 e A-SEM-TRIAGEM). Reaproveita A-PARQ-INCOMPLETO (porta, sem pedir liberação médica).
+  const partesSaude = (an.incompleto ?? []).filter((s) => s === "saude" || s === "dor");
+  if (an.via === "junto" && (!parqCompleto(a) || partesSaude.length)) {
+    const soParq = partesSaude.length === 0;
     out["A-PARQ-INCOMPLETO"] = {
-      titulo: "PAR-Q incompleto",
-      recomendado: "Pergunte as 7 perguntas antes de começar.",
-      porque: [{ pergunta: "PAR-Q", resposta: "Incompleto" }],
+      titulo: soParq ? "PAR-Q incompleto" : TITULO_SAUDE_INCOMPLETA,
+      recomendado: soParq ? "Pergunte as 7 perguntas antes de começar." : `Complete as perguntas de saúde com ${aluno} antes de começar.`,
+      porque: [...(!parqCompleto(a) ? [{ pergunta: "PAR-Q", resposta: "Incompleto" }] : []), ...partesSaude.map((s) => ({ pergunta: SECAO_TITULO[s], resposta: "Pulou" }))],
     };
+  }
 
   // Amarelo
   if (doenca.length && ativo && sint.length === 0)
@@ -317,6 +331,13 @@ function chegada(an: Anamnese): number {
   return Number.isFinite(recebido) ? recebido : tempo(an.answeredAt);
 }
 
+/** Decisão do personal (`at`) tomada depois que estas respostas chegaram (`chegada`), no mesmo relógio. */
+function depoisDaChegada(at: string, an: Anamnese): boolean {
+  const t = tempo(at);
+  const resp = chegada(an);
+  return Number.isFinite(t) && Number.isFinite(resp) && t >= resp;
+}
+
 /**
  * Liberação cobre o alerta se o lista e foi registrada depois das respostas atuais (`chegada`).
  * Na Entrega 1 a liberação não vence (sem `validaAte`); `hoje` fica para a validade da Entrega 2.
@@ -349,9 +370,11 @@ export function alertas(an: Anamnese, ctx: CtxTriagem): Alerta[] {
     } else {
       const anterior = maisRecente(listam, (l) => l.registradoEm);
       if (anterior) al.liberacaoAnterior = { id: anterior.id, data: anterior.data };
-      const ov = def.nivel === "laranja" ? maisRecente((an.overrides ?? []).filter((o) => o.alertas.includes(id)), (o) => o.at) : undefined;
+      // "Seguir mesmo assim" e "Conversei" valem como a liberação: só para as respostas que já tinham chegado. Respostas
+      // novas no mesmo id (reenvio pelo link, junto completado) reabrem o alerta; o registro impresso guarda o histórico.
+      const ov = def.nivel === "laranja" ? maisRecente((an.overrides ?? []).filter((o) => o.alertas.includes(id) && depoisDaChegada(o.at, an)), (o) => o.at) : undefined;
       if (ov) al.coberto = { por: "override", data: ov.at };
-      else if (id === "A-PESSOAL" && an.conversei?.alertas.includes(id)) al.coberto = { por: "conversei", data: an.conversei.at };
+      else if (id === "A-PESSOAL" && an.conversei?.alertas.includes(id) && depoisDaChegada(an.conversei.at, an)) al.coberto = { por: "conversei", data: an.conversei.at };
     }
     lista.push(al);
   }

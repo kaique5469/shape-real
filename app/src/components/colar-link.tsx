@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { CircleAlert, ClipboardPaste, Smartphone } from "lucide-react";
 import { Button, cx } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
-import { parsePacket } from "@/lib/domain/transfer";
+import { LINK_VERSAO_NOVA_TEXTO, ehLinkDeVersaoNova, parsePacket } from "@/lib/domain/transfer";
 import { packedFromText, pastedLinkHref, unpackData } from "@/lib/share-link";
 
 const BAD_LINK = "Esse link não é do Shape Real ou veio cortado. Peça para reenviar.";
@@ -58,7 +58,7 @@ export function ColarLink({ className }: { className?: string }) {
       // Ficha e treinos: como sempre (sem carregar nada a mais).
       if (kind === "ficha" || kind === "treinos" || typeof kind !== "string") {
         const packet = parsePacket(raw);
-        if (!packet) return setErr(BAD_LINK);
+        if (!packet) return setErr(ehLinkDeVersaoNova(raw) ? LINK_VERSAO_NOVA_TEXTO : BAD_LINK);
         return router.push(pastedLinkHref(packet.kind, packed));
       }
       // Questionário (pedido e respostas) ou um tipo que este app não conhece: a validação vem sob demanda, para não

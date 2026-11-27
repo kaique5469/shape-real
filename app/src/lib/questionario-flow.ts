@@ -25,7 +25,7 @@ import {
   secoesDoQuestionario,
   stripHealth,
 } from "@/lib/domain/anamnese";
-import type { PedidoPacket, ProblemaLink } from "@/lib/domain/questionario-link";
+import { readAnamnese, type PedidoPacket, type ProblemaLink } from "@/lib/domain/questionario-link";
 import type { Profile } from "@/lib/domain/types";
 import type { Padroes } from "@/lib/domain/work-style";
 import type { Rascunho } from "./questionario-client";
@@ -162,6 +162,41 @@ export function rascunhoParaGravar(i: { rascunho: Rascunho; ctx: CtxQuestionario
 /** Pergunta do PAR-Q ou chave de saúde (HEALTH_KEYS). */
 export function ehPerguntaDeSaude(id: string): boolean {
   return id.startsWith("parq.") || (HEALTH_KEYS as readonly string[]).includes(id);
+}
+
+// ---- Completar a rodada salva pela metade (junto) -------------------------------------------------------------------
+
+/** A rodada atual é do junto e foi salva com "Salvar o que já tem" (`incompleto`)? Devolve-a; senão null. */
+function rodadaIncompletaDoJunto(p: Profile): Anamnese | null {
+  const an = readAnamnese(p);
+  return an && typeof an === "object" && an.via === "junto" && an.incompleto?.length ? an : null;
+}
+
+/**
+ * Id da rodada que o junto grava (spec §7, passo 3, "Completar o questionário"): a rodada incompleta do junto é
+ * completada com o mesmo id, e `applyAnamnese` a substitui em vez de empurrá-la para `anamnesePrev` (não é uma
+ * reavaliação anterior). null = rodada nova (quem chama gera o id).
+ */
+export function idDaRodadaIncompleta(p: Profile): string | null {
+  return rodadaIncompletaDoJunto(p)?.id ?? null;
+}
+
+/**
+ * Rascunho para continuar a rodada do junto salva pela metade, quando não há rascunho no aparelho (o rascunho é apagado
+ * ao salvar): as respostas dela, a autorização da boas-vindas (sem saúde, desmarcada), o termo e a caixa do
+ * responsável que já valiam, e a parte = a primeira incompleta ("Continuar de onde parei" entra direto nela).
+ * null sem rodada incompleta do junto.
+ */
+export function rascunhoDaIncompleta(p: Profile, ctx: CtxQuestionario, agora: string): Rascunho | null {
+  const an = rodadaIncompletaDoJunto(p);
+  if (!an) return null;
+  const r: Rascunho = { a: sanearRespostas(an.a), parte: 0, at: agora, iniciadoEm: an.answeredAt, autorizouJunto: !an.healthOmitted };
+  if (an.termo) r.termo = true;
+  if (an.consent?.responsavel) r.responsavelOk = true;
+  const secoes = secoesDoQuestionario(ctxEfetivo(ctx, r, "junto"), r.a);
+  const primeira = an.incompleto!.find((s) => secoes.includes(s));
+  r.parte = primeira ? secoes.indexOf(primeira) : 0;
+  return r;
 }
 
 // ---- Partes ---------------------------------------------------------------------------------------------------------
@@ -354,6 +389,16 @@ export function rotuloDoEnvio(i: { autorizada: boolean; telefone: boolean; perso
 }
 
 /**
+ * Botão principal do fim do junto e a linha ligada a ele por aria-describedby. Com a autorização da boas-vindas marcada
+ * mas sem a do responsável de um menor, a saúde não é salva (`saudeAutorizada`): o botão diz isso, como o "Enviar sem
+ * dados de saúde" do link, em vez de salvar sem avisar.
+ */
+export function rotuloDoSalvarJunto(i: { autorizouJunto: boolean; saudeVai: boolean; responsavel: string }): { botao: string; linha: string | null } {
+  if (i.autorizouJunto && !i.saudeVai) return { botao: QTEXTO.salvarSemSaude, linha: QTEXTO.salvarSemSaudeLinha(i.responsavel) };
+  return { botao: QTEXTO.salvarResumo, linha: null };
+}
+
+/**
  * Textos finais da tela (spec §4.3, §4.10, §5.2, §5.4 e §11.1). Nomes: primeiro nome, exceto onde a spec pede o nome
  * do personal inteiro (autorização). Nenhum texto recebe resposta.
  */
@@ -441,6 +486,9 @@ export const QTEXTO = {
   juntoMenorIntro: (aluno: string) => `Como ${pn(aluno, "o aluno")} tem menos de 18 anos, o responsável precisa autorizar também.`,
   juntoResponsavel: (responsavel: string) => `${responsavel.trim()} autorizou guardar e usar estas respostas de saúde para montar e acompanhar o treino.`,
   salvarResumo: "Salvar e ver o resumo",
+  salvarSemSaude: "Salvar sem dados de saúde",
+  salvarSemSaudeLinha: (responsavel: string) =>
+    `Sem a autorização ${responsavel.trim() ? `de ${responsavel.trim()}` : "do responsável"}, as respostas de saúde (Partes 2 a 4, peso e altura) não são salvas.`,
   salvarOQueTem: "Salvar o que já tem",
   salvarOQueTemLinha: (n: number) => (n === 1 ? "1 pergunta fica sem resposta e aparece como “Pulou” no resumo." : `${n} perguntas ficam sem resposta e aparecem como “Pulou” no resumo.`),
   erroSalvar: "Não deu para salvar neste aparelho. Tente de novo.",

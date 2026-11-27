@@ -39,6 +39,7 @@ import { PLANS } from "@/lib/domain/plans";
 import { coachSignature, nextDayKey, programSetsPerGroup, signerFor, techniqueText } from "@/lib/domain/program-share";
 import { draftToRestore, parseFichaDraft, programForSave, programSignature, type FichaDraft } from "@/lib/domain/program-signature";
 import { getSystem } from "@/lib/domain/systems";
+import { limparEndereco } from "@/lib/share-link";
 import { fmtDate, selectAllSoon, useStickyBarScrollPadding } from "@/lib/hooks";
 import type { Exercise, Goal, Level, PlannedExercise, Profile, Program, Technique, Unit, WorkoutDay } from "@/lib/domain/types";
 
@@ -147,7 +148,7 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
         }
         ready.current = true;
         // Os avisos e a impressão automática valem uma vez: sem isto voltariam a cada recarga ou "voltar".
-        if (q.get("enviada") || q.get("salva") || q.get("imprimir")) window.history.replaceState(null, "", window.location.pathname);
+        if (q.get("enviada") || q.get("salva") || q.get("imprimir")) limparEndereco(window.location.pathname);
       })
       .catch(() => alive && setNotFound(true));
     return () => {

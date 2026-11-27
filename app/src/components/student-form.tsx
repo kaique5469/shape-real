@@ -12,13 +12,14 @@ import { TEXTO_REVOGAR, idsDeRespostas, revogarSaude } from "@/lib/domain/anamne
 import { reportError, track } from "@/lib/analytics";
 import { evStudentCreatedExtra } from "@/lib/anamnese-events";
 import { estadoChave, questionarioLigado } from "@/lib/flags";
-import { marcarApagado } from "@/lib/questionario-client";
+import { esquecerQuestionarioDoAluno } from "@/lib/questionario-client";
 import {
   LIMITACOES_MAX_FORM,
   MODOS_CADASTRO,
   MODO_BOTAO,
   MODO_DICA,
   MODO_ROTULO,
+  faltaAutorizacao,
   formInicial,
   modoSugerido,
   numeroDoCampo as num,
@@ -166,8 +167,9 @@ export function StudentForm({
     if (h !== undefined && (h < 120 || h > 230)) e.heightCm = "Altura em centímetros. Ex.: 172.";
     const w = num(f.weightKg);
     if (w !== undefined && (w < 30 || w > 300)) e.weightKg = "Peso em quilos. Ex.: 72,5.";
-    // Dados de saúde só com a autorização do aluno registrada; o resto do cadastro não depende dela.
-    if (!f.consent && hasHealthData({ limitations: f.limitations, weightKg: w, heightCm: h })) e.consent = CONSENT_ERROR;
+    // Dados de saúde só com a autorização do aluno registrada; o resto do cadastro não depende dela. Desmarcar com
+    // saúde do questionário é a revogação: segue para a confirmação, que apaga esses campos (revogarSaude).
+    if (faltaAutorizacao(student, f)) e.consent = CONSENT_ERROR;
     if (!marcarErros(e)) return null;
     // Campo vazio não entra: nenhum padrão é gravado sem o personal escolher (entrada 16).
     return { ...patchDoFormulario(f), name, ...consentFromCheckbox(student, f.consent, "personal", new Date().toISOString()) };
@@ -216,11 +218,10 @@ export function StudentForm({
         const editado: Profile = { ...perfilEditado(student, f), consentHealthAt: draft.consentHealthAt, consentSource: draft.consentSource };
         // Os ids saem antes de revogar; o registro de "apagado" só vale se gravou.
         const rodadas = revogando ? idsDeRespostas(student) : [];
-        const saved = await repo.saveProfile(revogando ? revogarSaude(editado) : editado);
-        if (rodadas.length) {
-          const at = new Date().toISOString();
-          for (const id of rodadas) marcarApagado(id, at);
-        }
+        const at = new Date().toISOString();
+        const saved = await repo.saveProfile(revogando ? revogarSaude(editado, at) : editado);
+        // Revogou: o rascunho do junto (com saúde e a autorização marcada) sai junto, e cada rodada ganha `qapagado`.
+        if (revogando) esquecerQuestionarioDoAluno(student.id, rodadas, at);
         // Nada que diga se o aluno tem lesão, peso ou altura: só a situação da autorização.
         track("student_edited", { has_phone: Boolean(draft.phone), consent });
         shownFor.current = null;

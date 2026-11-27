@@ -9,11 +9,11 @@ import { Logo } from "@/components/brand";
 import { ColarNoAppCard } from "@/components/colar-link";
 import { isIosBrowser } from "@/components/pwa";
 import { RecordMark } from "@/components/record-mark";
-import { Alert, Button, LinkButton, Select, Skeleton } from "@/components/ui";
+import { Alert, Button, LinkButton, Select, Skeleton, cx } from "@/components/ui";
 import { reportError, track } from "@/lib/analytics";
 import { evAnamneseLinkOpened, evAnamneseReceived, evStudentCreatedExtra } from "@/lib/anamnese-events";
 import { localRepo, useApp } from "@/lib/app-context";
-import { applyAnamnese, conflicts, diffLimitacoes } from "@/lib/domain/anamnese-ficha";
+import { applyAnamnese, conflicts, diffLimitacoes, limitacoesPedemConferencia } from "@/lib/domain/anamnese-ficha";
 import { ehExemplo, type Escolhas } from "@/lib/domain/anamnese-types";
 import { receivePreview, receiveResult, seriesText } from "@/lib/domain/delivery";
 import { firstName } from "@/lib/domain/format";
@@ -35,8 +35,11 @@ import {
   textoProblemaReceber,
   type DecisoesRecepcao,
 } from "@/lib/questionario-receber";
-import { cameFromPaste, packedFromHash, unpackData } from "@/lib/share-link";
+import { cameFromPaste, limparEndereco, packedFromHash, unpackData } from "@/lib/share-link";
 import { importTreinos, receivedFichaVersao } from "@/lib/transfer-client";
+
+/** Botão com nome no rótulo: a altura fixa (h-11/h-14) do Button vira mínima e o texto quebra sem vazar. */
+const ALTURA_LIVRE = { height: "auto" } as const;
 
 type Leitura = { t: "lendo" } | { t: "invalido" } | { t: "cortado" } | { t: "atualize" } | { t: "treinos"; packet: TreinosPacket } | { t: "anamnese"; raw: unknown };
 
@@ -53,18 +56,30 @@ export default function ReceberPage() {
   const [iosBrowser, setIosBrowser] = useState(false);
   const read = useRef(false);
 
+  // Outro link aberto na mesma aba (app instalado que reaproveita a janela, link colado na barra): o navegador só troca
+  // o "#". Lê de novo do zero, como /questionario: o efeito de leitura limpa a barra e as respostas novas aparecem.
+  useEffect(() => {
+    const onHash = () => {
+      if (packedFromHash(window.location.hash)) window.location.reload();
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
   useEffect(() => {
     if (read.current) return;
     read.current = true;
     setViaPaste(cameFromPaste(window.location.hash));
     setIosBrowser(isIosBrowser());
     const packed = packedFromHash(window.location.hash);
-    if (window.location.hash) window.history.replaceState(null, "", window.location.pathname);
+    if (window.location.hash) limparEndereco(window.location.pathname);
     if (!packed) return setLeitura({ t: "cortado" });
     unpackData(packed)
       .then((raw) => {
         if ((raw as { kind?: unknown } | null)?.kind === "anamnese") return setLeitura({ t: "anamnese", raw });
-        if (packetProblem(raw) === "tipo_desconhecido") return setLeitura({ t: "atualize" });
+        // Tipo desconhecido ou versão mais nova do protocolo (spec §10.2): "Atualize", nunca "link cortado".
+        const prob = packetProblem(raw);
+        if (prob === "tipo_desconhecido" || prob === "versao_nova") return setLeitura({ t: "atualize" });
         const p = parsePacket(raw);
         if (p?.kind !== "treinos") return setLeitura({ t: "invalido" });
         setLeitura({ t: "treinos", packet: p });
@@ -211,11 +226,11 @@ function ReceberRespostas({ raw, viaPaste, iosBrowser }: { raw: unknown; viaPast
   const an = p.anamnese;
   const aluno = p.studentName;
 
-  /** Há algo para escolher em "Conferir antes de salvar"? (só com diferenças; regra de §8.2) */
+  /** Há algo para escolher em "Conferir antes de salvar"? (só com diferenças; campo vazio é preenchido sem perguntar, §8.2) */
   function conferencia(alvo: Profile) {
     const diferencas = conflicts(alvo, an, hoje);
     const lim = diffLimitacoes(alvo, an, hoje);
-    const temLim = lim.sai.length > 0 || lim.entra.length > 0;
+    const temLim = limitacoesPedemConferencia(alvo, lim);
     return { diferencas, lim: temLim ? lim : undefined, tem: diferencas.length > 0 || temLim };
   }
 
@@ -239,7 +254,7 @@ function ReceberRespostas({ raw, viaPaste, iosBrowser }: { raw: unknown; viaPast
       // Toque duplo, ou registradas em outra aba enquanto esta estava aberta: nada a gravar.
       const estado = estadoRecepcao(atual, p);
       if (estado.tipo === "ja_registrado") {
-        router.push(`/alunos/${encodeURIComponent(atual.id)}?aba=resumo`);
+        router.replace(`/alunos/${encodeURIComponent(atual.id)}?aba=resumo`);
         return;
       }
       const diferencas = conflicts(atual, an, new Date(agora));
@@ -257,7 +272,8 @@ function ReceberRespostas({ raw, viaPaste, iosBrowser }: { raw: unknown; viaPast
           }),
         );
       }
-      router.push(`/alunos/${encodeURIComponent(atual.id)}?aba=resumo&questionario=novo&recebido=1`);
+      // replace: o link já consumido sai do histórico; o voltar leva para onde o personal estava antes do link.
+      router.replace(`/alunos/${encodeURIComponent(atual.id)}?aba=resumo&questionario=novo&recebido=1`);
     } catch (e) {
       // Só o tipo do erro: nada das respostas nem do perfil sai daqui.
       reportError(new Error(e instanceof Error ? e.name : "Error"), "link:receber-respostas");
@@ -279,8 +295,8 @@ function ReceberRespostas({ raw, viaPaste, iosBrowser }: { raw: unknown; viaPast
     if (prox.t === "registrar" && !conferencia(prox.aluno).tem) return void registrar(prox.aluno, prox.achou, {});
     setDecisoes(novas);
   }
-  const verAluno = (id: string) => router.push(`/alunos/${encodeURIComponent(id)}?aba=resumo`);
-  const agoraNao = () => router.push("/alunos");
+  const verAluno = (id: string) => router.replace(`/alunos/${encodeURIComponent(id)}?aba=resumo`);
+  const agoraNao = () => router.replace("/alunos");
   const cadastrarNovo = () => void registrar(null, "novo", {});
   const trocar = () => {
     decidiu.current = true;
@@ -412,7 +428,14 @@ function ReceberRespostas({ raw, viaPaste, iosBrowser }: { raw: unknown; viaPast
             </Select>
           ) : null}
           <div className="grid gap-2">
-            <Button variant={alunos.length ? "secondary" : "primary"} size={alunos.length ? "md" : "lg"} className="w-full" loading={busy} onClick={cadastrarNovo}>
+            <Button
+              variant={alunos.length ? "secondary" : "primary"}
+              size={alunos.length ? "md" : "lg"}
+              className={cx("w-full text-center leading-snug", alunos.length ? "min-h-11 py-2.5" : "min-h-14 py-3")}
+              style={ALTURA_LIVRE}
+              loading={busy}
+              onClick={cadastrarNovo}
+            >
               {RECEBER_TEXTO.cadastrar(aluno)}
             </Button>
             <Button variant="ghost" className="w-full" disabled={busy} onClick={agoraNao}>
@@ -450,10 +473,11 @@ function ReceberRespostas({ raw, viaPaste, iosBrowser }: { raw: unknown; viaPast
           </h2>
           <Alert tone="warn">{RECEBER_TEXTO.nomeDiferente(p.studentName, etapa.aluno.name)}</Alert>
           <div className="grid gap-2">
-            <Button size="lg" className="w-full" loading={busy} onClick={() => decidir({ identidadeOk: true })}>
+            {/* Rótulos com nome: a altura cresce com o texto (nome longo quebra em duas ou três linhas a 360 px). */}
+            <Button size="lg" className="min-h-14 w-full py-3 text-center leading-snug" style={ALTURA_LIVRE} loading={busy} onClick={() => decidir({ identidadeOk: true })}>
               {RECEBER_TEXTO.eCadastro(etapa.aluno.name)}
             </Button>
-            <Button variant="secondary" className="w-full" disabled={busy} onClick={cadastrarNovo}>
+            <Button variant="secondary" className="min-h-11 w-full py-2.5 text-center leading-snug" style={ALTURA_LIVRE} disabled={busy} onClick={cadastrarNovo}>
               {RECEBER_TEXTO.cadastrarNome(p.studentName)}
             </Button>
           </div>

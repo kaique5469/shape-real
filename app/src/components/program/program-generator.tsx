@@ -10,7 +10,7 @@ import { Alert, Button, Dialog, Field, Panel, Segmented, Skeleton, Textarea, cx 
 import { useApp } from "@/lib/app-context";
 import { OfflineError, aiAvailable, aiProgram, useAI } from "@/lib/ai/client";
 import { veioDe } from "@/lib/domain/anamnese-perfil";
-import { ajustesTexto, antesDeGerar, contarAjustes, entradaInicial, motivosLevados, pickAiInput, toGenerateInput, type AntesDeGerar } from "@/lib/domain/anamnese-ficha";
+import { AVISO_MOTOR_LOCAL, ajustesTexto, antesDeGerar, contarAjustes, entradaInicial, motivoDoMotorLocal, motivosLevados, pickAiInput, toGenerateInput, type AntesDeGerar } from "@/lib/domain/anamnese-ficha";
 import type { FichaSugerida, MotivoFicha } from "@/lib/domain/anamnese-types";
 import { firstName } from "@/lib/domain/format";
 import { GOAL_LABEL, generateProgram, type GenerateInput } from "@/lib/domain/generator";
@@ -37,7 +37,8 @@ type Dialogo = { tipo: "antes"; antes: Exclude<AntesDeGerar, { modo: "livre" }> 
  * gerar, a trava (vermelho ou respostas ilegíveis) e a porta (laranja) de §6.4: sem liberação, nenhum caminho daqui
  * gera a ficha com trava; "Montar do zero" continua. `auto` (vem de `?auto=1`): gera ao abrir quando não há trava nem
  * porta; senão abre o diálogo. Ao salvar, `program.sugerido` guarda o que veio pré-preenchido.
- * Para a IA vai só `pickAiInput` (nada do questionário além da limitação canônica).
+ * Com questionário, teto ou "não quero fazer", a base sai sempre do motor do app (`soNoAparelho`); sem eles, a IA
+ * (quando ligada) recebe só `pickAiInput`.
  */
 export function ProgramGenerator({
   owner,
@@ -92,6 +93,13 @@ export function ProgramGenerator({
   const [blankDays, setBlankDays] = useState(clampDays(owner.daysPerWeek));
   const [blankKind, setBlankKind] = useState<"livre" | "sistema">("livre");
   const [dialogo, setDialogo] = useState<Dialogo>(null);
+  /**
+   * Último "antes de gerar" mostrado: o PortaDialog fica montado depois de fechar (como o LiberacaoDialog), para o
+   * diálogo nativo fechar com close() e o navegador devolver o foco ao botão que abriu (desmontado, o foco caía no <body>).
+   */
+  const [ultimoAntes, setUltimoAntes] = useState<Exclude<AntesDeGerar, { modo: "livre" }> | null>(null);
+  /** O diálogo abriu sozinho (?auto=1): sem botão que o abriu, o foco volta para o título da página ao fechar. */
+  const abertoSozinho = useRef(false);
   const set = (p: Partial<TrainingPrefs>) => setPrefs((s) => withSuggestion(s, p));
   const ajustes = contarAjustes(inicial, prefs);
   const ajusteLinha = ajustesTexto(ajustes);
@@ -116,16 +124,24 @@ export function ProgramGenerator({
     track("program_generated", { where: isCoach ? "coach" : "athlete", source, system: prefs.system, ...evProgramGeneratedExtra(comQuestionario, contarAjustes(inicial, prefs)) });
   }
 
+  /**
+   * Fica no aparelho, com o motor do app, mesmo com a IA ligada: com o questionário (nada das respostas, nem os termos
+   * que o app pôs nas limitações, vai para /api/ai) e com o que a IA não recebe nem aplica (intensidade moderada e os
+   * exercícios fora da ficha). Assim "O que a ficha levou em conta" só lista o que foi aplicado de fato.
+   */
+  const soNoAparelho = motivoDoMotorLocal({ comQuestionario, limitacoesDoQuestionario: dono.limitacoesDoQuestionario, cap, avoidIds: inicial.avoidIds });
+
   async function generate() {
     setBusy("generate");
     setError(null);
     const input = motorInput();
     try {
-      // IA desligada: o motor de regras roda no aparelho, sem nenhuma chamada a /api/ai/* (e funciona sem sinal).
-      if (!(await aiAvailable(mode === "supabase"))) {
+      // IA desligada (ou entrada que só o motor do app trata): o motor de regras roda no aparelho, sem nenhuma chamada
+      // a /api/ai/* (e funciona sem sinal).
+      if (soNoAparelho || !(await aiAvailable(mode === "supabase"))) {
         const local = generateProgram({ ...input, seed: Math.floor(Math.random() * 1e6) }, { ownerId: owner.id, createdBy: user!.id });
         mostrarPrevia(local, isCoach ? "personal" : "modelo");
-        setNotice(null);
+        setNotice(soNoAparelho && ai.enabled ? AVISO_MOTOR_LOCAL[soNoAparelho] : null);
         setQuota(false);
         medir("local");
         return;
@@ -158,9 +174,11 @@ export function ProgramGenerator({
   }
 
   /** "Gerar ficha": com trava ou porta pendentes, abre o diálogo (spec §6.4); senão, gera. */
-  function tentarGerar(perfil: Profile = dono) {
+  function tentarGerar(perfil: Profile = dono, sozinho = false) {
+    abertoSozinho.current = sozinho;
     const antes = isCoach ? antesDeGerar(perfil, new Date()) : ({ modo: "livre" } as const);
     if (antes.modo !== "livre") {
+      setUltimoAntes(antes);
       setDialogo({ tipo: "antes", antes });
       return;
     }
@@ -196,7 +214,7 @@ export function ProgramGenerator({
   useEffect(() => {
     if (!auto || autoFeito.current) return;
     autoFeito.current = true;
-    tentarGerar();
+    tentarGerar(undefined, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auto]);
 
@@ -254,16 +272,30 @@ export function ProgramGenerator({
     }
   }
 
+  /** [Voltar], Esc ou o X da trava/porta. Aberta sozinha (?auto=1), o foco vai para o título da página. */
+  function fecharPorta() {
+    setDialogo((d) => (d?.tipo === "antes" ? null : d));
+    if (abertoSozinho.current) {
+      abertoSozinho.current = false;
+      requestAnimationFrame(() => {
+        const h1 = document.querySelector<HTMLElement>("main h1");
+        if (!h1) return;
+        if (!h1.hasAttribute("tabindex")) h1.setAttribute("tabindex", "-1");
+        h1.focus({ preventScroll: true });
+      });
+    }
+  }
+
   const todosAlertas = leitura && typeof leitura === "object" ? alertasDe(leitura, { hoje: new Date(), liberacoes: dono.liberacoes ?? [] }) : [];
   const dialogos = (
     <>
-      {dialogo?.tipo === "antes" ? (
+      {ultimoAntes ? (
         <PortaDialog
-          open
-          antes={dialogo.antes}
+          open={dialogo?.tipo === "antes"}
+          antes={dialogo?.tipo === "antes" ? dialogo.antes : ultimoAntes}
           aluno={aluno}
           busy={busy === "porta"}
-          onClose={() => setDialogo(null)}
+          onClose={fecharPorta}
           onRegistrar={() => setDialogo({ tipo: "liberacao" })}
           onSeguir={() => void seguirMesmoAssim()}
         />

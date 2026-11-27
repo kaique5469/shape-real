@@ -649,7 +649,10 @@ describe("integração com o link e o perfil (track E): o que o catálogo grava,
         const base = respostasBase();
         const a = gravarResposta(base, p.id, v);
         if (a === base) continue;
-        const an = anamneseBase(a, { modulos: [...MODULOS] });
+        // Ano de menor de 18: a saúde só passa com a autorização do responsável (questionario-link, revisão da rodada 2).
+        const menor = precisaResponsavel(a, new Date(RESPONDIDO_EM));
+        const responsavel = { nome: "Marta Teles", at: RESPONDIDO_EM };
+        const an = anamneseBase(a, { modulos: [...MODULOS], ...(menor ? { consent: { at: RESPONDIDO_EM, source: "aluno_questionario" as const, textId: "c1", responsavel } } : {}) });
         const pacote = json(buildRespostas({ pedido, anamnese: an, agora: RESPONDIDO_EM }));
         expect(parseRespostas(pacote), `${p.id} = ${JSON.stringify(v)}`).not.toBeNull();
         expect(typeof readAnamnese(alunoBase({ anamnese: json(an) })), `${p.id} = ${JSON.stringify(v)}`).toBe("object");

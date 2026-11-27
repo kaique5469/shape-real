@@ -17,6 +17,7 @@ import { maskPhone, waPhone } from "@/lib/domain/format";
 import { getSystem } from "@/lib/domain/systems";
 import { buildSoloProgram, firstDayKey, sessionHref } from "@/lib/entry-points";
 import { reportError, track } from "@/lib/analytics";
+import { useStickyBarScrollPadding } from "@/lib/hooks";
 
 const PENDING_INVITE = "sr:invite";
 const GEN_FAILED = "Não deu para montar a ficha agora. Você pode montar do zero em Treinos.";
@@ -27,6 +28,10 @@ export default function Onboarding() {
   const { ready, user, repo, mode, returnTo, returnToOwner, updateProfile, accessToken } = useApp();
   const router = useRouter();
   const finishing = useRef(false);
+  // Recuo da rolagem do tamanho do rodapé fixo ([Voltar] [Salvar] e "Pular, decido depois"): a opção focada pelo
+  // teclado nunca fica atrás dele (WCAG 2.4.11).
+  const rodape = useRef<HTMLDivElement>(null);
+  useStickyBarScrollPadding(rodape, true);
   const [step, setStep] = useState(0);
   const [prefs, setPrefs] = useState<TrainingPrefs>(() => {
     const base: TrainingPrefs = { goal: "hipertrofia", level: "intermediario", daysPerWeek: 3, sessionMinutes: 60, equipment: "academia", system: "abc", limitations: "", emphasis: [] };
@@ -343,7 +348,7 @@ export default function Onboarding() {
         </main>
       </div>
       {/* Um único botão principal, sempre à vista (sem precisar rolar a 360 px). */}
-      <div className="sticky bottom-0 z-10 border-t border-rule bg-chalk pb-[env(safe-area-inset-bottom)]">
+      <div ref={rodape} className="sticky bottom-0 z-10 border-t border-rule bg-chalk pb-[env(safe-area-inset-bottom)]">
         <div className="mx-auto w-full max-w-2xl px-4 py-3">
           {error ? (
             <Alert tone="error" className="mb-3">

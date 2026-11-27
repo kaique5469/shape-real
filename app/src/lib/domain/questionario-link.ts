@@ -10,7 +10,7 @@
  * cópias locais, com teste que as compara às originais.
  */
 import { z } from "zod";
-import { HEALTH_KEYS, primeiroNome } from "./anamnese";
+import { HEALTH_KEYS, precisaResponsavel, primeiroNome } from "./anamnese";
 import {
   ACOMPANHAMENTOS,
   ALCOOIS,
@@ -277,6 +277,10 @@ function anamneseSchema(modo: Modo) {
       // "Enviar sem dados de saúde" não leva saúde nem autorização; com saúde, a autorização vem junto (LGPD art. 11, I).
       if (an.healthOmitted && (temSaude || an.consent || an.termo)) ctx.addIssue({ code: "custom", message: "saude_omitida" });
       if (!an.healthOmitted && temSaude && !an.consent) ctx.addIssue({ code: "custom", message: "saude_sem_autorizacao" });
+      // Menor de 18 (leitura cautelosa, na data das respostas): saúde só com a autorização do responsável (decisão do
+      // dono, entrada 19, item 3). O app sempre a manda; um pacote sem ela foi mexido à mão.
+      if (!an.healthOmitted && temSaude && precisaResponsavel(an.a as AnamneseAnswers, new Date(an.answeredAt)) && !an.consent?.responsavel?.nome?.trim())
+        ctx.addIssue({ code: "custom", message: "menor_sem_responsavel" });
     });
   }
   // Perfil (modo tolerante): o que o personal registrou no aparelho. Um id de alerta desconhecido numa decisão dele é
@@ -444,6 +448,26 @@ export function pedidoReaproveitavel(student: Pick<Profile, "anamnesePedido">, p
   const p = student.anamnesePedido;
   if (!p || !pendente || !p.id || !p.packed) return null;
   return (p.reavaliacao ?? null) === (reavaliacao ?? null) ? p : null;
+}
+
+/**
+ * O pedido que o diálogo "Mandar questionário" monta agora: com pedido pendente reaproveitável, o mesmo `id` (o aluno
+ * continua o rascunho e o "Você já enviou", que dependem só do id) e o resto refeito com o personal de agora e um
+ * `sentAt` novo. O pacote é sempre o deste pedido: um WhatsApp trocado em Conta vale para o reenvio e o lembrete, e o
+ * lembrete de um pedido de mais de 60 dias não abre em "Este pedido é de DD/MM…".
+ */
+export function pedidoParaEnviar(i: { coach: Profile; student: Profile; pendente: boolean; reavaliacao?: "saude" | "tudo"; agora: string }): { pedido: PedidoPacket; reenvio: boolean } {
+  const reuso = pedidoReaproveitavel(i.student, i.pendente, i.reavaliacao);
+  const pedido = buildPedido({
+    coach: i.coach,
+    student: i.student,
+    modulos: reuso?.modulos ?? [],
+    ...(i.coach.workStyle?.atendimento ? { atendimento: i.coach.workStyle.atendimento } : {}),
+    ...(i.reavaliacao ? { reavaliacao: i.reavaliacao } : {}),
+    ...(reuso ? { id: reuso.id } : {}),
+    agora: i.agora,
+  });
+  return { pedido, reenvio: Boolean(reuso) };
 }
 
 /**

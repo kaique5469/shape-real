@@ -100,6 +100,12 @@ export interface Backup extends BackupBundle {
    * no aparelho do personal, o registro de envio da ficha (`:ficha`) e a versão que o aluno disse ter (`:ack`).
    */
   sent?: Record<string, string>;
+  /**
+   * Rodadas do questionário apagadas ou revogadas neste aparelho (`sr:v1:qapagado:{id}`): id da rodada → data, sem
+   * conteúdo. Restauradas antes dos alunos, valem também num aparelho novo (o link antigo do WhatsApp avisa que foram
+   * apagadas, e uma cópia mais antiga não traz essas rodadas de volta).
+   */
+  apagadas?: Record<string, string>;
 }
 
 /**
@@ -147,8 +153,21 @@ function backupOk(x: unknown): x is Obj {
     (none(x.exportedAt) || isText(x.exportedAt, 40)) &&
     listOf(x.students, bundleOk, 2000) &&
     (none(x.remoteCoach) || bundleOk(x.remoteCoach)) &&
-    (none(x.sent) || (isObj(x.sent) && Object.values(x.sent).every((v) => isText(v, 200_000))))
+    (none(x.sent) || (isObj(x.sent) && Object.values(x.sent).every((v) => isText(v, 200_000)))) &&
+    (none(x.apagadas) || isObj(x.apagadas))
   );
+}
+
+/** Teto das marcas de rodadas apagadas no arquivo (só ids e datas). */
+const APAGADAS_MAX = 5000;
+/** Só pares id → data legível; o resto é descartado (o arquivo nunca grava outra coisa no navegador). */
+function apagadasValidas(v: unknown): Record<string, string> {
+  if (!isObj(v)) return {};
+  return Object.fromEntries(
+    Object.entries(v)
+      .filter(([id, at]) => isId(id) && instante(at) !== null)
+      .slice(0, APAGADAS_MAX),
+  ) as Record<string, string>;
 }
 
 /**
@@ -165,10 +184,18 @@ export function parseBackup(text: string): Backup | null {
   if (!backupOk(raw)) return null;
   const b = raw as unknown as Backup & { students?: BackupBundle[] | null; remoteCoach?: BackupBundle | null; sent?: Record<string, string> | null };
   const sent = Object.fromEntries(Object.entries(b.sent ?? {}).filter(([k]) => SENT_KEY_RE.test(k)));
-  const out: Backup = { ...b, students: b.students ?? undefined, remoteCoach: b.remoteCoach ?? undefined, sent: Object.keys(sent).length ? sent : undefined };
+  const apagadas = apagadasValidas(b.apagadas);
+  const out: Backup = {
+    ...b,
+    students: b.students ?? undefined,
+    remoteCoach: b.remoteCoach ?? undefined,
+    sent: Object.keys(sent).length ? sent : undefined,
+    apagadas: Object.keys(apagadas).length ? apagadas : undefined,
+  };
   if (!out.students) delete out.students;
   if (!out.remoteCoach) delete out.remoteCoach;
   if (!out.sent) delete out.sent;
+  if (!out.apagadas) delete out.apagadas;
   return out;
 }
 
@@ -178,6 +205,7 @@ export function buildBackup(input: Omit<Backup, "format" | "v" | "exportedAt">, 
   if (!out.students?.length) delete out.students;
   if (!out.remoteCoach) delete out.remoteCoach;
   if (!out.sent || !Object.keys(out.sent).length) delete out.sent;
+  if (!out.apagadas || !Object.keys(out.apagadas).length) delete out.apagadas;
   return out;
 }
 
@@ -299,6 +327,24 @@ function unirLiberacoes(atual: unknown, daCopia: unknown): Profile["liberacoes"]
   return porId.size ? [...porId.values()] : undefined;
 }
 
+/** Marca do aparelho (`saudeRevogadaEm`, `respostasApagadasEm`) mais nova que a da cópia: o instante; senão null. */
+function marcaMaisNova(atual: unknown, daCopia: unknown): number | null {
+  const ta = instante(atual);
+  if (ta === null) return null;
+  const tc = instante(daCopia);
+  return tc === null || ta > tc ? ta : null;
+}
+
+/** A mais nova das duas marcas (ISO), para a próxima restauração continuar sabendo; undefined sem nenhuma. */
+function marcaFinal(a: unknown, b: unknown): string | undefined {
+  const ta = instante(a);
+  const tb = instante(b);
+  if (ta === null) return tb === null ? undefined : (b as string);
+  return tb !== null && tb > ta ? (b as string) : (a as string);
+}
+
+const idDaRodada = (r: unknown): string | null => (isObj(r) && isId(r.id) ? (r.id as string) : null);
+
 /**
  * Restauração de um aluno que já existe no aparelho (spec §9.2, D-32). Hoje a restauração gravava o perfil como veio:
  * uma cópia antiga apagaria respostas e liberações mais novas (e a trava de "pediu para não treinar"). Agora:
@@ -308,26 +354,69 @@ function unirLiberacoes(atual: unknown, daCopia: unknown): Profile["liberacoes"]
  *  - se a rodada que fica é a do aparelho, tem saúde e a cópia não tem autorização, a autorização do aparelho fica
  *    (respostas de saúde nunca sem a autorização registrada);
  *  - `liberacoes` unidas por `id`;
+ *  - revogação e "Apagar respostas" feitos neste aparelho depois da cópia (marcas `saudeRevogadaEm` e
+ *    `respostasApagadasEm` mais novas que as da cópia, ou `apagadas`: ids das rodadas da cópia com `sr:v1:qapagado`
+ *    gravado aqui depois dela) não são desfeitos: da cópia não voltam as rodadas nem as liberações de antes do ato; o
+ *    peso, a altura e as limitações ficam como estão no aparelho; com a revogação, a autorização também;
  *  - o resto, como hoje: vale o que veio na cópia.
  * A anamnese que fica não é confiada aqui: quem lê usa `readAnamnese` (versão mais nova ou dado danificado viram trava).
  * `atual` null = aluno novo neste aparelho: devolve a cópia.
  */
-export function mesclarRestauracao(atual: Profile | null, daCopia: Profile): Profile {
+export function mesclarRestauracao(atual: Profile | null, daCopia: Profile, apagadas: ReadonlyMap<string, string> = new Map()): Profile {
   if (!atual) return daCopia;
-  const out: Profile = { ...daCopia };
-  if (ficaAnamneseDoAparelho(atual, daCopia)) {
+  const revogada = marcaMaisNova(atual.saudeRevogadaEm, daCopia.saudeRevogadaEm);
+  let apagada = marcaMaisNova(atual.respostasApagadasEm, daCopia.respostasApagadasEm);
+  const idsApagados = new Set<string>();
+  for (const r of [daCopia.anamnese, daCopia.anamnesePrev] as unknown[]) {
+    const id = idDaRodada(r);
+    const t = id ? instante(apagadas.get(id)) : null;
+    if (id && t !== null) {
+      idsApagados.add(id);
+      apagada = Math.max(apagada ?? t, t);
+    }
+  }
+  const corte = Math.max(revogada ?? -Infinity, apagada ?? -Infinity);
+  const temCorte = corte > -Infinity;
+  /** Da cópia, só o que é de depois do ato (data ilegível conta como de antes). */
+  const depoisDoCorte = (iso: unknown) => {
+    const t = instante(iso);
+    return t !== null && t >= corte;
+  };
+  const rodadaVale = (r: unknown) => !temCorte || (isObj(r) && !idsApagados.has(idDaRodada(r) ?? "") && depoisDoCorte(r.answeredAt));
+
+  const copia: Profile = { ...daCopia };
+  if (temCorte) {
+    if (copia.anamnese !== undefined && !rodadaVale(copia.anamnese)) delete copia.anamnese;
+    if (copia.anamnesePrev !== undefined && !rodadaVale(copia.anamnesePrev)) delete copia.anamnesePrev;
+    if (Array.isArray(copia.liberacoes)) copia.liberacoes = copia.liberacoes.filter((l) => isObj(l) && depoisDoCorte(l.registradoEm));
+  }
+
+  const out: Profile = { ...copia };
+  if (ficaAnamneseDoAparelho(atual, copia)) {
     out.anamnese = atual.anamnese;
     out.anamnesePrev = atual.anamnesePrev;
     out.limitacoesDoQuestionario = atual.limitacoesDoQuestionario;
     out.limitations = atual.limitations;
     const comSaude = isObj(atual.anamnese) && !(atual.anamnese as { healthOmitted?: unknown }).healthOmitted;
-    if (comSaude && atual.consentHealthAt && !daCopia.consentHealthAt) {
+    if (comSaude && atual.consentHealthAt && !copia.consentHealthAt) {
       out.consentHealthAt = atual.consentHealthAt;
       out.consentSource = atual.consentSource;
     }
   }
-  out.liberacoes = unirLiberacoes(atual.liberacoes, daCopia.liberacoes);
-  for (const k of ["anamnese", "anamnesePrev", "limitacoesDoQuestionario", "limitations", "liberacoes", "consentHealthAt", "consentSource"] as const) {
+  if (temCorte) {
+    out.weightKg = atual.weightKg;
+    out.heightCm = atual.heightCm;
+    out.limitations = atual.limitations;
+    out.limitacoesDoQuestionario = atual.limitacoesDoQuestionario;
+  }
+  if (revogada !== null) {
+    out.consentHealthAt = atual.consentHealthAt;
+    out.consentSource = atual.consentSource;
+  }
+  out.saudeRevogadaEm = marcaFinal(atual.saudeRevogadaEm, daCopia.saudeRevogadaEm);
+  out.respostasApagadasEm = marcaFinal(atual.respostasApagadasEm, daCopia.respostasApagadasEm);
+  out.liberacoes = unirLiberacoes(atual.liberacoes, copia.liberacoes);
+  for (const k of ["anamnese", "anamnesePrev", "limitacoesDoQuestionario", "limitations", "liberacoes", "consentHealthAt", "consentSource", "weightKg", "heightCm", "saudeRevogadaEm", "respostasApagadasEm"] as const) {
     if (out[k] === undefined) delete out[k];
   }
   return out;

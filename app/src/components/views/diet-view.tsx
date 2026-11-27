@@ -10,7 +10,7 @@ import { DietRead, NotesRead, PlanVsTargets } from "@/components/views/diet-read
 import { useApp } from "@/lib/app-context";
 import { OfflineError, aiAvailable, aiDietAnalyze, aiDietGenerate, useAI, type DietAnalysis } from "@/lib/ai/client";
 import { COACH_IDENTITY_HINT, needsCoachIdentity } from "@/lib/data/demo";
-import { avisoDieta } from "@/lib/domain/anamnese-perfil";
+import { avisoDieta, pesoParaIA } from "@/lib/domain/anamnese-perfil";
 import {
   MACRO_LABEL,
   MACRO_ORDER,
@@ -377,7 +377,7 @@ export function DietView({ owner, mode, onDeliveryChange }: { owner: Profile; mo
     try {
       // IA desligada para esta pessoa: nada vai ao servidor (nem peso nem metas). O motor roda aqui mesmo.
       if (!(await aiAvailable(dataMode === "supabase"))) return generateLocal(false);
-      const r = await aiDietGenerate({ targets, goal: owner.goal, weightKg: owner.weightKg, preferences: ai.enabled && prefs.trim() ? prefs.trim() : undefined, ownerId: owner.id, createdBy: user!.id }, await accessToken());
+      const r = await aiDietGenerate({ targets, goal: owner.goal, weightKg: pesoParaIA(owner), preferences: ai.enabled && prefs.trim() ? prefs.trim() : undefined, ownerId: owner.id, createdBy: user!.id }, await accessToken());
       setDiet({ ...r.data, id: diet?.id ?? r.data.id, name: diet?.name ?? blankDiet(targets).name, targets, notes: r.data.notes ?? diet?.notes });
       setDirty(true);
       setGenOpen(false);
@@ -1512,7 +1512,7 @@ function Analyzer({ owner, targets, coach, aiOn, useLabel, onUse }: { owner: Pro
     try {
       // IA desligada: nenhuma chamada a /api/ai/* (mesma regra da geração da ficha no onboarding).
       if (!(await aiAvailable(dataMode === "supabase"))) return runLocal(false);
-      const r = await aiDietAnalyze({ text, targets, goal: owner.goal, weightKg: owner.weightKg, ownerId: owner.id, createdBy: user!.id }, await accessToken());
+      const r = await aiDietAnalyze({ text, targets, goal: owner.goal, weightKg: pesoParaIA(owner), ownerId: owner.id, createdBy: user!.id }, await accessToken());
       setRes({ ...r.data, source: r.source, notice: r.notice, quota: r.quota });
       track("diet_analyzed", { source: r.source, where: coach ? "coach" : "self", itens: itemsBand(countItems(r.data.meals)) } satisfies DietAnalyzedProps);
     } catch (e) {

@@ -415,8 +415,18 @@ export function diffLimitacoes(profile: Profile, an: Anamnese, hoje: Date): Diff
 }
 
 /**
+ * A linha das limitações entra em "Conferir antes de salvar"? Só quando há o que decidir (spec §8.2 e §5.1): um token
+ * do app que sai, o texto que passaria do teto, ou um token que entra num cadastro que já tem limitações. Entrar num
+ * campo vazio é preencher sem perguntar (o cadastro rápido não pode gerar "diferenças falsas").
+ */
+export function limitacoesPedemConferencia(profile: Pick<Profile, "limitations">, lim: DiffLimitacoes): boolean {
+  return lim.sai.length > 0 || (lim.entra.length > 0 && (lim.excede || Boolean(profile.limitations?.trim())));
+}
+
+/**
  * Registra uma rodada de respostas no cadastro do aluno, imutável. Campos: vazio preenche; diferente segue a escolha
- * (ou o padrão da linha). Limitações pela mescla de tokens. `coachNotes` e o texto do personal nunca mudam.
+ * (ou o padrão da linha). Limitações pela mescla de tokens ("Manter como está" só vale com limitações no cadastro:
+ * campo vazio é preenchido sem perguntar). `coachNotes` e o texto do personal nunca mudam.
  */
 export function applyAnamnese(profile: Profile, an: Anamnese, escolhas: Escolhas, agora: string): Profile {
   const hoje = new Date(agora);
@@ -431,7 +441,7 @@ export function applyAnamnese(profile: Profile, an: Anamnese, escolhas: Escolhas
     else if (!igual(campo, cadastro, resposta) && (escolhas[campo] ?? padraoDe(campo)) === "resposta") set[campo] = resposta;
   }
 
-  if (!an.healthOmitted && escolhas.limitacoes !== "manter") {
+  if (!an.healthOmitted && (escolhas.limitacoes !== "manter" || !profile.limitations?.trim())) {
     const d = diffLimitacoes(profile, an, hoje);
     if (!d.excede) {
       next.limitations = d.texto || undefined;
@@ -669,6 +679,22 @@ export function contarAjustes(inicial: Partial<GenerateInput>, final: Partial<Ge
   const norm = (k: (typeof CAMPOS_AJUSTE)[number], v: unknown) => (k === "limitations" ? (typeof v === "string" ? v.trim() : "") : v);
   return CAMPOS_AJUSTE.filter((k) => norm(k, inicial[k]) !== norm(k, final[k])).length;
 }
+
+/**
+ * Por que a base da ficha sai do motor do app mesmo com a IA ligada (null = a IA pode montar): com o questionário,
+ * nada das respostas nem os termos que o app pôs nas limitações vão para /api/ai ("As respostas não passam pelo
+ * servidor do Shape Real", §11.1); com teto moderado ou "não quero fazer", que a IA não recebe nem aplica, a prévia
+ * diria "levou em conta" sem ter levado.
+ */
+export function motivoDoMotorLocal(i: { comQuestionario: boolean; limitacoesDoQuestionario?: readonly string[]; cap: boolean; avoidIds: readonly string[] }): "questionario" | "restricao" | null {
+  if (i.comQuestionario || (i.limitacoesDoQuestionario?.length ?? 0) > 0) return "questionario";
+  if (i.cap || i.avoidIds.length > 0) return "restricao";
+  return null;
+}
+export const AVISO_MOTOR_LOCAL: Record<"questionario" | "restricao", string> = {
+  questionario: "Com o questionário, a base é montada pelo motor do app, neste aparelho: as respostas não saem daqui.",
+  restricao: "Com intensidade moderada ou exercícios fora da ficha, a base é montada pelo motor do app, que aplica essas regras.",
+};
 
 const CHAVES_IA = ["goal", "level", "daysPerWeek", "sessionMinutes", "equipment", "system", "limitations", "emphasis", "seed", "notes"] as const;
 

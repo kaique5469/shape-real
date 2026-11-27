@@ -74,7 +74,8 @@ const CASOS: Record<AlertId, { pos: Anamnese; neg: Anamnese }> = {
   "A-ALIMENTAR": { pos: anamneseBase({ condicoes: ["alimentar"], orientacao: "nao" }), neg: anamneseBase({ condicoes: ["artrose"], orientacao: "nao" }) },
   "A-CIRURGIA": { pos: anamneseBase({ cirurgia: 1, cirurgiaQual: "vesícula em março" }), neg: anamneseBase({ cirurgia: 0 }) },
   "A-70": { pos: anamneseBase({ ano: anoParaIdade(70), gestacao: undefined, quedas: 0, instavel: 0, medoCair: 0 }), neg: anamneseBase({ ano: anoParaIdade(69), gestacao: undefined, quedas: 0, instavel: 0, medoCair: 0 }) },
-  "A-MENOR": { pos: anamneseBase({ ano: anoParaIdade(17), responsavel: "Maria Souza" }), neg: anamneseBase({ ano: anoParaIdade(18), responsavel: "Maria Souza" }) },
+  // Leitura cautelosa da idade (a mesma de precisaResponsavel): calculada 18 pode ter 17; o vizinho negativo é 19.
+  "A-MENOR": { pos: anamneseBase({ ano: anoParaIdade(17), responsavel: "Maria Souza" }), neg: anamneseBase({ ano: anoParaIdade(19), responsavel: "Maria Souza" }) },
 };
 
 describe("tabela de spec §6.3", () => {
@@ -230,8 +231,11 @@ describe("regras com nuance", () => {
   it("sem dados de saúde: só A-SEM-TRIAGEM e os lembretes de idade", () => {
     const cheia = anamneseBase({ ano: anoParaIdade(16), responsavel: "Maria", parq: parq(1, 6), condicoes: ["diabetes2"], hipo: "frequente", cirurgia: 1, ...lombar(["sela"]) });
     expect(ids(stripHealth(cheia))).toEqual(["A-SEM-TRIAGEM", "A-MENOR"]);
+    // Menor: a saúde pode ter ficado de fora pela falta da autorização do responsável; o texto não atribui ao aluno.
     const s = alertas(stripHealth(cheia), ctx())[0];
-    expect(s?.recomendado).toBe("Ana não autorizou o envio das respostas de saúde. Faça a triagem pessoalmente antes de começar.");
+    expect(s?.recomendado).toBe("As respostas de saúde não vieram: faltou a autorização de Ana ou do responsável. Faça a triagem pessoalmente antes de começar.");
+    const adulta = alertas(stripHealth(anamneseBase({ ano: anoParaIdade(30) })), ctx())[0];
+    expect(adulta?.recomendado).toBe("Ana não autorizou o envio das respostas de saúde. Faça a triagem pessoalmente antes de começar.");
     expect(ids(stripHealth(anamneseBase({ ano: anoParaIdade(75) })))).toEqual(["A-SEM-TRIAGEM", "A-70"]);
   });
 

@@ -64,6 +64,19 @@ export async function unpackData(text: string): Promise<unknown> {
   return JSON.parse(new TextDecoder().decode(raw));
 }
 
+/**
+ * Troca o endereço da barra sem navegar (tira o "#d=" ou parâmetros que valem uma vez) sem perder o estado do roteador
+ * do Next (`__NA` e a árvore) na entrada do histórico: sem ele, o voltar do Android recarrega a página inteira e o foco
+ * cai no <body>. Com o roteador já ativo (ele instala o próprio `replaceState` no objeto), a chamada vai por ele, que
+ * copia esse estado e atualiza o endereço que o Next conhece (`useSearchParams`). No efeito da página na primeira carga
+ * (antes do efeito do roteador), o estado atual vai junto à mão.
+ */
+export function limparEndereco(url: string): void {
+  const h = window.history;
+  if (h.replaceState !== History.prototype.replaceState) h.replaceState(null, "", url);
+  else h.replaceState(h.state, "", url);
+}
+
 /** Lê o pacote do "#d=" do endereço atual. */
 export function packedFromHash(hash: string): string | null {
   const m = /[#&]d=([A-Za-z0-9._-]+)/.exec(hash);

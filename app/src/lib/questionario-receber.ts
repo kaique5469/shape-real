@@ -133,8 +133,9 @@ export function destinoColado(raw: unknown, packed: string): { href: string } | 
   }
   const packet = parsePacket(raw);
   if (packet) return { href: pastedLinkHref(packet.kind, packed) };
+  // Tipo desconhecido ou ficha/treinos de versão mais nova: "Atualize", não "veio cortado".
   const problema = packetProblem(raw) ?? "invalido";
-  return { erro: problema === "tipo_desconhecido" ? PROBLEMA_ATUALIZE : LINK_RUIM, problema };
+  return { erro: problema === "invalido" ? LINK_RUIM : PROBLEMA_ATUALIZE, problema };
 }
 
 // ---- conferir e registrar --------------------------------------------------------------------------------------------
@@ -179,8 +180,13 @@ const nomeOu = (nome: string, padrao: string) => primeiroNome(nome) || padrao;
 export const RECEBER_TEXTO = {
   titulo: (aluno: string) => `Respostas de ${nomeOu(aluno, "seu aluno")}`,
   respondidoEm: (answeredAt: string) => `Questionário respondido em ${fmtDiaMes(answeredAt)} às ${hhmm(answeredAt)}.`,
+  /** Menor de idade: quem autorizou foi o responsável (LGPD, art. 14), e é ele que o texto nomeia. */
   autorizacao: (aluno: string, an: Pick<Anamnese, "healthOmitted" | "consent">) =>
-    an.healthOmitted || !an.consent ? `${nomeOu(aluno, "O aluno")} enviou sem dados de saúde.` : `Autorização de saúde: dada por ${nomeOu(aluno, "o aluno")} em ${fmtDiaMes(an.consent.at)}.`,
+    an.healthOmitted || !an.consent
+      ? `${nomeOu(aluno, "O aluno")} enviou sem dados de saúde.`
+      : an.consent.responsavel?.nome?.trim()
+        ? `Autorização de saúde: dada por ${an.consent.responsavel.nome.trim()}, responsável por ${nomeOu(aluno, "o aluno")}, em ${fmtDiaMes(an.consent.responsavel.at)}.`
+        : `Autorização de saúde: dada por ${nomeOu(aluno, "o aluno")} em ${fmtDiaMes(an.consent.at)}.`,
   vaiPara: "Vai para:",
   trocar: "Trocar",
   confirmarNome: (cadastro: string) => `Encontramos ${cadastro.trim()} pelo nome. É a mesma pessoa?`,

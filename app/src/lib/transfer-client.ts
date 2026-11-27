@@ -9,6 +9,7 @@ import { uid } from "@/lib/domain/ids";
 import { backupAgeBucket, backupFileName, buildBackup, downloadText, mesclarRestauracao, parseBackup as parseBackupFile, SENT_KEY_RE, SENT_SINCE_KEY, SENT_SUFFIXES, sentKeyOf, type Backup, type BackupBundle } from "@/lib/domain/export";
 import { fichaLinkItems, mergeMetric, mirrorLoads, receivedVersions, studentFieldsOf, type FichaPacket, type TreinosPacket } from "@/lib/domain/transfer";
 import type { Profile, Session } from "@/lib/domain/types";
+import { APAGADO_PREFIXO, apagadoEm, idsDasRodadas, marcarApagado } from "@/lib/questionario-client";
 
 /**
  * Grava no aparelho o que chegou por link. Só existe no modo sem conta: com conta na nuvem,
@@ -258,6 +259,43 @@ function readSentKeys(ids: string[]): Record<string, string> {
   return out;
 }
 
+/** Marcas `sr:v1:qapagado:{id}` deste aparelho (id da rodada → data), para a cópia de segurança. Só ids e datas. */
+function readApagadas(): Record<string, string> {
+  const out: Record<string, string> = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k?.startsWith(APAGADO_PREFIXO)) continue;
+      const id = k.slice(APAGADO_PREFIXO.length);
+      const at = apagadoEm(id);
+      if (id && at) out[id] = at;
+    }
+  } catch {}
+  return out;
+}
+
+/** Grava as marcas de rodadas apagadas da cópia, sem trocar uma marca mais nova que já esteja no aparelho. */
+function restoreApagadas(apagadas: Record<string, string> | undefined): void {
+  for (const [id, at] of Object.entries(apagadas ?? {})) {
+    const ja = apagadoEm(id);
+    if (!ja || Date.parse(at) > Date.parse(ja)) marcarApagado(id, at);
+  }
+}
+
+/**
+ * Rodadas deste perfil na cópia que foram apagadas (ou tiveram a saúde revogada) neste aparelho DEPOIS da cópia:
+ * restaurar não traz essas respostas de volta (`mesclarRestauracao`). Sem a data do arquivo, qualquer marca conta.
+ */
+function apagadasDepoisDaCopia(profile: Profile, exportedAt: string | undefined): Map<string, string> {
+  const desde = exportedAt ? Date.parse(exportedAt) : Number.NaN;
+  const out = new Map<string, string>();
+  for (const id of idsDasRodadas(profile)) {
+    const em = apagadoEm(id);
+    if (em && (!Number.isFinite(desde) || Date.parse(em) > desde)) out.set(id, em);
+  }
+  return out;
+}
+
 // ---- cópia de segurança ------------------------------------------------------------
 /** Lê do armazenamento tudo o que entra na cópia deste perfil (fotos ficam de fora). */
 export async function collectBackup(repo: Repository, user: Profile, now = new Date()): Promise<Backup> {
@@ -285,7 +323,8 @@ export async function collectBackup(repo: Repository, user: Profile, now = new D
     }
   }
   const sent = readSentKeys([user.id, ...(students ?? []).map((s) => s.profile.id)]);
-  return buildBackup({ ...main, students, remoteCoach, sent }, now);
+  const apagadas = repo.mode === "local" ? readApagadas() : {};
+  return buildBackup({ ...main, students, remoteCoach, sent, apagadas }, now);
 }
 
 /**
@@ -333,14 +372,14 @@ export async function makeBackup(repo: Repository, user: Profile, where: "conta"
 /** Lê o arquivo da cópia (v1 "shape-real-backup.json" ou v2). null se não for uma cópia do app. */
 export const parseBackup = parseBackupFile;
 
-async function restoreBundle(b: BackupBundle, ownerOverride?: Partial<Profile>) {
+async function restoreBundle(b: BackupBundle, exportedAt: string | undefined, ownerOverride?: Partial<Profile>) {
   // Exercícios e alimentos próprios antes das fichas e dietas que apontam para eles.
   for (const e of b.customExercises ?? []) await localRepo.saveCustomExercise(b.profile.id, { ...e, custom: true });
   for (const f of b.customFoods ?? []) await localRepo.saveCustomFood(b.profile.id, f);
   // Perfil que já existe no aparelho: as respostas do questionário mais novas e as liberações dos dois lados ficam
-  // (D-32). O resto vem da cópia, como antes.
+  // (D-32), e o que foi revogado ou apagado aqui depois da cópia não volta. O resto vem da cópia, como antes.
   const atual = await localRepo.getProfile(b.profile.id).catch(() => null);
-  await localRepo.saveProfile(mesclarRestauracao(atual, { ...b.profile, ...ownerOverride }));
+  await localRepo.saveProfile(mesclarRestauracao(atual, { ...b.profile, ...ownerOverride }, apagadasDepoisDaCopia(b.profile, exportedAt)));
   for (const p of b.programs ?? []) await localRepo.saveProgram({ ...p, ownerId: b.profile.id }, { keepUpdatedAt: true });
   if (b.sessions?.length) localRepo.saveSessionsBulk(b.sessions.map((s) => ({ ...s, userId: b.profile.id })));
   if (b.metrics?.length) localRepo.saveMetricsBulk(b.metrics.map((m) => ({ ...m, userId: b.profile.id })));
@@ -361,16 +400,20 @@ export async function restoreBackup(b: Backup): Promise<{ profile: Profile; stud
       await localRepo.saveProfile({ ...rc.profile, role: "coach" });
     }
   }
+  // As rodadas comparadas são as deste aparelho antes de gravar as marcas do arquivo (que são de antes da cópia).
+  const exportedAt = b.exportedAt;
   // O perfil principal primeiro: as fichas dos alunos usam os exercícios próprios do personal.
-  await restoreBundle(b);
+  await restoreBundle(b, exportedAt);
   for (const s of b.students ?? []) {
-    await restoreBundle(s, { managedBy: b.profile.id });
+    await restoreBundle(s, exportedAt, { managedBy: b.profile.id });
     localRepo.linkDirect(b.profile.id, s.profile.id, now);
   }
   if (rc && b.profile.remoteCoach?.id === rc.profile.id) localRepo.linkDirect(rc.profile.id, b.profile.id, now);
   try {
     for (const [k, v] of Object.entries(b.sent ?? {})) if (SENT_KEY_RE.test(k)) localStorage.setItem(k, v);
   } catch {}
+  // Rodadas apagadas no aparelho de onde a cópia saiu: o link antigo do WhatsApp avisa também aqui.
+  restoreApagadas(b.apagadas);
   // O conteúdo restaurado já tem cópia: o lembrete conta a partir da data do arquivo.
   if (b.exportedAt && Number.isFinite(Date.parse(b.exportedAt))) markBackupDone(new Date(Math.min(Date.parse(b.exportedAt), Date.now())).toISOString());
   return { profile: b.profile, students: b.students?.length ?? 0 };

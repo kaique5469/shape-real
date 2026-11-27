@@ -12,7 +12,7 @@
 import type { WorkStyle } from "@/lib/domain/anamnese-types";
 import { maskPhone } from "@/lib/domain/format";
 import { normalize } from "@/lib/domain/exercises";
-import { consentConfirmed } from "@/lib/domain/transfer";
+import { consentConfirmed, hasHealthData } from "@/lib/domain/transfer";
 import { resolveDefaults } from "@/lib/domain/work-style";
 import { temSaudeNoQuestionario } from "@/lib/domain/anamnese-perfil";
 import type { ActivityLevel, Equipment, Goal, Level, Profile, Sex } from "@/lib/domain/types";
@@ -135,6 +135,16 @@ export function perfilEditado(p: Profile, f: FormState): Profile {
  */
 export function pedeRevogacao(p: Profile | null | undefined, f: Pick<FormState, "consent">): boolean {
   return !!p && consentConfirmed(p) && !f.consent && temSaudeNoQuestionario(p);
+}
+
+/**
+ * "Marque a autorização do aluno para salvar limitações e medidas": dado de saúde no formulário sem a autorização.
+ * Na revogação (`pedeRevogacao`), nunca: as limitações, o peso e a altura são justamente o que `revogarSaude` apaga,
+ * e pedir para marcar de novo travava a revogação pela tela (LGPD, art. 8º, §5º).
+ */
+export function faltaAutorizacao(p: Profile | null | undefined, f: Pick<FormState, "consent" | "limitations" | "weightKg" | "heightCm">): boolean {
+  if (f.consent || pedeRevogacao(p, f)) return false;
+  return hasHealthData({ limitations: f.limitations, weightKg: numeroDoCampo(f.weightKg), heightCm: numeroDoCampo(f.heightCm) });
 }
 
 // ───────────────────────── Cadastro rápido (spec §5.1) ─────────────────────────

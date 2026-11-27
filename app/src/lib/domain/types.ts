@@ -186,6 +186,13 @@ export interface Profile {
   passosFeitos?: Partial<Record<StepId, string>>;
   /** Termos que o app acrescentou a `limitations` a partir do questionário (nunca os do personal). */
   limitacoesDoQuestionario?: string[];
+  /**
+   * Última revogação da autorização de saúde (`revogarSaude`) e último "Apagar respostas" (`apagarRespostas`), só a
+   * data. Restaurar uma cópia de segurança de antes disso não traz de volta a autorização, as liberações, as medidas
+   * nem as respostas (`mesclarRestauracao`).
+   */
+  saudeRevogadaEm?: string;
+  respostasApagadasEm?: string;
 }
 
 export interface PlannedExercise {

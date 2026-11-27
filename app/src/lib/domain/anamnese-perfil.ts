@@ -9,12 +9,12 @@ import type { FichaLinkExtra, StrictEventProps } from "@/lib/analytics";
 import { evFichaLinkExtra, evNextStep } from "@/lib/anamnese-events";
 import type { AcaoPasso, AlertId, Alerta, Anamnese, Origem, Passo, StepId } from "./anamnese-types";
 import { ehExemplo } from "./anamnese-types";
-import { algumSimParq, fmtData, fmtDiaMes, gatilhoNutricionista, primeiroNome, stripHealth } from "./anamnese";
+import { algumSimParq, fmtData, fmtDiaMes, gatilhoNutricionista, precisaResponsavel, primeiroNome, stripHealth } from "./anamnese";
 import { mergeLimitations } from "./anamnese-ficha";
 import { calendarDaysSince } from "./attention";
 import { SEM_LIBERACAO_MEDICA, pedidoPendente } from "./next-steps";
 import { readAnamnese } from "./questionario-link";
-import { mensagemAvisar, travaEPorta } from "./triagem";
+import { mensagemAvisar, TITULO_SAUDE_INCOMPLETA, travaEPorta } from "./triagem";
 import type { Profile } from "./types";
 
 export type Selo = "nao_comecar" | "liberacao_pendente" | "respostas_novas" | "questionario_pendente";
@@ -115,9 +115,11 @@ export const TEXTO_REVOGAR = "As respostas de saúde do questionário e as liber
  * inteiras: não dá para separar a saúde do resto), liberações, limitações, peso, altura, os tokens do app e a
  * autorização removidos, e as marcas de passos clínicos apagadas. Mantém nome, objetivo, dias, foco e o pedido.
  * Quem chama grava `marcarApagado` para cada `idsDeRespostas` (antes de revogar) e salva o perfil devolvido inteiro.
+ * Com `agora`, grava `saudeRevogadaEm` (só a data): uma cópia de segurança de antes não desfaz a revogação.
  */
-export function revogarSaude(p: Profile): Profile {
+export function revogarSaude(p: Profile, agora?: string): Profile {
   const next = semCampos(p, ["liberacoes", "limitations", "weightKg", "heightCm", "limitacoesDoQuestionario", "consentHealthAt", "consentSource", "passosFeitos"]);
+  if (agora) next.saudeRevogadaEm = agora;
   for (const campo of ["anamnese", "anamnesePrev"] as const) {
     if (!p[campo]) continue;
     const { an } = ler(p, campo);
@@ -138,15 +140,26 @@ function respostasNumericas(p: Profile, chave: "peso" | "altura"): number[] {
 }
 
 /**
+ * Peso que pode ir para a IA da dieta (/api/ai/diet): nunca o que foi copiado do questionário (rodada atual ou
+ * anterior). As respostas não passam pelo servidor do Shape Real (texto da autorização, §11.1).
+ */
+export function pesoParaIA(p: Profile): number | undefined {
+  if (typeof p.weightKg !== "number") return undefined;
+  return respostasNumericas(p, "peso").includes(p.weightKg) ? undefined : p.weightKg;
+}
+
+/**
  * "Apagar respostas do questionário" (spec §11.2): remove as respostas atuais e anteriores, as liberações, o pedido,
  * os tokens que o app pôs nas limitações e as marcas de passos clínicos. A autorização e o resto do cadastro ficam.
  * `comCadastro` ("Apagar também as limitações e medidas copiadas para o cadastro"): tira das limitações só os trechos
  * que o app acrescentou (o texto do personal fica) e o peso e a altura iguais aos que o aluno respondeu (medida que o
  * personal registrou com outro valor fica).
  * Quem chama grava `marcarApagado` para cada `idsDeRespostas` ANTES (depois, as respostas já não estão no perfil).
+ * Com `agora`, grava `respostasApagadasEm` (só a data): uma cópia de segurança de antes não traz as respostas de volta.
  */
-export function apagarRespostas(p: Profile, comCadastro: boolean): Profile {
+export function apagarRespostas(p: Profile, comCadastro: boolean, agora?: string): Profile {
   const next = semCampos(p, ["anamnese", "anamnesePrev", "liberacoes", "anamnesePedido", "limitacoesDoQuestionario", "passosFeitos"]);
+  if (agora) next.respostasApagadasEm = agora;
   const feitos = semPassosClinicos(p.passosFeitos);
   if (feitos) next.passosFeitos = feitos;
   if (!comCadastro) return next;
@@ -302,7 +315,7 @@ export function acoesDoAlerta(al: Alerta, p: Pick<Profile, "id" | "name">): Acao
   const href = `/questionario?aluno=${encodeURIComponent(p.id)}`;
   if (liberadoPorProfissional(al)) return [];
   if (al.id === "A-SEM-TRIAGEM") return [{ tipo: "preencher", rotulo: `Preencher a saúde com ${aluno}`, href }];
-  if (al.id === "A-PARQ-INCOMPLETO") return [{ tipo: "preencher", rotulo: `Completar o PAR-Q com ${aluno}`, href }];
+  if (al.id === "A-PARQ-INCOMPLETO") return [{ tipo: "preencher", rotulo: al.titulo === TITULO_SAUDE_INCOMPLETA ? `Completar a saúde com ${aluno}` : `Completar o PAR-Q com ${aluno}`, href }];
   const liberar: AcaoAlerta = { tipo: "liberacao", rotulo: "Registrar liberação" };
   if (al.nivel === "vermelho" || al.nivel === "laranja") {
     if (al.coberto?.por === "override") return [liberar];
@@ -359,7 +372,13 @@ export function registroDoQuestionario(p: Profile, alertasAtuais: readonly Pick<
   const titulo = new Map(alertasAtuais.map((x) => [x.id, x.titulo] as const));
   const titulos = (ids: readonly AlertId[]) => ids.map((id) => titulo.get(id)).filter((t): t is string => !!t).join("; ");
   const out: string[] = [];
-  if (an.healthOmitted) out.push("Autorização de saúde: não dada. As respostas de saúde não foram guardadas.");
+  // Menor de idade: a falta pode ser da autorização do responsável (o aluno pode ter autorizado); não atribui a ninguém.
+  if (an.healthOmitted)
+    out.push(
+      precisaResponsavel(an.a, new Date(an.answeredAt))
+        ? `Autorização de saúde: faltou a de ${aluno} ou a do responsável. As respostas de saúde não foram guardadas.`
+        : "Autorização de saúde: não dada. As respostas de saúde não foram guardadas.",
+    );
   else if (an.consent) {
     out.push(
       an.consent.source === "aluno_questionario"

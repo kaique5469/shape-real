@@ -642,3 +642,90 @@ cita. Se a medição em aparelho real mostrar prejuízo, o caminho é a Entrega 
 - **Com alerta vermelho aberto, o passo "Gerar ficha com estas respostas" continua na lista de próximos passos**, com
   [Gerar]. O botão leva ao gerador, que abre a trava; não há caminho que gere sem a liberação. Mesmo assim, pode valer
   esconder o passo enquanto houver trava, como o bloco 3 já faz.
+
+## 2026-11-27 — Correção da revisão da rodada 2 (questionário): o que mudou e por quê
+
+Os 26 achados da revisão (fluxos, segurança clínica, LGPD, 360 px, links) foram conferidos no código antes de mexer;
+nenhum era falso positivo. O que muda em relação à spec ou às decisões anteriores:
+
+**Cadastro e conferência**
+- **Limitação que só entra num cadastro vazio é preenchida sem perguntar** (`limitacoesPedemConferencia`). A linha
+  "Limitações" de "Conferir antes de salvar" só aparece quando sai um token do app, quando o texto passaria do teto ou
+  quando entra token num cadastro que já tem limitações. Em `applyAnamnese`, "Manter como está" com o cadastro vazio
+  não vale: antes, o cadastro rápido via "Entra: joelho", o personal tocava "Manter" e a ficha saía com agachamento sem
+  aviso.
+- **"Completar o questionário" continua a rodada do junto salva pela metade** (`rascunhoDaIncompleta`): sem rascunho no
+  aparelho, a boas-vindas oferece "Continuar de onde parei" com as respostas dela, na primeira parte incompleta. A
+  rodada incompleta do junto é sempre completada com o mesmo id (`idDaRodadaIncompleta`), também por "Começar de
+  novo": `applyAnamnese` a substitui e ela nunca vira `anamnesePrev`.
+
+**Triagem**
+- **Saúde ou Dores puladas no junto contam como dado que falta.** Reaproveita `A-PARQ-INCOMPLETO` (laranja, porta, sem
+  pedir liberação médica) para não mexer na união `AlertId`. O título passa a ser "Triagem de saúde incompleta", e a
+  ação, "Completar a saúde com {aluno}". O PAR-Q sozinho continua "PAR-Q incompleto". Antes, o resumo dizia "Nenhum
+  sinal de alerta" e o gerador abria livre.
+- **"Seguir mesmo assim" e "Conversei" só cobrem as respostas que já tinham chegado**, como a liberação (§6.4): um
+  reenvio no mesmo id, ou o junto completado, reabre os alertas. O registro impresso continua com o histórico.
+- **A-MENOR usa a mesma leitura cautelosa da idade do questionário** (`precisaResponsavel`, com a idade de hoje): a
+  frase da lei SP vale para quem pode ter menos de 15.
+- **Sem saúde num menor, o texto não diz que o aluno não autorizou**: "faltou a autorização de {aluno} ou do
+  responsável". Vale para A-SEM-TRIAGEM e para o registro impresso, que vai para o CONFEF.
+- No `/receber`, a autorização de um menor nomeia o responsável. A recepção recusa saúde de menor sem
+  `consent.responsavel` (`menor_sem_responsavel`): o app sempre manda, então só um pacote mexido à mão cai aqui.
+
+**Privacidade e IA**
+- **Com questionário, a base da ficha sai sempre do motor do app, mesmo com a IA ligada** (`motivoDoMotorLocal`). O
+  mesmo vale com os termos do app nas limitações, com o teto moderado ou com "não quero fazer". Resolve a pendência da
+  integração ("a IA ignora `avoidIds` e `intensityCap`"). Também cumpre a regra do tech lead ("nada do questionário vai
+  para /api/ai") e o texto da autorização ("as respostas não passam pelo servidor do Shape Real"). Na dieta, o peso
+  igual ao respondido no questionário não vai para /api/ai/diet (`pesoParaIA`).
+- **Restaurar uma cópia de antes não desfaz a revogação nem o "Apagar respostas".** O perfil ganha as datas
+  `saudeRevogadaEm` e `respostasApagadasEm` (só datas, gravadas por `revogarSaude` e `apagarRespostas`). A cópia passa
+  a levar as marcas `sr:v1:qapagado:*` (`apagadas`), restauradas sem trocar uma mais nova. Em `mesclarRestauracao`,
+  quando a marca do aparelho é mais nova que a da cópia, ou a rodada da cópia tem `qapagado` gravado aqui depois dela:
+  - da cópia não voltam as rodadas nem as liberações de antes do ato;
+  - peso, altura e limitações ficam como no aparelho;
+  - com a revogação, a autorização também fica como no aparelho.
+
+  Muda a regra "liberações unidas por id" da spec (§9.2) e resolve a pendência das marcas `qapagado` da integração.
+  Aluno inexistente no aparelho continua recebendo a cópia como veio.
+- **A revogação pela tela não trava mais**: desmarcar a autorização com saúde do questionário vai direto para a
+  confirmação, sem pedir "Marque a autorização…" (`faltaAutorizacao`). Perfil com saúde digitada e sem questionário
+  continua como antes (pede para esvaziar os campos): o texto da confirmação fala do questionário. Fica para o dono.
+- **"Apagar respostas" e a revogação apagam também o rascunho do junto** (`esquecerQuestionarioDoAluno`), e o card
+  "Questionário pela metade" some na hora.
+- **Junto com menor sem a caixa do responsável**: o botão vira "Salvar sem dados de saúde", com a linha dizendo o que
+  não é salvo (`rotuloDoSalvarJunto`), como no link.
+
+**Pedido pelo WhatsApp**
+- **Reenvio e "Lembrar" mantêm o mesmo id, mas refazem o pacote** (`pedidoParaEnviar`), com o personal de agora e um
+  `sentAt` novo. A spec §5.3 dizia "mesmo id e mesmo packed"; o que mantém o rascunho e o "Você já enviou" do aluno é
+  só o id. Com o pacote antigo, um WhatsApp trocado em Conta mandava as respostas para o número velho, e o lembrete de
+  um pedido de mais de 60 dias abria em "Este pedido é de DD/MM". A frase da spec §5.3 fica "mesmo id".
+
+**Histórico, foco e 360 px**
+- **`limparEndereco` (share-link.ts) troca o endereço sem perder o estado do roteador.** Com o roteador já ativo, a
+  chamada vai pelo `replaceState` dele, que copia o estado e sincroniza o endereço. No efeito da primeira carga, o
+  estado atual vai junto à mão. Antes, o `replaceState(null)` apagava `__NA`, e o primeiro voltar do Android recarregava
+  a página do aluno, com o foco no `<body>`. Usado em /questionario, /receber, /abrir, gerador (`?auto=1`), editor da
+  ficha e página do aluno.
+- **Fim do questionário recolhe as entradas das partes**: cada entrada guarda `qDepth`, e o fim faz
+  `history.go(-qDepth)`. No junto com rede, o resumo entra com `router.replace` no lugar da página. Pelo link, o próximo
+  voltar sai da página. Outras mudanças de navegação:
+  - `history.scrollRestoration = "manual"` enquanto o questionário está aberto: o voltar leva ao topo da parte;
+  - /receber registra com `router.replace`: o link já consumido sai do histórico.
+- **/receber e /abrir escutam `hashchange`** (outro link na mesma aba), como /questionario. Kind desconhecido ou
+  `v` acima de `TRANSFER_VERSION` mostra "Atualize" em /abrir, /receber e "Colar aqui" (`ehLinkDeVersaoNova`, com o
+  texto copiado de `PROBLEMA_TEXTO` e teste que compara os dois).
+- **Recuo da rolagem medido**: o bloco "Sem internet" saiu da barra fixa de "Conferir e enviar" e foi para o conteúdo,
+  como aviso. O recuo de baixo acompanha a altura da barra (`useStickyBarScrollPadding`) no questionário e no
+  onboarding.
+- Ajustes de 360 px e foco:
+  - botões de /receber com nome no rótulo crescem com o texto;
+  - o diálogo da trava/porta fica montado e devolve o foco ao botão (aberto por `?auto=1`, o foco vai para o título);
+  - "Salvar e continuar" do pedido leva o foco para a etapa da mensagem.
+
+Testes novos (arquivos novos): `anamnese-ficha.conferir`, `questionario-completar`, `questionario-receber.menor`,
+`triagem.revisao`, `export.restauracao`, `questionario-link.revisao`, `student-form-state.revogar`,
+`anamnese-perfil.ia`, `questionario-apagar`. Ajustados: o vizinho negativo de A-MENOR (19 anos), o texto de
+A-SEM-TRIAGEM do menor e a integração catálogo × esquema (ano de menor leva o responsável).

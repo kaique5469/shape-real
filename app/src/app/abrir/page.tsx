@@ -13,9 +13,9 @@ import { useApp, localRepo } from "@/lib/app-context";
 import { dietLinkSummary, dietReplaceNotice, dietReplaceText } from "@/lib/domain/diet-plan";
 import { fichaReplaceNotice } from "@/lib/domain/ficha-context";
 import { firstName, fmtDayMonth } from "@/lib/domain/format";
-import { parsePacket, type FichaPacket } from "@/lib/domain/transfer";
+import { LINK_VERSAO_NOVA_TEXTO, ehLinkDeVersaoNova, parsePacket, type FichaPacket } from "@/lib/domain/transfer";
 import type { DietPlan, Program } from "@/lib/domain/types";
-import { cameFromPaste, packedFromHash, unpackData } from "@/lib/share-link";
+import { cameFromPaste, limparEndereco, packedFromHash, unpackData } from "@/lib/share-link";
 import { importFicha } from "@/lib/transfer-client";
 
 /**
@@ -26,7 +26,8 @@ export default function AbrirPage() {
   const { ready, user, mode, returnTo, enterLocalProfile, actAs } = useApp();
   const router = useRouter();
   const [packet, setPacket] = useState<FichaPacket | null>(null);
-  const [state, setState] = useState<"lendo" | "pronto" | "invalido">("lendo");
+  /** "atualize": link de tipo desconhecido ou de versão mais nova (spec §10.2), não um link cortado. */
+  const [state, setState] = useState<"lendo" | "pronto" | "invalido" | "atualize">("lendo");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ownStudent, setOwnStudent] = useState(false);
@@ -41,6 +42,15 @@ export default function AbrirPage() {
   const read = useRef(false);
   const deadEnd = useRef(false);
 
+  // Outro link aberto na mesma aba (app instalado que reaproveita a janela): o navegador só troca o "#". Lê de novo.
+  useEffect(() => {
+    const onHash = () => {
+      if (packedFromHash(window.location.hash)) window.location.reload();
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
   useEffect(() => {
     if (read.current) return;
     read.current = true;
@@ -48,10 +58,11 @@ export default function AbrirPage() {
     setIosBrowser(isIosBrowser());
     const packed = packedFromHash(window.location.hash);
     // O conteúdo sai da barra de endereço assim que é lido.
-    if (window.location.hash) window.history.replaceState(null, "", window.location.pathname);
+    if (window.location.hash) limparEndereco(window.location.pathname);
     if (!packed) return setState("invalido");
     unpackData(packed)
       .then((raw) => {
+        if (ehLinkDeVersaoNova(raw)) return setState("atualize");
         const p = parsePacket(raw);
         if (p?.kind !== "ficha") return setState("invalido");
         setPacket(p);
@@ -70,7 +81,7 @@ export default function AbrirPage() {
   // Beco sem saída: link que não abre ou Safari do iPhone sem perfil (o app instalado não vê estes dados).
   useEffect(() => {
     if (deadEnd.current || !ready || state === "lendo") return;
-    const motivo = state === "invalido" ? "invalido" : showAppCard ? "iphone" : null;
+    const motivo = state === "invalido" ? "invalido" : state === "atualize" ? "versao_nova" : showAppCard ? "iphone" : null;
     if (!motivo) return;
     deadEnd.current = true;
     track("link_dead_end_shown", { tela: "abrir", motivo, via_paste: viaPaste });
@@ -141,10 +152,12 @@ export default function AbrirPage() {
             <Skeleton className="h-10 w-3/4" />
             <Skeleton className="h-40" />
           </div>
-        ) : state === "invalido" || !packet ? (
+        ) : state === "invalido" || state === "atualize" || !packet ? (
           <div className="space-y-4">
             <h1 className="plate-type text-[1.9rem] leading-tight">Este link não abriu</h1>
-            <p className="text-steel">Ele pode ter sido cortado ao copiar. Peça ao seu personal para enviar de novo pelo botão “Enviar para o celular do aluno”.</p>
+            <p className="text-steel">
+              {state === "atualize" ? LINK_VERSAO_NOVA_TEXTO : "Ele pode ter sido cortado ao copiar. Peça ao seu personal para enviar de novo pelo botão “Enviar para o celular do aluno”."}
+            </p>
             <LinkButton href="/" variant="secondary">
               Conhecer o Shape Real
             </LinkButton>

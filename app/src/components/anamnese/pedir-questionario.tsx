@@ -14,14 +14,13 @@ import { ehExemplo } from "@/lib/domain/anamnese-types";
 import { maskPhone, waLink, waPhone } from "@/lib/domain/format";
 import { pedidoPendente } from "@/lib/domain/next-steps";
 import {
-  buildPedido,
   comPedido,
   lembreteMessage,
   linkPedido,
   pedidoMessage,
   PEDIR_TEXTO,
   nomeDoPersonalOk,
-  pedidoReaproveitavel,
+  pedidoParaEnviar,
   readAnamnese,
   whatsappDoPersonalOk,
   type PedidoPacket,
@@ -43,7 +42,7 @@ interface PedidoPronto {
   /** A mensagem com o link encurtado só na tela (o envio e a cópia levam o link inteiro). */
   previa: string;
   minutos: number;
-  /** Mesmo `id` (e mesmo `packed`) de um pedido pendente: o aluno continua o rascunho. */
+  /** Mesmo `id` de um pedido pendente (pacote refeito com os dados de agora): o aluno continua o rascunho. */
   reenvio: boolean;
 }
 
@@ -54,7 +53,7 @@ interface PedidoPronto {
  * pedido, no primeiro toque desta abertura, com `reenvio` quando o pedido pendente é reaproveitado.
  *  - Sem o WhatsApp do personal: o diálogo começa por ele (sem o número, as respostas cairiam no seletor de contatos).
  *    Com o nome provisório "Personal" (o /testar começa assim), pede o nome junto: o aluno leria "Aqui é Personal".
- *  - "Lembrar {aluno}" (`de: "lembrete"`): mesmo `id` e mesmo link, com a mensagem de lembrete.
+ *  - "Lembrar {aluno}" (`de: "lembrete"`): mesmo `id`, pacote refeito (`pedidoParaEnviar`), com a mensagem de lembrete.
  *  - Aluno de exemplo ou da demonstração (`ehExemplo`): nenhum pedido real e nenhum evento.
  *  - Conta na nuvem: /receber não registra respostas, então o pedido por link não é oferecido.
  * Nenhum texto do diálogo nem da mensagem tem dado de saúde. Raiz com `ph-no-capture`.
@@ -86,6 +85,14 @@ export function PedirQuestionario(props: { open: boolean; onClose: () => void; s
   atual.current = { student, user };
   const hintId = useId();
   const erroId = useId();
+  /** Depois de "Salvar e continuar": leva o foco para a introdução da etapa da mensagem quando ela aparece. */
+  const focarEtapa = useRef(false);
+  const introRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (!focarEtapa.current || !temDados) return;
+    focarEtapa.current = false;
+    requestAnimationFrame(() => introRef.current?.focus());
+  }, [temDados]);
   const nomeHintId = useId();
   const nomeErroId = useId();
 
@@ -108,22 +115,14 @@ export function PedirQuestionario(props: { open: boolean; onClose: () => void; s
       const { student: s, user: coach } = atual.current;
       if (!coach) return;
       const lida = readAnamnese(s);
-      const reuso = pedidoReaproveitavel(s, pedidoPendente(s, lida && typeof lida === "object" ? lida : null), reavaliacao);
-      const pedido = buildPedido({
-        coach,
-        student: s,
-        modulos: reuso?.modulos ?? [],
-        ...(coach.workStyle?.atendimento ? { atendimento: coach.workStyle.atendimento } : {}),
-        ...(reavaliacao ? { reavaliacao } : {}),
-        ...(reuso ? { id: reuso.id } : {}),
-        agora: new Date().toISOString(),
-      });
-      const packed = reuso?.packed ?? (await packData(pedido));
+      // Mesmo id do pedido pendente, pacote refeito com o personal de agora (WhatsApp, nome, CREF) e `sentAt` novo.
+      const { pedido, reenvio } = pedidoParaEnviar({ coach, student: s, pendente: pedidoPendente(s, lida && typeof lida === "object" ? lida : null), ...(reavaliacao ? { reavaliacao } : {}), agora: new Date().toISOString() });
+      const packed = await packData(pedido);
       if (!vivo) return;
       const link = linkPedido(window.location.origin, packed);
       const minutos = estimarMinutos({ modulos: pedido.modulos, extras: pedido.extras ?? [], ...(reavaliacao ? { reavaliacao } : {}) });
-      const texto = lembrete && reuso ? lembreteMessage(s.name, link) : pedidoMessage(pedido, link, minutos);
-      setPronto({ pedido, packed, texto, previa: texto.replace(link, linkCurto(link)), minutos, reenvio: Boolean(reuso) });
+      const texto = lembrete && reenvio ? lembreteMessage(s.name, link) : pedidoMessage(pedido, link, minutos);
+      setPronto({ pedido, packed, texto, previa: texto.replace(link, linkCurto(link)), minutos, reenvio });
     })().catch(() => {
       // Sem reportError: o pacote só tem nomes e o id do pedido, e o erro não ajudaria a corrigir nada.
       if (vivo) setErro(PEDIR_TEXTO.naoSalvou);
@@ -164,9 +163,13 @@ export function PedirQuestionario(props: { open: boolean; onClose: () => void; s
     setErroFone(semFone ? PEDIR_TEXTO.erroWhatsapp : null);
     if (semNome || semFone) return;
     setSalvandoFone(true);
+    // O formulário dá lugar à prévia: o foco vai para o começo da etapa nova (senão cai no <body> com o diálogo aberto).
+    // Marcado antes de gravar: o perfil do personal pode mudar (e a etapa trocar) antes de a gravação terminar.
+    focarEtapa.current = true;
     try {
       await updateProfile({ ...(temNome ? {} : { name: nomeLimpo }), ...(temWhatsapp ? {} : { phone: fone }) });
     } catch (err) {
+      focarEtapa.current = false;
       reportError(err, "questionario:pedido-whatsapp");
       setErroFone(PEDIR_TEXTO.naoSalvou);
     } finally {
@@ -238,7 +241,9 @@ export function PedirQuestionario(props: { open: boolean; onClose: () => void; s
           </form>
         ) : (
           <>
-            <p className="text-[0.9375rem] text-steel">{PEDIR_TEXTO.comoResponde(aluno, minutos)}</p>
+            <p ref={introRef} tabIndex={-1} className="text-[0.9375rem] text-steel outline-none">
+              {PEDIR_TEXTO.comoResponde(aluno, minutos)}
+            </p>
             <p className="flex items-start gap-2 text-[0.9375rem] text-iron">
               <Lock className="mt-[0.2em] size-4 shrink-0 text-steel" aria-hidden />
               <span className="min-w-0">{PEDIR_TEXTO.sempreVao}</span>

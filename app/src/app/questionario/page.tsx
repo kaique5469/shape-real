@@ -12,7 +12,7 @@ import { PROBLEMA_TEXTO, packetProblem, parsePedido, type PedidoPacket, type Pro
 import type { Profile } from "@/lib/domain/types";
 import { guardarPedidoDaAba, limparRascunhosVencidos, pedidoDaAba } from "@/lib/questionario-client";
 import { QTEXTO, guardaDoJunto, guardaDoLink } from "@/lib/questionario-flow";
-import { cameFromPaste, packedFromHash, unpackData } from "@/lib/share-link";
+import { cameFromPaste, limparEndereco, packedFromHash, unpackData } from "@/lib/share-link";
 
 /**
  * Questionário inicial no celular (spec §5.2 e §5.4; track D), fora do painel, como /abrir:
@@ -57,7 +57,7 @@ export default function QuestionarioPage() {
     const { hash, search, pathname } = window.location;
     const viaPaste = cameFromPaste(hash);
     const doHash = packedFromHash(hash);
-    if (hash) window.history.replaceState(null, "", pathname + search);
+    if (hash) limparEndereco(pathname + search);
     const alunoId = new URLSearchParams(search).get("aluno");
     if (doHash) guardarPedidoDaAba(doHash);
     const packed = doHash ?? (alunoId ? null : pedidoDaAba());

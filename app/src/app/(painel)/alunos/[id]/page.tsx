@@ -31,6 +31,7 @@ import { RECEBER_TEXTO } from "@/lib/questionario-receber";
 import { validityIcon, validityTone } from "@/lib/ui/tone";
 import { apagarRascunho, chaveRascunho, lerRascunho, type Rascunho } from "@/lib/questionario-client";
 import { ctxDoJunto, secaoDoRascunho } from "@/lib/questionario-flow";
+import { limparEndereco } from "@/lib/share-link";
 import type { BodyMetric, Equipment, Profile, Program, Session } from "@/lib/domain/types";
 import { useStudent } from "./student";
 
@@ -62,7 +63,7 @@ function semParametro(id: string, search: URLSearchParams, nomes: string | strin
   const q = new URLSearchParams(search.toString());
   for (const nome of Array.isArray(nomes) ? nomes : [nomes]) q.delete(nome);
   const resto = q.toString();
-  window.history.replaceState(null, "", `/alunos/${id}${resto ? `?${resto}` : ""}`);
+  limparEndereco(`/alunos/${id}${resto ? `?${resto}` : ""}`);
 }
 
 function Aluno({ id }: { id: string }) {
@@ -323,7 +324,16 @@ function Aluno({ id }: { id: string }) {
       />
 
       <PedirQuestionario open={pedir !== null} onClose={() => setPedir(null)} student={student} de={pedir ?? "aluno"} onPedido={setData} />
-      <ApagarRespostasDialog open={apagar} onClose={() => setApagar(false)} student={student} onSaved={setData} />
+      <ApagarRespostasDialog
+        open={apagar}
+        onClose={() => setApagar(false)}
+        student={student}
+        onSaved={(p) => {
+          setData(p);
+          // O rascunho do junto saiu com as respostas: o card "Questionário pela metade" some agora.
+          setRascunho(questionario ? lerRascunho(chaveRascunho({ studentId: id })) : null);
+        }}
+      />
 
       <StudentForm
         open={edit}
@@ -332,6 +342,8 @@ function Aluno({ id }: { id: string }) {
         onSaved={(p) => {
           setData(p);
           setEdit(false);
+          // A revogação apaga o rascunho do junto: relê para o card não oferecer retomar.
+          setRascunho(questionario ? lerRascunho(chaveRascunho({ studentId: id })) : null);
         }}
       />
 

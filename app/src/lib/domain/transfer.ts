@@ -13,6 +13,19 @@ import type { BodyMetric, ConsentSource, DietPlan, Exercise, Profile, Program, S
  */
 
 export const TRANSFER_VERSION = 1;
+
+/**
+ * Link de tipo desconhecido ou de versão mais nova (spec §10.2): pede para atualizar, nunca diz "link cortado". O texto
+ * e os tipos são os de questionario-link.ts (`PROBLEMA_TEXTO`, `KINDS_CONHECIDOS`; há teste), copiados para /abrir e o
+ * "Colar aqui" não carregarem o esquema do questionário.
+ */
+export const LINK_VERSAO_NOVA_TEXTO = "Este link é de uma versão mais nova do Shape Real. Atualize a página (puxe para baixo) e abra o link de novo.";
+export const KINDS_DO_APP = ["ficha", "treinos", "pedido_anamnese", "anamnese"] as const;
+export function ehLinkDeVersaoNova(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const { kind, v } = raw as { kind?: unknown; v?: unknown };
+  return (typeof kind === "string" && !(KINDS_DO_APP as readonly string[]).includes(kind)) || (typeof v === "number" && v > TRANSFER_VERSION);
+}
 export const MAX_SESSIONS_PER_LINK = 20;
 
 const STUDENT_FIELDS = ["name", "sex", "birthYear", "heightCm", "weightKg", "activity", "goal", "level", "daysPerWeek", "sessionMinutes", "equipment", "limitations"] as const;
