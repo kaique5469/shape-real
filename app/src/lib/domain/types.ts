@@ -265,6 +265,12 @@ export interface ExerciseLog {
   sets: SetLog[];
   notes?: string;
   unit?: Unit;
+  /**
+   * Rodada 3 (R3-7): a pessoa tocou em "Senti dor" neste exercício. Explícito, nunca inferido do texto das notas.
+   * Com dor na última vez, a sugestão de carga seguinte é `kind: "dor"` (sem carga). Nunca vai para o analytics.
+   * Opcional: treinos antigos e links antigos não têm.
+   */
+  pain?: boolean;
 }
 
 export interface Session {
@@ -279,9 +285,21 @@ export interface Session {
   exercises: ExerciseLog[];
   note?: string;
   feeling?: 1 | 2 | 3 | 4 | 5;
+  /** Cache do volume na hora de salvar. Leitura sempre por `volumeDaSessao` (progression.ts), nunca por este campo. */
   volumeKg: number;
   /** exerciseIds com recorde nesta sessão */
   prs: string[];
+  // ---- Rodada 3 (R3-4). Todos opcionais: sessões antigas, cópias antigas e links antigos não têm. ----
+  /** Minutos ativos gravados no fim do treino (pausas longas fora). Leitura só por `activeMinutes` (session-time.ts). */
+  activeMin?: number;
+  /** `activeMin` corrigido pela pessoa no resumo final, antes de salvar ("ajustado"). */
+  activeEdited?: boolean;
+  /**
+   * Séries planejadas do treino, gravadas em `finish` ANTES de tirar os exercícios sem série feita (soma de
+   * `sets.length` do rascunho). Sem este campo não há "parcial" (nunca derivar de `sets.length` da sessão salva, que
+   * subconta). Leitura por `sessionCompleteness` (session-time.ts).
+   */
+  plannedSets?: number;
 }
 
 export interface BodyMetric {

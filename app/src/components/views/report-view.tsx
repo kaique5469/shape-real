@@ -13,7 +13,7 @@ import { coachSignature, signerFor } from "@/lib/domain/program-share";
 import { firstName, waLink, waPhone } from "@/lib/domain/format";
 import { todayISO } from "@/lib/domain/ids";
 import { comparisonDates } from "@/lib/domain/evolution";
-import { buildReport, fmtDuration, markText, nameList, reportToText, strengthChange, strengthNotes, type EvolutionReport, type ReportDays } from "@/lib/domain/report";
+import { buildReport, fmtDuration, markText, nameList, reportBase, reportGoal, reportLabels, reportSessionsValue, reportToText, strengthChange, strengthNotes, type EvolutionReport, type ReportDays } from "@/lib/domain/report";
 import { fmtDate, fmtNum, useLoad } from "@/lib/hooks";
 import type { PhotoPose, Profile, ProgressPhoto } from "@/lib/domain/types";
 
@@ -46,7 +46,7 @@ function photoPair(photos: ProgressPhoto[], from: string, to: string): { before:
  * quem treina sozinho guarda ou compartilha. A folha da tela é a mesma que vai para o PDF.
  */
 export function ReportView({ subject, byCoach }: { subject: Profile; byCoach: boolean }) {
-  const { repo, user } = useApp();
+  const { repo, user, mode } = useApp();
   const [days, setDays] = useState<ReportDays>(30);
   const [message, setMessage] = useState("");
   const [withPhotos, setWithPhotos] = useState(true);
@@ -54,7 +54,8 @@ export function ReportView({ subject, byCoach }: { subject: Profile; byCoach: bo
   const [err, setErr] = useState<string | null>(null);
   const { data, loading, error } = useLoad(async () => {
     const [sessions, metrics, programs, photos] = await Promise.all([repo.listSessions(subject.id), repo.listMetrics(subject.id), repo.listPrograms(subject.id), repo.listPhotos(subject.id).catch(() => [] as ProgressPhoto[])]);
-    return { sessions, metrics, photos, perWeek: subject.daysPerWeek ?? programs.find((p) => p.active)?.daysPerWeek };
+    // Meta da semana com a regra única (R3-16): a ficha ativa, senão o cadastro (como /alunos, Hoje e a página do aluno).
+    return { sessions, metrics, photos, perWeek: reportGoal(programs, subject) };
   }, [subject.id, repo]);
 
   useEffect(() => {
@@ -64,7 +65,9 @@ export function ReportView({ subject, byCoach }: { subject: Profile; byCoach: bo
     track("report_viewed", { by_coach: byCoach });
   }, [subject.id, byCoach]);
 
-  const report = useMemo(() => (data ? buildReport({ profile: subject, sessions: data.sessions, metrics: data.metrics, days, daysPerWeek: data.perWeek }) : null), [data, days, subject]);
+  // Personal no modo local: só tem os treinos que o aluno mandou (R3-15, "recebidos").
+  const base = reportBase({ byCoach, mode });
+  const report = useMemo(() => (data ? buildReport({ profile: subject, sessions: data.sessions, metrics: data.metrics, days, daysPerWeek: data.perWeek, base }) : null), [data, days, subject, base]);
   const pair = useMemo(() => (data && report ? photoPair(data.photos, report.from, report.to) : null), [data, report]);
 
   if (loading && !data) return <Skeleton className="h-96" />;
@@ -215,8 +218,9 @@ function Sheet({
   if (signature) facts.push(["Personal", signature]);
 
   const summary: [string, string][] = [];
-  summary.push(["Treinos feitos", r.planned ? `${r.sessions} de ${r.planned} combinados` : String(r.sessions)]);
-  if (r.adherencePct !== null) summary.push(["Frequência", `${r.adherencePct}%`]);
+  const labels = reportLabels(r);
+  summary.push([labels.treinos, reportSessionsValue(r)]);
+  if (r.adherencePct !== null) summary.push([labels.frequencia, `${r.adherencePct}%`]);
   if (r.minutes) summary.push(["Tempo treinado", fmtDuration(r.minutes)]);
   if (r.sets) summary.push(["Séries feitas", String(r.sets)]);
   if (r.volumeKg) summary.push(["Carga total levantada", `${fmtNum(r.volumeKg / 1000, 1)} t`]);

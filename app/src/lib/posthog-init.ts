@@ -1,5 +1,6 @@
 import posthog, { type PostHog } from "posthog-js";
 import { anexarPosthog, type ErroCedo, type InicioDaPagina } from "@/lib/analytics";
+import { filtrarProps } from "@/lib/analytics-props";
 import { limparEventoPosthog, type LocalPagina } from "@/lib/questionario-base";
 
 /**
@@ -103,7 +104,8 @@ export function iniciarPosthog(token: string, abertura: LocalPagina, persistence
     },
   });
   semPageviewDoInit(posthog);
-  anexarPosthog(posthog, inicio, cedo);
+  // Rodada 3 (R3-19): o filtro por evento vai com o SDK, então as listas não pesam no primeiro carregamento.
+  anexarPosthog(posthog, inicio, cedo, filtrarProps);
   return (erro) => {
     try {
       posthog.captureException(erro instanceof Error ? erro : new Error(String(erro)), { handled: false });

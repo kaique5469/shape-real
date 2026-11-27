@@ -925,3 +925,137 @@ pares intercalados contra o HEAD 11de1ab, kit `M/m-verif`), salvo indicação.
     dados sensíveis com "2010", no caso 4, que não usa esse ano (só o caso 3 usa); a busca do roteiro não exige palavra
     inteira e também bate em trechos de identificadores e horários (ESTIMADO). Na execução seguinte, que imprime o
     trecho de cada acerto: 0 de 264.
+
+## 2026-11-27 — Rodada 3 (spec de 26/11 + estudo externo 2)
+
+Fontes: a spec da rodada 3 (handoff externo de 26/11, itens R3-1 a R3-9) e o adendo do estudo externo 2, que muda
+R3-1 a R3-9, cria R3-10 a R3-20 e vale onde os dois divergem. Triagem item a item (396 itens, com `arquivo:linha` do
+11de1ab e testes descartáveis): `triagem.md`. A rodada trabalha por cima da M-A (50b5d58) e não desfaz nada dela.
+
+**Feito (já no código; só preservar ou retestar).** Estados da série, envio honesto, metas × cardápio, "antes e agora"
+na Evolução, cores semânticas e apagar dados locais (rodada 1); volume do QA-03 (1.230 kg); busca e fila no painel;
+questionário (rodada 2); fotos fora da cópia, já avisado; link futuro, cortado ou adulterado (QA-04) e dois links na
+mesma aba (QA-05), só reteste no e2e; "1 garrafa de 500 ml de água" já dá 500 g; o descarte do IP no PostHog está
+ligado desde 21/11 (a frase da política fica; reconferir no painel antes de publicar). A triagem conta 86 itens nessa
+classe.
+
+**Agora (R3-1 a R3-20).** Prioridade, trilha e o essencial:
+- R3-1 (P0, L): identidade nos links (`fichaLinkMatch`), "Ver como aluno" + link sem misturar perfis nem apagar o
+  contato do personal, perfis de entrada (`perfisDeEntrada`) para "Perfis neste aparelho", restaurar a cópia de um
+  aluno no aparelho do personal sem regravar o perfil dele, cancelar sem escrita, /receber sem escolha pelo nome.
+- R3-2 (P1, era P0, H): `/api/versao` com `{ sha, at, protocolo, copia }` sem cache, rodapé de versão na Conta,
+  checklist de release com cliente antigo e rollback. Motivo da queda: não mistura dado de pessoas.
+- R3-3 (P1, L): "para enviar", "preparado sem confirmação" e "Já enviei" (declaração da pessoa); cópia que falha
+  avisa; `markSessionsPrepared` diz se gravou; "Enviar 20 de 23 treinos".
+- R3-4 (P1, S) + R3-10 (P1, S): minutos ativos; `plannedSets` gravado antes do filtro de `finish`; "{feitas} de
+  {planejadas}"; "Continuar aquele treino" sem laço sem sinal.
+- R3-5 (P1, N): leitura de alimentos (o Fato da spec "300 ml de suco → 500 g" não reproduz; o caso que falha é "1 copo
+  de suco de 300 ml"); total parcial nunca vira conselho; ambiguidade vira "confira"; ml→g visível. A unidade original
+  NÃO é gravada agora (depois da confirmação, os gramas são a verdade).
+- R3-6 A (P1, L): restaurar com foto em memória (`comFotoDoArmazenamento`), validação antes da 1ª escrita, versão
+  futura recusada, plano de restauração que não desfaz edição mais nova (P2) e roteiro em dois contextos (P2).
+  R3-6 B (P1, S): volume com uma convenção só (`volumeElegivel`/`volumeDaSessao`) lido nos 5 pontos; CSV com unidade.
+  Do R3-6 da spec seguem também: faixa de reps invertida (N no editor, S no schema do link) e `listStudents` lendo
+  cada coleção uma vez (H).
+- R3-7 (P1, S): o comportamento muda. Com dor marcada, nenhuma sugestão de carga (nem "Manter") e campo de carga
+  vazio; "Dor marcada" visível no texto do envio; dor nunca no analytics.
+- R3-8 (P2, H): Hoje com "Treino de hoje registrado" (completude quando houver `plannedSets`) e o aviso de 7 a 13 dias.
+- R3-9 (texto, H) + R3-18 (P2, H): privacidade em três blocos (beta no aparelho, o que vai pelo WhatsApp, nuvem quando
+  existir), aviso único "Quem tiver o link consegue ler…", sem "em conformidade", Termos sem cobrança no beta, FAQ,
+  âncoras, rótulo anual verdadeiro, link do blog fora (decidido na rodada: o dono não abriu o domínio, mas a main do
+  repositório mostra autores com registro profissional fictício) e a landing sem prometer que o aluno devolve o treino
+  sozinho.
+- R3-11 (P1, N): o resumo do questionário nunca diz "Nenhum sinal de alerta" com alerta azul; A-PARQ-INCOMPLETO também
+  fora do modo junto. R3-12 (P1, N): nota do cardápio sem "mantendo a quantidade".
+- R3-13 (P2, L): "Remover aluno" + restaurar não traz a saúde de volta no mesmo aparelho.
+- R3-14 (P2, S): CSV não executa fórmula. R3-15 (P2, S e H): "recebidos", não "feitos", no modo local. R3-16 (P2, S):
+  meta da semana com uma regra só. R3-17 (P2, L): o envio da ficha diz o que vai no link.
+- R3-19 (P2, Fundação): analytics filtra propriedades por evento em tempo de execução.
+- R3-20 (P2, revisão e QA): lente "leitor de tela" com script fora do app.
+Se faltar tempo, sai primeiro: R3-20, R3-16, R3-15, R3-17, R3-14, R3-19, R3-18, R3-13, R3-8. Não cortar: R3-1, R3-6 A,
+R3-7, R3-4 com R3-10, R3-11, R3-12, R3-5, R3-3, R3-9, R3-6 B, R3-2.
+
+**Vai para M-B.** Aceites novos do RM-07 (erro da geração visível), RM-15 (foco volta a quem abriu o diálogo) e RM-24
+(maiúsculas acentuadas); o mínimo do RM-26 já entra no aceite do R3-2; o laço sem sinal do RM-02 virou o R3-10; lente 6
+e passadas com TalkBack, VoiceOver e tablet; roteiro §7 (campo 30 → 35; aviso do iPhone no silencioso, se confirmado);
+E2-a11y-orientacao (P3). Arquivos que a R3 toca antes da M-B, nunca em paralelo: site-chrome.tsx, (site)/page.tsx,
+diet-demo.tsx, alunos/page.tsx, conta/page.tsx e resumo-aluno.tsx.
+
+**Gate da nuvem (nada agora).** C-01 (vínculo redirecionável), C-03 (fila descarta treino), C-04 (histórico cortado em
+80) e a matriz E2E multiator são P0 antes de existir `NEXT_PUBLIC_SUPABASE_URL` em produção; C-02, C-05, C-06, banco
+real, rede e concorrência são P1; troca de conta offline e C-07 são P2; CSP, checkout, README como runbook, textos e
+remetente do link vêm antes de ligar ou de cobrar. Correções numa migração 0003, forward-only.
+
+**Depois (motivo ou gatilho).** Biblioteca com mídia licenciada (licença e revisão); RIR/RPE avançado; filtros por
+motivo (carteiras pequenas); editor compacto no desktop; redesenho do Hoje, com estado de cuidado, descanso planejado e
+pausa que não zera a sequência (dados do piloto); lembretes (sem push confiável no PWA); check-in semanal; nuvem (gate
+acima); unidade original da dieta no item e no link (o piloto pedir); lembrar em /receber a escolha manual de aluno
+(aparelho do personal recriado sem cópia, raro); aviso de treino aberto em outra aba (relato de série perdida); editar
+série salva (marcas suspeitas no piloto); cifra dos links (teste em aparelhos; sigilo exige a chave fora do link);
+senha na cópia (exige recuperação e suporte); IA com teto de gasto (o dono ligar a IA); ensino no momento certo e tempo
+por série (piloto); carteira com mais de 20 alunos; eventos novos só com a função (nunca `next_action_selected`). P3
+baratos só como carona no arquivo já aberto: E2-relatorio-sem-base (no R3-15) e E2-meta-snapshot (no R3-16); os demais
+(E2-mais-seguro, E2-cadastro-padroes, QA-24 e E2-ameaca-wipe, QA-33, E2-flag-questionario, E2-prazo-retencao) ficam
+para a próxima rodada.
+
+**Não fazer (motivo).** "Conferido pelo personal", recorde dourado, "Salvar e enviar" e diário alimentar (já
+rejeitados pelo dono); rankings, streak diário e feed social (fora do MVP); PRs separados. Do adendo: recusar a cópia
+por exercício próprio sem definição (recusaria cópias legítimas); marcador `sr:restore:pendente` (mais uma escrita que
+pode falhar); "Manter {carga}" ou carga pré-preenchida com dor (manutenção automática); "Continuar o Treino B" no card
+do Hoje (segunda sessão no mesmo dia); derivar séries planejadas de `sets.length` (subconta); equivalência de alimentos
+calculada na nota (orientação nova, decisão do dono); linha de "dados de saúde" na cópia do aluno (DECISIONS de 26/11:
+aviso só para o personal); "restaurar traz de volta" no diálogo de restaurar (falso depois do R3-13); enfraquecer a
+frase do IP; duas soluções no filtro de analytics (uma allowlist; o regex vira teste); recusar no schema o PAR-Q pela
+metade (perderia respostas antigas; a triagem sinaliza); manter marcas de exclusão depois de "Apagar tudo" sem decisão
+do dono; chamar o link de "seguro", "protegido" ou "criptografado"; "comunicar prontidão" do questionário offline;
+bloquear sempre treinos de B em A no /receber (há caso legítimo; vale a confirmação); adiar a M-A; marketplace,
+afiliados e anúncios; esconder o menu em paisagem (E8). As decisões que são do dono estão listadas na triagem.
+
+**Fundação: o que mudou em relação à spec e ao adendo.**
+- **Filtro de analytics na drenagem, listas fora do primeiro carregamento (R3-19).** `ALLOWED_PROPS` (`satisfies
+  Record<EventName, readonly string[]>`) e `filtrarProps` ficam em `src/lib/analytics-props.ts`, importado só por
+  posthog-init.ts, que entrega o filtro a `anexarPosthog`; a fila e as chamadas seguintes passam por ele antes de ir
+  ao SDK. O adendo dizia "em `track()`, antes de enfileirar"; a fila fica só em memória e nada sai do aparelho antes
+  do SDK, então o efeito para a privacidade é o mesmo, e as listas (ESTIMATIVA do adendo: ~1,5 KB gzip) não entram em
+  rota nenhuma no load. Em analytics.ts entram só a variável do filtro e a chamada (ESTIMATIVA: menos de 0,1 KB; a
+  integração mede / e /abrir). Em desenvolvimento sem token, `track` pede analytics-props.ts por `import()` só para
+  avisar (fora do build de produção). Descarta chave fora da lista, texto com mais de 64 caracteres e valor que não é
+  número, booleano ou null; o aviso cita a chave, nunca o valor. DROP_PROPS continua; o regex FORBIDDEN virou teste.
+  Um teste lê todas as chamadas a `track()` pelo verificador de tipos e falha com chave fora da lista.
+- **`workout_completed.minutes` (duração bruta) sai da lista; entra `minutos_ativos`** (`FaixaMinutosAtivos`, com
+  `faixaMinutosAtivos` em session-time.ts). Até a trilha S trocar a chamada, a duração não sai no evento (exceção
+  documentada no teste do inventário). Motivo: a spec pede faixa de minutos ativos, nunca o bruto.
+- **Sugestão com dor tipada em progression.ts**, onde o tipo já morava: `SuggestionKind` ganha `"dor"` e
+  `LoadSuggestion` vira união em que `kind: "dor"` só aceita `loadKg: null`. `parseDraft` (workout-draft.ts) passou a
+  zerar a carga de uma sugestão "dor" vinda do rascunho, para o tipo fechar.
+- **Leitores de session-time.ts implementados, não neutros.** `activeMinutes`, `sessionCompleteness` e
+  `faixaMinutosAtivos` seguem a regra literal da spec e do adendo (sem `activeMin`, bruto só até 180 min; sem
+  `plannedSets`, `planejadas` null) e têm teste: o Hoje (H) e a costura dependem deles em paralelo. A gravação de
+  `activeMin` e de `plannedSets` é da trilha S.
+- **`volumeElegivel` e `volumeDaSessao` implementados** (convenção do R3-6 B, com teste). `sessionVolume` não mudou: a
+  troca dos leitores é da trilha S.
+- **`fichaLinkMatch` e `perfisDeEntrada` com retorno neutro** (o comportamento de hoje); a trilha L preenche.
+- **`comFotoDoArmazenamento(fn, incompleta?)`**: foto em memória de `sr:v1:*` e `sr:sent:*`; em qualquer erro volta à
+  foto (primeiro apaga as chaves novas, depois regrava as que mudaram, as que encolhem a cota antes) e confere. Cota →
+  `DataError(TEXTO_COTA_LOCAL, "limit")`; outro erro sobe intacto (os erros tipados de quem chama continuam
+  reconhecíveis); volta que falha → `ArmazenamentoIncompleto` com o texto da restauração ou o que quem chama passar
+  (link de ficha e retorno de treinos precisam de texto próprio). Pode ser aninhada. Fotos (IndexedDB) e o rascunho
+  (`sr:draft:*`) ficam fora da foto.
+- **Texto único de cota no modo local** em toda gravação do repositório local: "Não coube neste aparelho. Nada foi
+  alterado. Libere espaço e tente de novo." (sai "crie uma conta na nuvem"). "Nada foi alterado" vale para a gravação
+  que falhou e, com a foto, para as operações de várias gravações. Risco residual: operações locais de várias
+  gravações fora da foto (ficha ativa ao salvar, cadastro de aluno, exclusão de conta) podem parar no meio com a cota.
+- **CSV em `domain/export-csv.ts`**, reexportado por export.ts (nenhum importador mudou; `downloadText` ficou em
+  export.ts). Os testes de CSV moram em arquivos mistos e continuam lá.
+- **`components/send-to-coach.tsx`** com `usePendingWorkouts`, `useSessionDelivery` e `SendToCoach`, reexportados por
+  transfer-share.tsx. Contrato do hook: `{ toSend, prepared, declareSent(ids), dismiss(ids) }`, com o comportamento de
+  antes até a trilha L mudar: `prepared` vazio, `declareSent` grava na lista antiga, `dismiss` não faz nada. Hoje e
+  Histórico leem `toSend`.
+- **Duas abas (R3-4, item 4): limitação conhecida.** Um rascunho por usuário e nenhum ouvinte de `storage` na sessão:
+  vale a última gravação, e séries marcadas na outra aba podem sumir (HIPÓTESE, não reproduzida). O aviso fica em Depois.
+
+**Ficam para a costura ou a integração registrar** (dependem do que as trilhas fizerem): a escolha do R3-10
+(`history.replaceState` ou marca no rascunho); o limiar de "parcial" e se a meta semanal conta dias distintos (R3-4);
+a convenção do volume (R3-6 B); a mudança da promessa do diálogo de restaurar (R3-6 A.4) e a frase que substitui a de
+"Remover aluno" + restaurar (R3-13); a §6.2 da spec da anamnese e o D-20 (R3-11); a regra única da meta (R3-16); o link
+do blog fora e a correção da pendência do IP (R3-9); e o peso medido do R3-19 em / e /abrir.

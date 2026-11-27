@@ -17,7 +17,7 @@ export default function HistoricoPage() {
   // O botão do cabeçalho continua montado depois do envio: o diálogo não fecha sozinho quando os pendentes somem.
   const [headerSent, setHeaderSent] = useState(false);
   const sessions = returnTo ? undefined : (data ?? undefined);
-  const pending = usePendingWorkouts(sessions, tick);
+  const { toSend: pending } = usePendingWorkouts(sessions, tick);
   const delivery = useSessionDelivery(sessions, tick);
   const coach = user?.remoteCoach;
   return (

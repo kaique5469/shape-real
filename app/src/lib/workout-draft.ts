@@ -1,11 +1,12 @@
 import type { UnmarkBand } from "@/lib/analytics";
-import type { Exercise, ExerciseLog, Program, Session } from "@/lib/domain/types";
+import type { Exercise, ExerciseLog, Program, Session, Unit } from "@/lib/domain/types";
 import { getExercise, unitOf } from "@/lib/domain/exercises";
 import { uid } from "@/lib/domain/ids";
-import { suggestFromHistory, type LoadSuggestion, type SuggestionKind } from "@/lib/domain/progression";
+import { isPainSuggestion, lastPerformance, suggestFromHistory, type LoadSuggestion, type SuggestionKind } from "@/lib/domain/progression";
 import { restFromDraft, type RestTimer } from "@/lib/domain/rest";
 import { setCounts } from "@/lib/domain/session-checks";
 import { assignLinks } from "@/lib/domain/session-flow";
+import { iniciarTempo, tempoFromDraft, type TempoAtivo } from "@/lib/domain/session-time";
 
 /**
  * Rascunho do treino em andamento (um por usuário, guardado no aparelho).
@@ -36,6 +37,18 @@ export interface WorkoutDraft {
    * Ausente em rascunhos antigos e com todos os exercícios fechados (abre o 1º com série pendente).
    */
   openUid?: string;
+  /**
+   * Relógio do treino (rodada 3, R3-4): última atividade, tempo ativo e pausas longas acumulados, para o `activeMin` da
+   * sessão sobreviver a recarregar a página. Ausente em rascunhos antigos: o treino salvo fica sem `activeMin` (vale a
+   * regra da duração registrada, nunca um número inventado).
+   */
+  tempo?: TempoAtivo;
+  /**
+   * Quando a pessoa tocou em "Continuar aquele treino" (rodada 3, R3-10). Um rascunho retomado não volta a perguntar
+   * pela regra das 6 h ao recarregar (sem sinal, a tela recarregava pela cópia do service worker e perguntava de novo,
+   * em laço). Ausente em rascunhos antigos e nos que nunca precisaram da pergunta.
+   */
+  resumedAt?: string;
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
@@ -62,7 +75,8 @@ export function parseDraft(raw: string | null | undefined): WorkoutDraft | null 
     for (const [k, v] of Object.entries(data.suggestions)) {
       if (!isRecord(v) || typeof v.text !== "string" || typeof v.kind !== "string") continue;
       const loadKg = typeof v.loadKg === "number" && Number.isFinite(v.loadKg) ? v.loadKg : null;
-      suggestions[k] = { kind: v.kind as SuggestionKind, loadKg, text: v.text };
+      // Sugestão com dor (R3-7) nunca tem carga, mesmo num rascunho alterado à mão.
+      suggestions[k] = v.kind === "dor" ? { kind: "dor", loadKg: null, text: v.text } : { kind: v.kind as Exclude<SuggestionKind, "dor">, loadKg, text: v.text };
     }
   const restSec: Record<string, number> = {};
   if (isRecord(data.restSec)) for (const [k, v] of Object.entries(data.restSec)) if (typeof v === "number" && Number.isFinite(v) && v >= 0) restSec[k] = v;
@@ -72,7 +86,35 @@ export function parseDraft(raw: string | null | undefined): WorkoutDraft | null 
   if (rest) out.rest = rest;
   if (links) out.links = links;
   if (typeof data.openUid === "string" && data.openUid) out.openUid = data.openUid;
+  const tempo = tempoFromDraft(data.tempo);
+  if (tempo) out.tempo = tempo;
+  if (typeof data.resumedAt === "string" && Number.isFinite(Date.parse(data.resumedAt))) out.resumedAt = data.resumedAt;
   return out;
+}
+
+/** Até quanto tempo depois do início (ou da retomada) o rascunho do mesmo treino reabre direto, sem perguntar. */
+export const RASCUNHO_FRESCO_MS = 6 * 3_600_000;
+
+/**
+ * O que fazer com o rascunho gravado ao abrir /sessao (a regra que a tela já tinha, agora pura e com a retomada):
+ *  - "retomar": é o mesmo treino (ficha e dia do endereço) e foi começado, ou retomado, há menos de RASCUNHO_FRESCO_MS;
+ *  - "perguntar": outro treino, ou um antigo, com série feita ou preenchida (nada some sem a pessoa escolher);
+ *  - "novo": sem trabalho para proteger: abre o treino pedido.
+ * `resumedAt` (R3-10) conta como novo início para a regra das 6 h: depois de "Continuar aquele treino", recarregar
+ * (inclusive sem sinal) continua no treino em vez de perguntar de novo.
+ */
+export function decidirRascunho(parsed: WorkoutDraft, alvo: { programId: string | null; dayKey: string | null }, nowMs: number): "retomar" | "perguntar" | "novo" {
+  const s = parsed.session;
+  const sameDay = (s.programId ?? null) === alvo.programId && (s.dayKey ?? null) === (alvo.dayKey ?? s.dayKey ?? null);
+  const desde = Date.parse(parsed.resumedAt ?? s.startedAt);
+  const fresh = Number.isFinite(desde) && nowMs - desde < RASCUNHO_FRESCO_MS;
+  if (sameDay && fresh) return "retomar";
+  return draftHasWork(s) ? "perguntar" : "novo";
+}
+
+/** O rascunho com a retomada registrada agora ("Continuar aquele treino"). */
+export function marcarRetomado(draft: WorkoutDraft, now: Date = new Date()): WorkoutDraft {
+  return { ...draft, resumedAt: now.toISOString() };
 }
 
 /**
@@ -115,12 +157,9 @@ export function buildDraft(userId: string, program: Program | null, dayKey: stri
     // Com a data do último registro (retorno após pausa) e os anteriores (trava contra erro de digitação).
     const sug = suggestFromHistory(history, p, p.exerciseId);
     const logUid = uid();
-    if (unit === "reps") suggestions[logUid] = sug;
+    if (keepsSuggestion(unit, sug)) suggestions[logUid] = sug;
     restSec[logUid] = p.restSec;
-    const impl = getExercise(p.exerciseId)?.implement;
-    // Peso corporal/elástico e séries por tempo: carga é opcional ("peso extra"); nunca começa com 0 kg.
-    const optionalLoad = unit !== "reps" || impl === "peso_corporal" || impl === "elastico";
-    const load = unit === "min" ? null : optionalLoad ? (unit === "reps" ? sug.loadKg : null) || p.loadKg || null : (sug.loadKg ?? p.loadKg ?? null);
+    const load = initialLoad(unit, getExercise(p.exerciseId)?.implement, sug, p.loadKg);
     return {
       uid: logUid,
       exerciseId: p.exerciseId,
@@ -130,6 +169,7 @@ export function buildDraft(userId: string, program: Program | null, dayKey: stri
       sets: Array.from({ length: p.sets }, () => ({ loadKg: load, reps: null, done: false })),
     };
   });
+  const startedAt = new Date().toISOString();
   return {
     session: {
       id: uid(),
@@ -138,7 +178,7 @@ export function buildDraft(userId: string, program: Program | null, dayKey: stri
       programName: program?.name,
       dayKey: day?.key,
       dayTitle: day?.title?.trim() || undefined,
-      startedAt: new Date().toISOString(),
+      startedAt,
       exercises,
       volumeKg: 0,
       prs: [],
@@ -146,6 +186,49 @@ export function buildDraft(userId: string, program: Program | null, dayKey: stri
     suggestions,
     restSec,
     links: assignLinks(day?.key ?? "livre", exercises),
+    tempo: iniciarTempo(startedAt),
+  };
+}
+
+/**
+ * Sugestão guardada no rascunho: as de carga só em exercício por repetições (como sempre); a de dor (R3-7) em qualquer
+ * unidade, porque o texto é de cuidado ("pare este exercício"), não de carga.
+ */
+function keepsSuggestion(unit: Unit, sug: LoadSuggestion): boolean {
+  return unit === "reps" || isPainSuggestion(sug);
+}
+
+/**
+ * Carga com que as séries do registro começam:
+ *  - cardio em minutos: nenhuma;
+ *  - dor marcada da última vez (R3-7): nenhuma, nem a da ficha (que é a última carga feita, espelhada no fim do treino):
+ *    seria um "manter" automático. A última carga só aparece em "Última vez";
+ *  - peso corporal, elástico e séries por tempo: a carga é opcional ("peso extra") e nunca começa com 0 kg;
+ *  - o resto: a sugerida, senão a da ficha.
+ */
+export function initialLoad(unit: Unit, implement: Exercise["implement"] | undefined, sug: LoadSuggestion | null | undefined, plannedLoad: number | null | undefined): number | null {
+  if (unit === "min" || isPainSuggestion(sug)) return null;
+  const optionalLoad = unit !== "reps" || implement === "peso_corporal" || implement === "elastico";
+  if (optionalLoad) return (unit === "reps" ? (sug?.loadKg ?? null) : null) || plannedLoad || null;
+  return sug?.loadKg ?? plannedLoad ?? null;
+}
+
+/**
+ * Registro de um exercício adicionado na hora ("Adicionar exercício"): prescrição padrão da unidade, sugestão de carga
+ * (por repetições, ou a de dor em qualquer unidade) e séries com a carga sugerida, senão a primeira da última vez. Com
+ * dor marcada da última vez, as séries começam vazias.
+ */
+export function addedLog(pick: Pick<Exercise, "id" | "name" | "compound">, history: Session[], logUid: string): { log: ExerciseLog; suggestion: LoadSuggestion | null; restSec: number } {
+  const unit = unitOf(pick.id);
+  const planned = defaultPlan(pick);
+  const sug = suggestFromHistory(history, planned, pick.id);
+  const suggestion = keepsSuggestion(unit, sug) ? sug : null;
+  const lastLoad = lastPerformance(history, pick.id)?.sets[0]?.loadKg ?? null;
+  const load = unit !== "reps" || isPainSuggestion(sug) ? null : (sug.loadKg ?? lastLoad);
+  return {
+    log: { uid: logUid, exerciseId: pick.id, name: pick.name, unit, planned, sets: Array.from({ length: planned.sets }, () => ({ loadKg: load, reps: null, done: false })) },
+    suggestion,
+    restSec: planned.restSec,
   };
 }
 
@@ -162,8 +245,10 @@ export function swapInDraft(draft: WorkoutDraft, targetUid: string, pick: Pick<E
   const unit = unitOf(pick.id);
   const sameUnit = (cur.unit ?? "reps") === unit;
   const planned = sameUnit && cur.planned ? { ...cur.planned, loadKg: null, notes: undefined } : { ...defaultPlan(pick), technique: cur.planned?.technique };
-  const sug = unit === "reps" ? suggestFromHistory(history, planned, pick.id) : null;
-  const load = unit === "min" ? null : (sug?.loadKg ?? null);
+  const found = suggestFromHistory(history, planned, pick.id);
+  const sug = keepsSuggestion(unit, found) ? found : null;
+  // Por tempo, a carga extra começa vazia (como sempre); com dor, sempre vazia (a sugestão de dor não tem carga).
+  const load = unit === "reps" ? (sug?.loadKg ?? null) : null;
   const suggestions = { ...draft.suggestions };
   if (sug) suggestions[targetUid] = sug;
   else delete suggestions[targetUid];

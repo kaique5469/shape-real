@@ -24,11 +24,11 @@ import {
   priorSets,
   recordFlags,
   recordSetOf,
-  sessionVolume,
-  suggestFromHistory,
+  volumeDaSessao,
   weekStreak,
   type LoadSuggestion,
 } from "@/lib/domain/progression";
+import { activeMinutes, cardioNovoMs, faixaMinutosAtivos, registrarAtividade, type TempoAtivo } from "@/lib/domain/session-time";
 import { fmtClock, fmtOvertime, nextSetOf, restAfterRemove, restAfterUnmark, restEndedAgoText, restFromDraft, restPhase, shiftRest, startRest, type RestTimer, type SetRef } from "@/lib/domain/rest";
 import { filledUnmarkedTitle, finishGate, markFilledDone, setCounts, setRowDescription, setRowState } from "@/lib/domain/session-checks";
 import {
@@ -49,15 +49,36 @@ import {
   removeExerciseHint,
   removeSetConfirm,
   scrollDeltaToReveal,
+  sessaoParaSalvar,
   summaryHeadline,
   swapCopy,
   swapOrigin,
   type VerticalBand,
 } from "@/lib/domain/session-flow";
 import type { ExerciseLog, Program, Session, SetLog, Unit } from "@/lib/domain/types";
-import { reportError, track } from "@/lib/analytics";
+import { reportError, track, type WorkoutCompletedExtra } from "@/lib/analytics";
 import { fmtNum, selectAllSoon, useKeepFocusedRowVisible } from "@/lib/hooks";
-import { buildDraft, clearDraft, decimalsOf, defaultPlan, draftHasWork, draftHref, draftKey, draftProgressText, parseDraft, restDelayBand, resumeOpenUid, saveDraft, splitCompareLine, suggestionEdit, swapInDraft, tween, unmarkBand, type WorkoutDraft } from "@/lib/workout-draft";
+import {
+  addedLog,
+  buildDraft,
+  clearDraft,
+  decidirRascunho,
+  decimalsOf,
+  draftHref,
+  draftKey,
+  draftProgressText,
+  marcarRetomado,
+  parseDraft,
+  restDelayBand,
+  resumeOpenUid,
+  saveDraft,
+  splitCompareLine,
+  suggestionEdit,
+  swapInDraft,
+  tween,
+  unmarkBand,
+  type WorkoutDraft,
+} from "@/lib/workout-draft";
 import { StatusRegion } from "@/components/delivery-status";
 import { SendToCoach } from "@/components/transfer-share";
 import { prepStatusText, type PrepVia } from "@/lib/domain/delivery";
@@ -153,6 +174,13 @@ function Sessao() {
   // Outro treino ficou em andamento: nada é sobrescrito até a pessoa escolher o que fazer com ele.
   const [conflict, setConflict] = useState<{ saved: Draft; fresh: Draft } | null>(null);
   const loaded = useRef(false);
+  // Relógio do treino (R3-4): gravado junto com o rascunho; cada mudança no treino e cada volta ao app é uma atividade.
+  // Rascunho antigo (sem relógio) continua sem: o treino salvo fica sem minutos ativos, nunca com um número inventado.
+  const tempo = useRef<TempoAtivo | undefined>(undefined);
+  // Última sessão vista pelo relógio (para saber que cardio acabou de ser marcado) e a última pausa longa (aviso).
+  const tempoSeen = useRef<Session | null>(null);
+  // Etapa 2 (R3-4) mostra `textoPausa(pausaMs)` na retomada; aqui só o registro.
+  const [, setPausaMs] = useState(0);
 
   // Carrega ficha + histórico; retoma rascunho salvo se for do mesmo treino.
   useEffect(() => {
@@ -168,12 +196,11 @@ function Sessao() {
         // Rascunhos antigos (sem descanso salvo, sugestões sem "retorno") abrem igual; corrompido = como se não houvesse.
         const parsed = parseDraft(readStorage(draftKey(user.id)));
         if (parsed) {
-          const sameDay = parsed.session.programId === (prog?.id ?? null) && (parsed.session.dayKey ?? null) === (dayKey ?? parsed.session.dayKey ?? null);
-          const fresh = Date.now() - new Date(parsed.session.startedAt).getTime() < 6 * 3_600_000;
-          // Série preenchida sem ✓ também é trabalho: nada é sobrescrito sem a pessoa escolher.
-          const hasWork = draftHasWork(parsed.session);
-          if (sameDay && fresh) d = parsed;
-          else if (hasWork) pending = parsed;
+          // Série preenchida sem ✓ também é trabalho: nada é sobrescrito sem a pessoa escolher. Rascunho retomado
+          // ("Continuar aquele treino") reabre direto pela regra das 6 h contada da retomada (R3-10).
+          const decisao = decidirRascunho(parsed, { programId: prog?.id ?? null, dayKey }, Date.now());
+          if (decisao === "retomar") d = parsed;
+          else if (decisao === "perguntar") pending = parsed;
         }
         const resumed = Boolean(d);
         d ??= buildDraft(user.id, prog, dayKey, hist);
@@ -193,6 +220,10 @@ function Sessao() {
    * com série pendente; rascunho retomado volta no exercício que estava aberto (`openUid`) e rola até ele.
    */
   function begin(d: Draft, isNew: boolean, hist: Session[] = history, origem: "rascunho" | "conflito" = "rascunho") {
+    tempo.current = d.tempo;
+    tempoSeen.current = d.session;
+    // Abrir ou retomar é atividade: quem volta depois de uma pausa longa vê o aviso, e esse tempo fica fora.
+    tick(d.session);
     setDraft(d);
     setRest(restFromDraft(d.rest));
     // Recorde já marcado antes de recarregar não é comemorado de novo.
@@ -207,30 +238,58 @@ function Sessao() {
     else track("workout_resumed", { origem, mudou_exercicio: target !== usual, instalado: isStandaloneDisplay() });
   }
 
-  /** Retoma o treino que tinha ficado em andamento (pode ser de outro dia ou de outra ficha). */
+  /**
+   * Retoma o treino que tinha ficado em andamento (pode ser de outro dia ou de outra ficha). R3-10: o endereço muda sem
+   * navegação do roteador (`history.replaceState`; o Next sincroniza `useSearchParams`). Sem sinal, `router.replace`
+   * pedia o RSC, falhava, recarregava pela cópia do service worker e a tela perguntava de novo, em laço. A retomada fica
+   * gravada no rascunho (`resumedAt`): recarregar continua no treino em vez de perguntar outra vez.
+   */
   async function resumeSaved() {
     if (!conflict) return;
-    const saved = conflict.saved;
+    const saved = marcarRetomado(conflict.saved);
     setConflict(null);
     if ((saved.session.programId ?? null) !== (program?.id ?? null)) {
       const prog = saved.session.programId ? await repo.getProgram(saved.session.programId).catch(() => null) : null;
       setProgram(prog);
     }
     begin(saved, false, history, "conflito");
-    router.replace(draftHref(saved.session), { scroll: false });
+    try {
+      window.history.replaceState(window.history.state, "", draftHref(saved.session));
+    } catch {
+      /* endereço antigo: o rascunho já está aberto e gravado com a retomada */
+    }
   }
 
-  // Salva rascunho (com o descanso em andamento e o exercício aberto) a cada alteração: sobrevive a recarregar a página
-  // ou fechar o app, e a retomada volta no mesmo exercício.
+  /** Uma atividade no relógio do treino (R3-4). Pausa longa: guarda o tamanho para o aviso "Você ficou {X} fora". */
+  function tick(session: Session | null) {
+    if (!tempo.current) return;
+    const r = registrarAtividade(tempo.current, Date.now(), session ? cardioNovoMs(tempoSeen.current, session) : 0);
+    tempo.current = r.tempo;
+    if (session) tempoSeen.current = session;
+    if (r.pausaMs > 0) setPausaMs(r.pausaMs);
+  }
+
+  // Cada mudança no treino (série marcada ou editada, exercício trocado) é atividade no relógio (R3-4). Fica antes do
+  // efeito que grava, para o rascunho sair com o relógio em dia.
   useEffect(() => {
-    if (draft && user && !summary) saveDraft(user.id, { ...draft, openUid: open ?? undefined }, rest);
+    if (draft && !summary && draft.session !== tempoSeen.current) tick(draft.session);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, summary]);
+
+  // Salva rascunho (com o descanso em andamento, o exercício aberto e o relógio) a cada alteração: sobrevive a
+  // recarregar a página ou fechar o app, e a retomada volta no mesmo exercício.
+  useEffect(() => {
+    if (draft && user && !summary) saveDraft(user.id, { ...draft, openUid: open ?? undefined, tempo: tempo.current }, rest);
   }, [draft, rest, user, summary, open]);
 
   // Relógio (cronômetro do treino + descanso). Na volta de outro app, atualiza na hora em vez de esperar o próximo tique.
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 500);
     const wake = () => {
-      if (document.visibilityState === "visible") setNow(Date.now());
+      if (document.visibilityState !== "visible") return;
+      setNow(Date.now());
+      // Voltar ao app é atividade (R3-4): troca curta de app conta inteira; depois de uma pausa longa, o aviso.
+      tick(null);
     };
     document.addEventListener("visibilitychange", wake);
     return () => {
@@ -641,7 +700,7 @@ function Sessao() {
     return {
       done: all.filter((s) => s.done).length,
       total: all.length,
-      volume: sessionVolume(draft.session),
+      volume: volumeDaSessao(draft.session),
       exDone: draft.session.exercises.filter((e) => e.sets.length && e.sets.every((s) => s.done)).length,
     };
   }, [draft]);
@@ -653,14 +712,15 @@ function Sessao() {
     setFinishing(true);
     setError(null);
     try {
-      const exercises = src.exercises.filter((e) => completedSets(e).length);
-      if (!exercises.length) {
+      // R3-4: séries planejadas contadas antes de tirar os exercícios sem série feita; minutos ativos pelo relógio do
+      // rascunho; exercício com "Senti dor" fica mesmo sem série (R3-7). Volume pela convenção única (R3-6 B).
+      const s = sessaoParaSalvar(src, { agora: new Date(), tempo: tempo.current });
+      if (!s) {
         setError("Marque pelo menos uma série como feita para salvar o treino.");
         setFinishing(false);
         return;
       }
-      const s: Session = { ...src, exercises, finishedAt: new Date().toISOString() };
-      s.volumeKg = sessionVolume(s);
+      const exercises = s.exercises;
       s.prs = detectPRs(s, [...history, s]);
       const saved = await repo.saveSession(s);
       // A ficha passa a mostrar a carga atual de cada exercício. Copiar a carga não é edição: a data de edição da
@@ -669,10 +729,12 @@ function Sessao() {
       if (updated) await repo.saveProgram(updated, { keepUpdatedAt: true }).catch(() => undefined);
       clearDraft(user.id);
       const counts = setCounts(src);
+      // Faixa de minutos ATIVOS (R3-4), nunca a duração bruta. Nada de dor no analytics (R3-7).
+      const tempoAtivo: WorkoutCompletedExtra = { minutos_ativos: faixaMinutosAtivos(activeMinutes(s)) };
       track("workout_completed", {
         sets: counts.done,
         prs: s.prs.length,
-        minutes: Math.round((Date.now() - new Date(s.startedAt).getTime()) / 60000),
+        ...tempoAtivo,
         exercises: exercises.length,
         timed_exercises: exercises.filter((e) => (e.unit ?? "reps") !== "reps").length,
         linked_exercises: Object.keys(links).length,
@@ -995,7 +1057,6 @@ function Sessao() {
           setSwapUid(null);
         }}
         onPick={(e) => {
-          const last = lastPerformance(history, e.id);
           const unit = unitOf(e.id);
           if (swapUid) {
             // Troca só neste treino (aparelho ocupado): mesmo registro (uid), a ficha não muda (swapInDraft).
@@ -1010,21 +1071,15 @@ function Sessao() {
           }
           track("session_feature_used", { feature: "adicionar_exercicio" });
           const logUid = uid();
-          const planned = defaultPlan(e);
-          const sug = unit === "reps" ? suggestFromHistory(history, planned, e.id) : null;
+          // Com dor marcada da última vez neste exercício, as séries começam sem carga (R3-7).
+          const added = addedLog(e, history, logUid);
           setDraft((d) =>
             d
               ? {
                   ...d,
-                  suggestions: sug ? { ...d.suggestions, [logUid]: sug } : d.suggestions,
-                  restSec: { ...d.restSec, [logUid]: planned.restSec },
-                  session: {
-                    ...d.session,
-                    exercises: [
-                      ...d.session.exercises,
-                      { uid: logUid, exerciseId: e.id, name: e.name, unit, planned, sets: Array.from({ length: planned.sets }, () => ({ loadKg: unit === "reps" ? (sug?.loadKg ?? last?.sets[0]?.loadKg ?? null) : null, reps: null, done: false })) },
-                    ],
-                  },
+                  suggestions: added.suggestion ? { ...d.suggestions, [logUid]: added.suggestion } : d.suggestions,
+                  restSec: { ...d.restSec, [logUid]: added.restSec },
+                  session: { ...d.session, exercises: [...d.session.exercises, added.log] },
                 }
               : d,
           );
@@ -1544,7 +1599,9 @@ function Summary({ session, history, onDone }: { session: Session; history: Sess
   const chain = useRef<Promise<unknown>>(Promise.resolve());
   const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const feelingTracked = useRef(false);
-  const minutes = session.finishedAt ? Math.round((new Date(session.finishedAt).getTime() - new Date(session.startedAt).getTime()) / 60000) : 0;
+  // Etapa 2 (R3-4) troca o bloco por "{feitas} de {planejadas} séries · {min} min ativos" com a correção dos minutos.
+  const minutes = activeMinutes(session) ?? 0;
+  const volume = volumeDaSessao(session);
   const sets = session.exercises.reduce((a, e) => a + completedSets(e).length, 0);
   const cmp = useMemo(() => compareWithLastSameDay(session, history), [session, history]);
   // "Semana N seguida" só no 1º treino da semana, e só a partir da 2ª semana (sem contador absoluto de treinos).
@@ -1623,10 +1680,10 @@ function Summary({ session, history, onDone }: { session: Session; history: Sess
             <dt className="text-xs text-chalk/70">séries</dt>
           </div>
           <div>
-            {session.volumeKg > 0 ? (
+            {volume > 0 ? (
               <>
-                <dd className="num plate-type text-2xl">{session.volumeKg >= 1000 ? fmtNum(session.volumeKg / 1000, 1) : fmtNum(session.volumeKg, 0)}</dd>
-                <dt className="text-xs text-chalk/70">{session.volumeKg >= 1000 ? "toneladas" : "kg levantados"}</dt>
+                <dd className="num plate-type text-2xl">{volume >= 1000 ? fmtNum(volume / 1000, 1) : fmtNum(volume, 0)}</dd>
+                <dt className="text-xs text-chalk/70">{volume >= 1000 ? "toneladas" : "kg levantados"}</dt>
               </>
             ) : (
               <>

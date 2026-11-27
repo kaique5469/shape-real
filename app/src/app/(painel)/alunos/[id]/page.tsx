@@ -24,7 +24,9 @@ import { avisoCadastroNovo, marcarVisto, rotuloFazerQuestionario, temRespostas, 
 import { ehExemplo, type WorkStyle } from "@/lib/domain/anamnese-types";
 import { firstName, programValidity, waLink, waPhone } from "@/lib/domain/format";
 import { GOAL_LABEL, LEVEL_LABEL } from "@/lib/domain/generator";
-import { weekStart } from "@/lib/domain/progression";
+import { volumeDaSessao, weekStart } from "@/lib/domain/progression";
+import { weeklyGoal } from "@/lib/domain/attention";
+import { activeMinutes } from "@/lib/domain/session-time";
 import { summarize } from "@/lib/domain/resumo";
 import { reportError, track } from "@/lib/analytics";
 import { RECEBER_TEXTO } from "@/lib/questionario-receber";
@@ -508,7 +510,8 @@ function SummaryPanels({ student, data, onTab, onEdit }: { student: Profile; dat
   const vIcon = validityIcon(validity);
   const VIcon = vIcon === "CalendarX" ? CalendarX : vIcon === "CalendarClock" ? CalendarClock : null;
   const last = [...data.sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0] ?? null;
-  const target = student.daysPerWeek ?? 0;
+  // Meta da semana com a regra única (R3-16): a ficha ativa, senão o cadastro (como /alunos, Hoje e o relatório).
+  const target = weeklyGoal(active?.daysPerWeek, student.daysPerWeek) ?? 0;
   const sortedMetrics = [...data.metrics].sort((a, b) => b.date.localeCompare(a.date));
   const latest = (key: "weightKg" | "bodyFatPct" | "waistCm") => {
     const rows = sortedMetrics.filter((m) => m[key]);
@@ -522,7 +525,9 @@ function SummaryPanels({ student, data, onTab, onEdit }: { student: Profile; dat
     { label: "Cintura", unit: "cm", ...latest("waistCm") },
   ];
   const hasMeasures = measures.some((m) => m.value);
-  const minutes = last?.finishedAt ? Math.round((new Date(last.finishedAt).getTime() - new Date(last.startedAt).getTime()) / 60000) : null;
+  // Minutos e volume pelas regras únicas (R3-4, R3-6 B), nunca fim − início nem o `volumeKg` gravado.
+  const minutes = last ? activeMinutes(last) : null;
+  const lastVolume = last ? volumeDaSessao(last) : 0;
 
   return (
     <div className="no-print space-y-4">
@@ -569,7 +574,7 @@ function SummaryPanels({ student, data, onTab, onEdit }: { student: Profile; dat
               <p className="num mt-0.5 text-sm text-steel">
                 {relativeDay(last.startedAt)}
                 {minutes ? ` · ${minutes} min` : ""}
-                {last.volumeKg ? ` · ${fmtNum(last.volumeKg, 0)} kg de volume` : ""}
+                {lastVolume ? ` · ${fmtNum(lastVolume, 0)} kg de volume` : ""}
               </p>
               {last.prs.length ? (
                 <p className="mt-2">

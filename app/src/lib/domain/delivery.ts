@@ -10,6 +10,8 @@
  *  - `sr:sent:{alunoId}:ficha`  aparelho do personal: o ÚNICO registro de envio da ficha/dieta (FichaSendRecord),
  *                               gravado no toque em "Enviar no WhatsApp" ou "Copiar mensagem";
  *  - `sr:sent:{alunoId}:ack`    aparelho do personal: a versão que o aluno disse ter (FichaAck), vinda com os treinos;
+ *  - `sr:sent:{alunoId}:decl`   aparelho do aluno (rodada 3, R3-3): o que a PESSOA declarou por treino ("Já enviei",
+ *                               dispensar o lembrete): `Record<id, DeclaracaoEnvio>`. Declaração, nunca recibo;
  *  - `sr:sent:@desde`           hora em que o registro de envio começou neste aparelho (fora da cópia de segurança).
  *
  * Fundação (UX0): tipos (inclusive os estados), constantes, validação do que vem do armazenamento,
@@ -56,8 +58,29 @@ export interface FichaAck {
 }
 
 // ---- Estados (contrato da U2 §4; as funções que os calculam entram com U2a, U2b e U2c) ---------------
-/** Estado do envio de um treino no aparelho do aluno (T1–T3 da U2 §3.2). Fase 2 acrescenta `recebido`. */
-export type SessionDelivery = { kind: "nao_enviado" } | { kind: "iniciado"; via: PrepVia; at: string } | { kind: "iniciado_antigo" };
+/**
+ * Estado do envio de um treino no aparelho do aluno (T1–T3 da U2 §3.2; rodada 3, R3-3). Os três estados da R3-3:
+ *  - "para enviar" = `nao_enviado` (nenhum toque);
+ *  - "preparado sem confirmação" = `iniciado` (copiado ou WhatsApp aberto, com canal e hora) ou `iniciado_antigo`
+ *    (toque de uma versão anterior, sem canal nem hora);
+ *  - "enviado (declarado)" = `declarado`: a pessoa tocou em "Já enviei" (`at`) depois do último toque (`prep`).
+ * Nenhum deles diz que a mensagem chegou: o app não vê a conversa. Fase 2 (nuvem) acrescentaria `recebido`.
+ */
+export type SessionDelivery =
+  | { kind: "nao_enviado" }
+  | { kind: "iniciado"; via: PrepVia; at: string }
+  | { kind: "iniciado_antigo" }
+  | { kind: "declarado"; at: string; prep: PrepEntry | null };
+
+/**
+ * O que a pessoa declarou sobre um treino (`:decl`): `enviei` = toque em "Já enviei"; `dispensei` = dispensou o lembrete
+ * "Você copiou…" do Hoje. Dispensar nunca vira confirmação. Cada um vale para os toques de envio de antes dele: um
+ * toque novo (copiar de novo) depois da declaração volta a ser "preparado".
+ */
+export interface DeclaracaoEnvio {
+  enviei?: string;
+  dispensei?: string;
+}
 /** Ícone de um estado (a tela mapeia para o lucide: CircleDashed, Send, Copy, CheckCheck). */
 export type DeliveryIcon = "pendente" | "whatsapp" | "copia" | "confirmado";
 /** `short` = null quando a linha fechada não mostra nada (iniciado com mais de RECENT_DAYS, iniciado_antigo). */
@@ -133,6 +156,46 @@ export function addPrepEntries(log: Readonly<Record<string, PrepEntry>>, ids: re
   return next;
 }
 
+/** Lê as declarações (`:decl`); descarta entradas e datas inválidas (nunca afirma uma declaração ilegível). */
+export function parseDeclaracoes(raw: unknown): Record<string, DeclaracaoEnvio> {
+  if (!isObj(raw)) return {};
+  const out: Record<string, DeclaracaoEnvio> = {};
+  for (const [id, e] of Object.entries(raw)) {
+    if (id.length === 0 || id.length > 120 || !isObj(e)) continue;
+    const d: DeclaracaoEnvio = {};
+    if (isIsoDate(e.enviei)) d.enviei = e.enviei;
+    if (isIsoDate(e.dispensei)) d.dispensei = e.dispensei;
+    if (d.enviei || d.dispensei) out[id] = d;
+  }
+  return out;
+}
+
+const ultimaDeclaracao = (d: DeclaracaoEnvio) => Math.max(d.enviei ? Date.parse(d.enviei) : -Infinity, d.dispensei ? Date.parse(d.dispensei) : -Infinity);
+
+/**
+ * Grava a declaração (`campo`) de cada treino com a hora `at` e mantém no máximo `max` treinos, tirando os de declaração
+ * mais antiga. Os ids recém-declarados nunca saem. Declarar "Já enviei" não apaga um "dispensei" anterior (e vice-versa).
+ */
+export function addDeclaracoes(decl: Readonly<Record<string, DeclaracaoEnvio>>, ids: readonly string[], campo: keyof DeclaracaoEnvio, at: string, max = PREP_LOG_MAX): Record<string, DeclaracaoEnvio> {
+  const next: Record<string, DeclaracaoEnvio> = { ...decl };
+  const fresh = new Set(ids);
+  for (const id of fresh) next[id] = { ...next[id], [campo]: at };
+  const keys = Object.keys(next);
+  if (keys.length <= max) return next;
+  const removable = keys.filter((k) => !fresh.has(k)).sort((a, b) => ultimaDeclaracao(next[a]!) - ultimaDeclaracao(next[b]!));
+  for (const k of removable.slice(0, keys.length - Math.max(max, fresh.size))) delete next[k];
+  return next;
+}
+
+/** A declaração vale para o toque? Sem toque com hora, vale; com toque, só se a declaração for igual ou mais nova. */
+function declaracaoVale(quando: string | undefined, prep: PrepEntry | undefined): boolean {
+  if (!quando) return false;
+  if (!prep) return true;
+  const a = Date.parse(quando);
+  const b = Date.parse(prep.at);
+  return !Number.isFinite(b) || a >= b;
+}
+
 /** Lê o registro de envio da ficha; null se faltar ou estiver malformado. */
 export function parseFichaSendRecord(raw: unknown): FichaSendRecord | null {
   if (!isObj(raw) || !isIsoDate(raw.at) || !isVia(raw.via)) return null;
@@ -176,8 +239,11 @@ const DAY_MS = 86_400_000;
  * "Pendentes" (faixa do Hoje, botão do cabeçalho do Histórico) = `nao_enviado` (T4). Quem chama só pergunta com
  * `user.remoteCoach` no modo local (T5).
  */
-export function sessionDelivery(input: { id: string; legacySent: ReadonlySet<string>; log: Readonly<Record<string, PrepEntry>> }): SessionDelivery {
+export function sessionDelivery(input: { id: string; legacySent: ReadonlySet<string>; log: Readonly<Record<string, PrepEntry>>; decl?: Readonly<Record<string, DeclaracaoEnvio>> }): SessionDelivery {
   const e = hasOwn(input.log, input.id) ? input.log[input.id] : undefined;
+  const d = input.decl && hasOwn(input.decl, input.id) ? input.decl[input.id] : undefined;
+  // R3-3: "Já enviei" depois do último toque (ou sem toque) → declarado. Um toque mais novo volta a "preparado".
+  if (d?.enviei && declaracaoVale(d.enviei, e)) return { kind: "declarado", at: d.enviei, prep: e ? { via: e.via, at: e.at } : null };
   if (e) return { kind: "iniciado", via: e.via, at: e.at };
   if (input.legacySent.has(input.id)) return { kind: "iniciado_antigo" };
   return { kind: "nao_enviado" };
@@ -203,6 +269,16 @@ export function sessionDeliveryText(d: SessionDelivery, coachFirst: string, now:
   }
   if (d.kind === "iniciado_antigo") {
     return { short: null, long: `O envio deste treino já foi iniciado neste celular. Se ${coachFirst} não recebeu, envie de novo.`, icon: "whatsapp", actionLabel: resend };
+  }
+  if (d.kind === "declarado") {
+    // Declaração da pessoa, rotulada assim: nunca "recebido" nem "enviado para".
+    const day = fmtDayMonth(d.at);
+    return {
+      short: isRecent(d.at, now) ? `Você marcou: já enviei · ${day}` : null,
+      long: `Você marcou este treino como enviado em ${day} às ${fmtTime(d.at)}. O app não vê a conversa: se ${coachFirst} não recebeu, envie de novo.`,
+      icon: "whatsapp",
+      actionLabel: resend,
+    };
   }
   const day = fmtDayMonth(d.at);
   const time = fmtTime(d.at);
@@ -253,8 +329,54 @@ export function resendNote(entries: readonly (PrepEntry | "antigo")[], coachFirs
 /** O que a nota de reenvio considera de cada estado: o toque com hora, "antigo" ou nada. */
 export function resendEntry(d: SessionDelivery): PrepEntry | "antigo" | null {
   if (d.kind === "iniciado") return { via: d.via, at: d.at };
+  if (d.kind === "declarado") return d.prep ?? "antigo";
   return d.kind === "iniciado_antigo" ? "antigo" : null;
 }
+
+// ---- R3-3: pendência honesta no aparelho do aluno ---------------------------------------------------------------------
+/** O treino ainda está "para enviar" (nenhum toque nem declaração): o banner forte do Hoje e o botão do Histórico. */
+export const paraEnviar = (d: SessionDelivery) => d.kind === "nao_enviado";
+
+/**
+ * Lembrete discreto do Hoje: só treinos COPIADOS, sem "Já enviei" e sem dispensa depois do toque. "Envio iniciado"
+ * (WhatsApp aberto) não cobra no Hoje (o Histórico mostra o estado). null quando não há o que lembrar.
+ */
+export function lembreteDeCopia(preparados: readonly { id: string; via: PrepVia | "share"; at: string }[], decl: Readonly<Record<string, DeclaracaoEnvio>> = {}): { ids: string[]; texto: string } | null {
+  const ids = preparados
+    .filter((p) => p.via === "copy")
+    .filter((p) => {
+      const d = hasOwn(decl, p.id) ? decl[p.id] : undefined;
+      return !declaracaoVale(d?.enviei, { via: "copy", at: p.at }) && !declaracaoVale(d?.dispensei, { via: "copy", at: p.at });
+    })
+    .map((p) => p.id);
+  if (!ids.length) return null;
+  return { ids, texto: `Você copiou ${ids.length === 1 ? "1 treino" : `${ids.length} treinos`}. Já colou na conversa?` };
+}
+
+/** Dispensado depois do último toque: o lembrete do Hoje some (o estado do treino continua "preparado"). */
+export function dispensado(id: string, log: Readonly<Record<string, PrepEntry>>, decl: Readonly<Record<string, DeclaracaoEnvio>>): boolean {
+  const d = hasOwn(decl, id) ? decl[id] : undefined;
+  return declaracaoVale(d?.dispensei, hasOwn(log, id) ? log[id] : undefined);
+}
+
+/**
+ * Rótulo do botão de envio de treinos. Acima do limite por link: "Enviar 20 de 23 treinos" (coerente com o "faltam 3"
+ * do diálogo); os que não cabem continuam "para enviar".
+ */
+export function rotuloDoEnvio(total: number, max: number, coachFirst: string): string {
+  if (total > max) return `Enviar ${max} de ${total} treinos`;
+  return total === 1 ? `Enviar treino para ${coachFirst}` : `Enviar ${total} treinos para ${coachFirst}`;
+}
+
+/** Linha do diálogo quando nem todos cabem num link: "20 de 23 neste envio; faltam 3." null quando cabem todos. */
+export function textoDoLote(total: number, max: number): string | null {
+  if (total <= max) return null;
+  const faltam = total - max;
+  return `${max} de ${total} neste envio; ${faltam === 1 ? "falta 1" : `faltam ${faltam}`}.`;
+}
+
+/** `markSessionsPrepared` não conseguiu gravar o toque: o status do diálogo diz isso (nunca "copiada às …"). */
+export const TEXTO_REGISTRO_FALHOU = "Não deu para registrar neste aparelho; o treino continua como para enviar.";
 
 /** Medição de `treinos_link_sent`: `resend` = algum treino do link já tinha toque; `novos` = quantos não tinham. */
 export function resendCounts(states: readonly SessionDelivery[]): { resend: boolean; novos: number } {

@@ -12,7 +12,8 @@ import { CODIGO, ehTelaDeRespostas, TIPO } from "@/lib/questionario-base";
  * Sem NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN nada é enviado: em desenvolvimento os eventos aparecem no console.
  * Regras: nunca envie dados de saúde (peso, medidas, dieta) nem derivados deles (ex.: a nota da dieta), nomes,
  * telefones, cargas ou texto digitado pelo usuário nas propriedades — só contagens, booleanos, opções escolhidas
- * e nomes de recursos. A união abaixo é fechada: evento novo entra aqui, com as propriedades em EVENT_PROPS.
+ * e nomes de recursos. A união abaixo é fechada: evento novo entra aqui, com as propriedades em EVENT_PROPS e na
+ * ALLOWED_PROPS de src/lib/analytics-props.ts (rodada 3, R3-19: chave fora dela é descartada antes de sair do aparelho).
  */
 export type EventName =
   | "landing_cta_clicked"
@@ -167,6 +168,10 @@ export type ProgramGeneratedExtra = { from_anamnese: boolean; ajustes_n: number 
 export type FichaLinkExtra = { primeira: boolean; horas_desde_cadastro: number | null; questionario: "link" | "junto" | "nenhum"; aluno_novo: boolean };
 /** Chave nova de `student_created` (`evStudentCreatedExtra`). */
 export type StudentCreatedExtra = { modo: StudentCreatedModo };
+/** Faixa de minutos ATIVOS do treino (rodada 3, R3-4; `faixaMinutosAtivos` em domain/session-time.ts). Nunca o bruto. */
+export type FaixaMinutosAtivos = "<15" | "15-30" | "30-45" | "45-60" | "60-90" | ">90";
+/** Chave nova de `workout_completed` (rodada 3): substitui `minutes` (duração bruta), que o filtro já descarta. */
+export type WorkoutCompletedExtra = { minutos_ativos: FaixaMinutosAtivos | null };
 
 /** `diet_analyzed`: sem `score` (a nota é derivada da dieta). Um `score` passado por engano é descartado. */
 export interface DietAnalyzedProps {
@@ -290,6 +295,15 @@ export function cleanProps(event: EventName, props: TrackProps): TrackProps {
 
 type TrackArgs<E extends EventName> = E extends keyof StrictEventProps ? [props: StrictEventProps[E]] : [props?: TrackProps];
 
+/**
+ * Filtro por evento em tempo de execução (rodada 3, R3-19): só as chaves de ALLOWED_PROPS (src/lib/analytics-props.ts)
+ * e texto de até 64 caracteres. As listas chegam com o SDK (posthog-init.ts → `anexarPosthog`) e não pesam no primeiro
+ * carregamento; até lá nada sai do aparelho (a fila fica em memória), e cada chamada da fila passa pelo filtro na hora de
+ * ir para o SDK, assim como as chamadas diretas depois do init.
+ */
+export type FiltroDeProps = (event: EventName, props: TrackProps) => TrackProps;
+let filtrar: FiltroDeProps | null = null;
+
 // ---- SDK depois do primeiro carregamento (rodada M, RM-03) ---------------------------------------------------------
 // O posthog-js (~120 KB gzip) é baixado 3 s depois do `load`, quando o navegador fica ocioso. Até lá cada chamada
 // espera numa fila, com o horário e a página da ação, e é aplicada na ordem quando o SDK iniciar. A fila só guarda o
@@ -412,9 +426,11 @@ function safely(fn: (p: PostHog, c?: Chamada) => void, tipo: TipoDeChamada = "ev
  * O SDK iniciou (posthog-init.ts). Manda a $pageview da abertura com a URL e o horário capturados no módulo; depois os
  * erros de antes do SDK e a fila, na ordem dos horários, cada um com o horário e a página da ação (e uma $pageview
  * quando a página muda, como o SDK faria na navegação); por fim a página atual, se for outra. Daí em diante as chamadas
- * vão direto para o SDK.
+ * vão direto para o SDK. `filtro` (R3-19, `filtrarProps` de analytics-props.ts): vale para os eventos da fila e os
+ * seguintes; posthog-init.ts sempre passa (teste em analytics.allowlist.test.ts).
  */
-export function anexarPosthog(p: PostHog, inicio: InicioDaPagina, cedo: readonly ErroCedo[]) {
+export function anexarPosthog(p: PostHog, inicio: InicioDaPagina, cedo: readonly ErroCedo[], filtro?: FiltroDeProps) {
+  if (filtro) filtrar = filtro;
   const erros: Chamada[] = cedo.map((e) => ({
     em: e.em,
     url: e.url,
@@ -444,9 +460,15 @@ export function track<E extends EventName>(event: E, ...args: TrackArgs<E>) {
   const props = cleanProps(event, (args[0] ?? {}) as TrackProps);
   if (!enabled) {
     if (process.env.NODE_ENV !== "production") console.debug("[track]", event, props);
+    // Em desenvolvimento sem token, o aviso de chave fora da lista (R3-19) sem esperar o SDK. Fora do build de produção.
+    if (process.env.NODE_ENV === "development") void import("./analytics-props").then((m) => m.filtrarProps(event, props), () => undefined);
     return;
   }
-  safely((p, c) => (c ? p.capture(event, { ...props, ...naPagina(c) }, { timestamp: c.em }) : p.capture(event, props)));
+  safely((p, c) => {
+    const ok = filtrar ? filtrar(event, props) : props;
+    if (c) p.capture(event, { ...ok, ...naPagina(c) }, { timestamp: c.em });
+    else p.capture(event, ok);
+  });
 }
 
 /** Conta real (login): liga os eventos ao id estável do usuário. Sem e-mail nem nome. */

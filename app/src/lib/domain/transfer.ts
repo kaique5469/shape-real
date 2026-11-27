@@ -2,7 +2,8 @@ import { z } from "zod";
 import { isIsoDate } from "./delivery";
 import { dietForLink } from "./diet-plan";
 import type { Food } from "./foods";
-import { completedSets } from "./progression";
+import { completedSets, volumeDaSessao } from "./progression";
+import { completude, duracaoDoTreino, duracaoTexto } from "./session-time";
 import type { BodyMetric, ConsentSource, DietPlan, Exercise, Profile, Program, Session } from "./types";
 
 /**
@@ -74,20 +75,35 @@ const id = z.string().min(1).max(80);
 const text = (max: number) => z.string().max(max);
 const opt = <T extends z.ZodTypeAny>(t: T) => t.optional().nullable();
 const num = (min: number, max: number) => z.number().finite().min(min).max(max);
+/**
+ * Campo novo e acessório (rodada 3): ausente em links antigos; malformado (versão alterada à mão, bug) vira undefined e
+ * o link abre do mesmo jeito. Nunca motivo para recusar o pacote.
+ */
+const extra = <T extends z.ZodTypeAny>(t: T) => t.optional().catch(undefined);
 
-const planned = z.object({
-  uid: id,
-  exerciseId: id,
-  name: text(120),
-  sets: num(1, 20),
-  repsMin: num(0, 999),
-  repsMax: num(0, 999),
-  restSec: num(0, 3600),
-  loadKg: opt(num(0, 1000)),
-  technique: text(40),
-  notes: opt(text(500)),
-  unit: opt(z.enum(["reps", "seg", "min"])),
-});
+/**
+ * Faixa de repetições invertida (Mín 12 / Máx 8, salva assim por um editor antigo): o link troca na hora em vez de
+ * recusar (R3-6). A ordem certa não muda nada.
+ */
+export function faixaEmOrdem<T extends { repsMin: number; repsMax: number }>(p: T): T {
+  return p.repsMin > p.repsMax ? { ...p, repsMin: p.repsMax, repsMax: p.repsMin } : p;
+}
+
+const planned = z
+  .object({
+    uid: id,
+    exerciseId: id,
+    name: text(120),
+    sets: num(1, 20),
+    repsMin: num(0, 999),
+    repsMax: num(0, 999),
+    restSec: num(0, 3600),
+    loadKg: opt(num(0, 1000)),
+    technique: text(40),
+    notes: opt(text(500)),
+    unit: opt(z.enum(["reps", "seg", "min"])),
+  })
+  .transform(faixaEmOrdem);
 
 const program = z.object({
   id,
@@ -145,6 +161,8 @@ const session = z.object({
         sets: z.array(setLog).max(30),
         notes: opt(text(500)),
         unit: opt(z.enum(["reps", "seg", "min"])),
+        // R3-7: "Senti dor". Só `true` vale; o texto do envio mostra "Dor marcada: …" (nada escondido no link).
+        pain: extra(z.boolean()),
       }),
     )
     .max(40),
@@ -152,6 +170,10 @@ const session = z.object({
   feeling: opt(num(1, 5)),
   volumeKg: num(0, 1_000_000),
   prs: z.array(text(80)).max(40),
+  // R3-4: minutos ativos, correção da pessoa e séries planejadas.
+  activeMin: extra(num(0, 1440)),
+  activeEdited: extra(z.boolean()),
+  plannedSets: extra(z.number().int().min(1).max(40 * 30)),
 });
 
 const metric = z.object({
@@ -209,13 +231,19 @@ const treinosSchema = z.object({
   ficha: z.object({ programAt: text(40).optional(), dietAt: text(40).optional() }).optional().catch(undefined),
 });
 
-/** Confere o pacote recebido; null quando não é um link do Shape Real (ou veio corrompido). */
+/**
+ * Confere o pacote recebido; null quando não é um link do Shape Real (ou veio corrompido). Nos treinos, o `volumeKg` do
+ * remetente (cache, talvez de outra convenção) é recalculado aqui pela convenção única (R3-6 B): o painel nunca guarda
+ * o número de outro aparelho como verdade.
+ */
 export function parsePacket(value: unknown): Packet | null {
   const kind = (value as { kind?: unknown } | null)?.kind;
   const res = kind === "ficha" ? fichaSchema.safeParse(value) : kind === "treinos" ? treinosSchema.safeParse(value) : null;
   if (!res?.success) return null;
   const strip = <T>(v: T): T => JSON.parse(JSON.stringify(v, (_k, x) => (x === null ? undefined : x)));
-  return strip(res.data) as unknown as Packet;
+  const packet = strip(res.data) as unknown as Packet;
+  if (packet.kind === "treinos") for (const s of packet.sessions) s.volumeKg = volumeDaSessao(s);
+  return packet;
 }
 
 // ---- montagem -----------------------------------------------------------------
@@ -450,10 +478,21 @@ const kg = (v: number) => v.toLocaleString("pt-BR", { maximumFractionDigits: 2 }
 const br = (iso: string) => new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 const FEELING = ["", "Péssimo", "Ruim", "Ok", "Bom", "Ótimo"];
 
-/** Uma linha por exercício: "Supino reto com barra: 40×10 · 40×10 · 42,5×8". */
+/**
+ * O "1 de 24 séries" da tela, com "(parcial)" abaixo do limiar; null com o treino inteiro ou sem `plannedSets`.
+ * O mesmo texto no link de treinos, no Histórico e na página do aluno.
+ */
+export function completudeLinha(s: Pick<Session, "exercises" | "plannedSets">): string | null {
+  const c = completude(s);
+  return c.texto ? `${c.texto}${c.parcial ? " (parcial)" : ""}` : null;
+}
+
+/**
+ * Uma linha por exercício: "Supino reto com barra: 40×10 · 40×10 · 42,5×8". No título, os minutos pela regra única
+ * (`duracaoDoTreino`: ativos, ajustados ou a duração registrada até 180 min) e o "{feitas} de {planejadas} séries".
+ */
 export function sessionToText(s: Session): string {
-  const minutes = s.finishedAt ? Math.round((Date.parse(s.finishedAt) - Date.parse(s.startedAt)) / 60000) : null;
-  const head = [s.dayKey ? `Treino ${s.dayKey}${s.dayTitle ? ` — ${s.dayTitle}` : ""}` : "Treino livre", br(s.startedAt), minutes && minutes > 0 && minutes <= 300 ? `${minutes} min` : null].filter(Boolean).join(" · ");
+  const head = [s.dayKey ? `Treino ${s.dayKey}${s.dayTitle ? ` — ${s.dayTitle}` : ""}` : "Treino livre", br(s.startedAt), duracaoTexto(duracaoDoTreino(s)), completudeLinha(s)].filter(Boolean).join(" · ");
   const out = [`*${head}*`];
   for (const e of s.exercises) {
     const sets = completedSets(e);
@@ -483,10 +522,22 @@ export function fichaLinkMessage(i: { studentFirstName: string; coachSignature?:
   return `Oi, ${i.studentFirstName}! ${what[0]!.toUpperCase()}${what.slice(1)} ${verbo} no Shape Real. Abra este link no seu celular para ${para} (não precisa cadastro):\n${i.link}\n\n— ${i.coachSignature?.trim() || "seu personal"}`;
 }
 
+/**
+ * "Dor marcada: Supino reto com barra (20/11)", uma linha por exercício com "Senti dor", na ordem dos treinos (R3-7).
+ * A dor só vai no pacote porque a mensagem visível diz isto: nada escondido no link.
+ */
+export function painLines(sessions: readonly Session[]): string[] {
+  const out: string[] = [];
+  for (const s of [...sessions].sort((a, b) => a.startedAt.localeCompare(b.startedAt))) for (const e of s.exercises) if (e.pain === true) out.push(`Dor marcada: ${e.name} (${br(s.startedAt)})`);
+  return out;
+}
+
 export function treinosMessage(sessions: Session[], link: string, coachFirstName?: string): string {
   const ordered = [...sessions].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
   const intro = ordered.length === 1 ? `${coachFirstName ? `${coachFirstName}, ` : ""}treino feito:` : `${coachFirstName ? `${coachFirstName}, ` : ""}${ordered.length} treinos feitos:`;
   // Texto curto para até 3 treinos; acima disso, só o resumo (o detalhe vai pelo link).
   const body = ordered.length <= 3 ? ordered.map(sessionToText).join("\n\n") : ordered.map((s) => `• ${s.dayKey ? `Treino ${s.dayKey}` : "Treino livre"} · ${br(s.startedAt)}`).join("\n");
-  return `${intro}\n\n${body}\n\nPara registrar no seu painel do Shape Real, abra: ${link}`;
+  // A dor aparece nos dois formatos (também no resumo de mais de 3 treinos).
+  const pain = painLines(ordered);
+  return `${intro}\n\n${body}${pain.length ? `\n\n${pain.join("\n")}` : ""}\n\nPara registrar no seu painel do Shape Real, abra: ${link}`;
 }

@@ -46,7 +46,7 @@ function Hoje() {
   const [chosen, setChosen] = useState<string | null>(null);
   const [sentTick, setSentTick] = useState(0);
   // sentTick faz reler o que já foi enviado depois de um envio.
-  const pending = usePendingWorkouts(data?.sessions, sentTick);
+  const { toSend: pending } = usePendingWorkouts(data?.sessions, sentTick);
   // Depois de um toque, o envio continua montado mesmo sem pendentes: a cópia deixa o diálogo aberto com
   // "Mensagem copiada às …", e a faixa sumir no meio fecharia o diálogo junto (mesma regra do Histórico).
   const [sentNow, setSentNow] = useState(false);

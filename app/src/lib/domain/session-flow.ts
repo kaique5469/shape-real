@@ -7,13 +7,16 @@
  *    `removeExerciseConfirm`, `removeExerciseHint` (ações do exercício);
  *  - U8a: `KEYBOARD_MIN_SHRINK`, `revealAfterResize`, `acceptTyped`, `ABOVE_MAX_NOTE` (teclado e limite de 999);
  *  - U2a e U5a (fim do treino): `summaryHeadline` (linha "salvo neste …" do resumo) e `programWithFinishedLoads`
- *    (carga feita copiada para a ficha sem virar edição).
+ *    (carga feita copiada para a ficha sem virar edição);
+ *  - rodada 3 (R3-4, R3-7): `sessaoParaSalvar` (o que vai para o histórico no "Finalizar": séries planejadas antes do
+ *    filtro, minutos ativos, volume pela convenção única) e `marcarDor` ("Senti dor" num exercício).
  */
 
-import { completedSets } from "./progression";
+import { completedSets, volumeDaSessao } from "./progression";
 import { shouldStartRest, type SetRef } from "./rest";
 import { setRowState } from "./session-checks";
-import type { ExerciseLog, Program, Technique } from "./types";
+import { minutosAtivosAoFinalizar, type TempoAtivo } from "./session-time";
+import type { ExerciseLog, Program, Session, Technique } from "./types";
 
 /** Faixa vertical em px no referencial da viewport (o `top`/`bottom` de `getBoundingClientRect()`). */
 export interface VerticalBand {
@@ -318,4 +321,48 @@ export function programWithFinishedLoads(program: Program, exercises: readonly E
     }),
   }));
   return changed ? { ...program, days } : null;
+}
+
+/**
+ * A sessão que o "Finalizar" grava, ou null quando nenhuma série foi feita (a tela pede para marcar uma). Nesta ordem:
+ *  1. `plannedSets` = soma das séries do treino ANTES de tirar os exercícios sem série feita (de 6×4 com 1 série feita,
+ *     24 planejadas; depois do filtro só daria para derivar 4). Treino sem nenhuma série: o campo não vai;
+ *  2. ficam os exercícios com série feita e os com "Senti dor" marcado (quem parou por causa da dor não fez série, e a
+ *     dor precisa chegar à próxima sugestão de carga e ao personal);
+ *  3. `activeMin` pelo relógio do rascunho (`tempo`); rascunho antigo, sem relógio, não grava minutos (vale a duração
+ *     registrada, `activeMinutes`);
+ *  4. `volumeKg` (cache) pela convenção única (`volumeDaSessao`).
+ * Os recordes (`prs`) dependem do histórico e ficam com quem chama.
+ */
+export function sessaoParaSalvar(src: Session, opts: { agora: Date; tempo?: TempoAtivo }): Session | null {
+  const plannedSets = src.exercises.reduce((n, e) => n + e.sets.length, 0);
+  const exercises = src.exercises.filter((e) => completedSets(e).length > 0 || e.pain === true);
+  if (!exercises.some((e) => completedSets(e).length > 0)) return null;
+  const nowMs = opts.agora.getTime();
+  const s: Session = { ...src, exercises, finishedAt: opts.agora.toISOString() };
+  if (plannedSets > 0) s.plannedSets = plannedSets;
+  else delete s.plannedSets;
+  delete s.activeMin;
+  delete s.activeEdited;
+  if (opts.tempo && Number.isFinite(nowMs)) s.activeMin = minutosAtivosAoFinalizar(opts.tempo, nowMs);
+  s.volumeKg = volumeDaSessao(s);
+  return s;
+}
+
+/**
+ * "Senti dor" num exercício (por uid), na sessão em andamento ou no resumo final. Explícito, nunca inferido das notas;
+ * desmarcar tira o campo (o registro volta a ser igual ao de quem nunca marcou). Uid inexistente: a mesma sessão.
+ */
+export function marcarDor<S extends Pick<Session, "exercises">>(session: S, logUid: string, pain: boolean): S {
+  const cur = session.exercises.find((e) => e.uid === logUid);
+  if (!cur || (cur.pain === true) === pain) return session;
+  return {
+    ...session,
+    exercises: session.exercises.map((e) => {
+      if (e.uid !== logUid) return e;
+      if (pain) return { ...e, pain: true };
+      const { pain: _pain, ...rest } = e;
+      return rest;
+    }),
+  };
 }

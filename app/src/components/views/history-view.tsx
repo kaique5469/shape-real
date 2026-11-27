@@ -8,7 +8,8 @@ import { SendToCoach } from "@/components/transfer-share";
 import { Alert, Button, Dialog, Empty, LinkButton, Skeleton, cx } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
 import { fmtNum, useLoad } from "@/lib/hooks";
-import { completedSets, weekStart } from "@/lib/domain/progression";
+import { completedSets, volumeDaSessao, weekStart } from "@/lib/domain/progression";
+import { activeMinutes } from "@/lib/domain/session-time";
 import { sessionDeliveryText, type SessionDelivery } from "@/lib/domain/delivery";
 import { downloadText, sessionsToCsv } from "@/lib/domain/export";
 import { track } from "@/lib/analytics";
@@ -92,7 +93,8 @@ export function HistoryView({
           <ul className="space-y-2">
             {sessions.map((s) => {
               const isOpen = open === s.id;
-              const minutes = s.finishedAt ? Math.round((new Date(s.finishedAt).getTime() - new Date(s.startedAt).getTime()) / 60000) : null;
+              // Minutos e volume pelas regras únicas (R3-4, R3-6 B), nunca fim − início nem o `volumeKg` gravado.
+              const minutes = activeMinutes(s);
               const state = delivery?.stateOf(s.id) ?? null;
               const text = state && delivery ? sessionDeliveryText(state, delivery.coachFirst) : null;
               return (
@@ -103,7 +105,7 @@ export function HistoryView({
                       <span className="block truncate font-bold">{s.dayTitle?.trim() || (s.dayKey ? `Treino ${s.dayKey}` : "Treino livre")}</span>
                       <span className="num block text-xs text-steel">
                         {new Date(s.startedAt).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "short" })}
-                        {minutes ? ` · ${minutes} min` : ""} · {fmtNum(s.volumeKg, 0)} kg
+                        {minutes ? ` · ${minutes} min` : ""} · {fmtNum(volumeDaSessao(s), 0)} kg
                         {s.feeling ? ` · ${FEELING[s.feeling]}` : ""}
                       </span>
                       {/* Linha curta do envio: dentro do botão, entra no nome acessível ("…, Envio iniciado · 23/11"). */}

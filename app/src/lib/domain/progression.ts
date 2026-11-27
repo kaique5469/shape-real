@@ -48,10 +48,36 @@ export function setVolume(s: SetLog): number {
   return (s.loadKg ?? 0) * (s.reps ?? 0);
 }
 
+/**
+ * Volume do treino em kg. Rodada 3 (R3-6 B): o mesmo que `volumeDaSessao` (convenção única: série por tempo pela
+ * unidade do exercício, como na tela, e máquina assistida fora). Mantido para os importadores antigos.
+ */
 export function sessionVolume(session: Pick<Session, "exercises">): number {
+  return volumeDaSessao(session);
+}
+
+/**
+ * Rodada 3 (R3-6 B): volume em kg de UMA série, com a convenção única do app. Carga × repetições só quando a série foi
+ * feita (marcada, com reps) e o exercício é contado em repetições (`unitOf`, a mesma regra da tela). Zero para série
+ * por tempo (prancha, cardio), máquina assistida (a carga é ajuda), peso corporal sem carga e elástico sem carga
+ * numérica. Unilateral: a carga registrada (por lado), sem dobrar. Exercício próprio sem unidade conta como reps.
+ */
+export function volumeElegivel(ex: Pick<ExerciseLog, "exerciseId" | "unit">, set: SetLog): number {
+  if (!set.done) return 0;
+  const reps = set.reps ?? 0;
+  const load = set.loadKg;
+  if (!(reps > 0) || typeof load !== "number" || !Number.isFinite(load) || load <= 0) return 0;
+  if (unitOf(ex.exerciseId, ex.unit) !== "reps" || isAssisted(ex.exerciseId)) return 0;
+  return load * reps;
+}
+
+/**
+ * Volume do treino lido pela convenção única (`volumeElegivel`), arredondado ao kg. Ignora `s.volumeKg`, que é só o
+ * cache gravado no fim do treino (sessões antigas guardam a convenção antiga, ex.: assistida contada).
+ */
+export function volumeDaSessao(session: Pick<Session, "exercises">): number {
   let v = 0;
-  // Séries por tempo (prancha, cardio) não entram no volume em kg.
-  for (const ex of session.exercises) if ((ex.unit ?? "reps") === "reps") for (const s of completedSets(ex)) v += setVolume(s);
+  for (const ex of session.exercises) for (const s of ex.sets) v += volumeElegivel(ex, s);
   return Math.round(v);
 }
 
@@ -259,13 +285,41 @@ export function loadIncrement(exerciseId: string, currentLoadKg = 0): number {
   }
 }
 
-/** "retorno" = voltando depois de uma pausa (rascunhos antigos nunca têm esse valor; todos continuam válidos). */
-export type SuggestionKind = "aumentar" | "manter" | "reduzir" | "primeira" | "reps" | "retorno";
+/**
+ * "retorno" = voltando depois de uma pausa (rascunhos antigos nunca têm esse valor; todos continuam válidos).
+ * "dor" (rodada 3, R3-7) = "Senti dor" marcado na última sessão do exercício: nenhuma sugestão de carga (nem "manter").
+ */
+export type SuggestionKind = "aumentar" | "manter" | "reduzir" | "primeira" | "reps" | "retorno" | "dor";
 
-export interface LoadSuggestion {
-  kind: SuggestionKind;
-  loadKg: number | null;
+/** Sugestão com dor: nunca traz carga (o campo da série começa vazio; a última carga só aparece em "Última vez"). */
+export interface PainSuggestion {
+  kind: "dor";
+  loadKg: null;
   text: string;
+}
+
+export type LoadSuggestion =
+  | {
+      kind: Exclude<SuggestionKind, "dor">;
+      loadKg: number | null;
+      text: string;
+    }
+  | PainSuggestion;
+
+/**
+ * Texto com dor (R3-7, comportamento do adendo do estudo 2): nenhuma sugestão de carga, nem "manter" nem aumento. O
+ * campo de carga começa vazio e a última carga só aparece em "Última vez".
+ */
+export const PAIN_SUGGESTION_TEXT =
+  "Sem sugestão de carga hoje: você marcou dor neste exercício da última vez. Se a dor aparecer, pare este exercício e fale com seu personal ou um profissional de saúde.";
+
+export function painSuggestion(): PainSuggestion {
+  return { kind: "dor", loadKg: null, text: PAIN_SUGGESTION_TEXT };
+}
+
+/** A sugestão manda deixar a carga vazia (dor marcada da última vez)? */
+export function isPainSuggestion(s: Pick<LoadSuggestion, "kind"> | null | undefined): s is PainSuggestion {
+  return s?.kind === "dor";
 }
 
 /** Dias sem fazer o exercício a partir dos quais a sugestão vira retorno (≈90% da última carga). */
@@ -347,8 +401,10 @@ function snapDown(kg: number, step: number, implement: string | undefined): numb
  * 4. progressão dupla: fechou o topo da faixa em todas as séries → sobe; caiu muito abaixo do mínimo → reduz um degrau
  *    (com salto grande de equipamento, só se a 1ª série ficar 3+ reps abaixo do mínimo); senão mantém e busca reps.
  * Exercícios contados em tempo (prancha, esteira) progridem em segundos/minutos, nunca em carga.
+ * Antes de tudo: "Senti dor" marcado no último registro → `kind: "dor"`, sem carga (R3-7).
  */
 export function suggestNext(last: ExerciseLog | null, planned: PlannedTarget, exerciseId: string, context: SuggestContext = {}): LoadSuggestion {
+  if (last?.pain === true) return painSuggestion();
   const unit = planned.unit ?? last?.unit ?? unitOf(exerciseId);
   if (!last) {
     if (unit === "seg") return { kind: "primeira", loadKg: null, text: "Primeira vez: sustente a posição com boa postura até o tempo pedido." };
@@ -500,10 +556,23 @@ export function suggestNext(last: ExerciseLog | null, planned: PlannedTarget, ex
 }
 
 /**
+ * "Senti dor" marcado na última sessão em que o exercício apareceu (com série feita ou só com a dor marcada: quem parou
+ * o exercício por causa da dor não fez série, e o registro fica no treino por isso). Dor em outro exercício não conta.
+ */
+export function painOnLastSession(sessions: readonly Session[], exerciseId: string): boolean {
+  for (const s of [...sessions].sort(byNewest)) {
+    const logs = s.exercises.filter((e) => e.exerciseId === exerciseId && (e.pain === true || completedSets(e).length > 0));
+    if (logs.length) return logs.some((e) => e.pain === true);
+  }
+  return false;
+}
+
+/**
  * O que a tela de treino deve chamar: sugestão a partir do histórico, com o último registro do exercício (e a data dele,
- * para o retorno após pausa) e os 3 anteriores (para a trava de 2×).
+ * para o retorno após pausa) e os 3 anteriores (para a trava de 2×). Dor na última sessão do exercício vence tudo.
  */
 export function suggestFromHistory(sessions: Session[], planned: PlannedTarget, exerciseId: string, now: Date = new Date()): LoadSuggestion {
+  if (painOnLastSession(sessions, exerciseId)) return painSuggestion();
   const [last, ...earlier] = recentPerformances(sessions, exerciseId, 4);
   return suggestNext(last?.log ?? null, planned, exerciseId, { lastAt: last?.startedAt, earlier: earlier.map((e) => e.log), now });
 }
@@ -549,7 +618,8 @@ export function weeklyVolume(sessions: Session[], weeks = 8, now = new Date()): 
   for (const s of sessions) {
     const i = idx.get(weekStart(s.startedAt));
     if (i === undefined) continue;
-    out[i]!.volume += s.volumeKg || sessionVolume(s);
+    // Pela convenção única (R3-6 B), nunca pelo `volumeKg` gravado (cache da convenção da época).
+    out[i]!.volume += volumeDaSessao(s);
     out[i]!.sessions += 1;
   }
   return out;

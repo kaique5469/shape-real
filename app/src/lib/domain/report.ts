@@ -1,7 +1,9 @@
+import { weeklyGoal } from "./attention";
 import { bestMarkOf, compareMarks, exerciseMarks, markDeltaPct, type Mark } from "./evolution";
 import { todayISO } from "./ids";
-import { completedSets, e1rmRaw, fmtKg, fmtMark, sessionVolume, weekStart } from "./progression";
-import type { BodyMetric, Profile, Session } from "./types";
+import { completedSets, e1rmRaw, fmtKg, fmtMark, volumeDaSessao, weekStart } from "./progression";
+import { activeMinutes, completude } from "./session-time";
+import type { BodyMetric, Profile, Program, Session } from "./types";
 
 /**
  * Relatório de evolução: o que mudou num período (frequência, cargas, medidas),
@@ -9,6 +11,25 @@ import type { BodyMetric, Profile, Session } from "./types";
  */
 
 export type ReportDays = 30 | 60 | 90;
+
+/**
+ * Sobre o que o relatório fala (R3-15): "recebidos" = os treinos que chegaram pelo link (o personal no modo local só
+ * tem o que o aluno mandou: treino não enviado não é falta); "registrados" = os treinos do próprio aparelho ou da nuvem.
+ */
+export type ReportBase = "recebidos" | "registrados";
+
+/** Relatório do personal no modo local fala em treinos recebidos; o do aluno e o da nuvem, em treinos feitos. */
+export function reportBase(ctx: { byCoach: boolean; mode: "local" | "supabase" }): ReportBase {
+  return ctx.byCoach && ctx.mode === "local" ? "recebidos" : "registrados";
+}
+
+/**
+ * Meta de treinos por semana do relatório (R3-16): a mesma regra de /alunos, do Hoje e da página do aluno
+ * (`weeklyGoal`: a ficha ativa, senão o cadastro). Sem nenhuma das duas, sem meta.
+ */
+export function reportGoal(programs: readonly Pick<Program, "active" | "daysPerWeek">[], profile: Pick<Profile, "daysPerWeek">): number | undefined {
+  return weeklyGoal(programs.find((p) => p.active)?.daysPerWeek, profile.daysPerWeek) ?? undefined;
+}
 
 type BodyKey = "weightKg" | "bodyFatPct" | "waistCm" | "hipCm" | "chestCm" | "armCm" | "thighCm";
 
@@ -61,7 +82,13 @@ export interface EvolutionReport {
   from: string;
   to: string;
   days: number;
+  /** Treinos recebidos (personal no modo local) ou registrados: muda só o texto, nunca a conta. */
+  base: ReportBase;
   sessions: number;
+  /** Treinos do período abaixo do limiar de "parcial" (R3-4; só os que têm `plannedSets`). */
+  partial: number;
+  /** Treinos por semana combinados agora (a meta atual vale para o período inteiro); null sem meta. */
+  perWeek: number | null;
   /** Treinos esperados no período pela frequência combinada; null sem frequência definida. */
   planned: number | null;
   adherencePct: number | null;
@@ -113,11 +140,13 @@ export function strengthChange(row: Pick<StrengthRow, "deltaPct" | "compact">): 
 }
 
 /**
- * Notas abaixo da tabela "Exercícios que melhoraram" (U6 §3.3 D), na ordem em que aparecem. Sem nenhuma linha, só
- * "Nenhum exercício com carga melhorou no período." ("Outros" sem linhas não teria a que se referir).
+ * Notas abaixo da tabela "Exercícios que melhoraram" (U6 §3.3 D), na ordem em que aparecem. Sem nenhuma linha: com
+ * exercício comparável que não melhorou, "Nenhum exercício com carga melhorou no período."; sem nenhum comparável (só
+ * recorde em prancha, supino uma vez só), "Nenhum exercício com carga tem dois registros no período para comparar."
+ * (falta de base não é estagnação). "Outros" sem linhas não teria a que se referir.
  */
 export function strengthNotes(r: Pick<EvolutionReport, "strength" | "steady" | "moreImproved">): string[] {
-  if (!r.strength.length) return ["Nenhum exercício com carga melhorou no período."];
+  if (!r.strength.length) return [r.steady > 0 ? "Nenhum exercício com carga melhorou no período." : "Nenhum exercício com carga tem dois registros no período para comparar."];
   const out = ["Melhor: a melhor série de cada exercício no período. O % compara a força estimada (1RM); acima de 12 repetições, a diferença aparece em kg ou repetições."];
   if (r.moreImproved > 0) out.push(r.moreImproved === 1 ? "Mais 1 exercício melhorou." : `Mais ${r.moreImproved} exercícios melhoraram.`);
   if (r.steady > 0) out.push(r.steady === 1 ? "Outro exercício não melhorou no período." : `Outros ${r.steady} exercícios não melhoraram no período.`);
@@ -132,8 +161,36 @@ export function fmtDuration(minutes: number): string {
   return m ? `${h} h ${m} min` : `${h} h`;
 }
 
-export function buildReport(input: { profile: Pick<Profile, "name" | "daysPerWeek">; sessions: Session[]; metrics: BodyMetric[]; days: ReportDays; daysPerWeek?: number; now?: Date }): EvolutionReport {
+/** "3 treinos", "3 treinos (2 parciais)", "1 treino (parcial)". */
+function treinosTexto(n: number, partial: number, base: ReportBase): string {
+  const word = `${n === 1 ? "treino" : "treinos"}${base === "recebidos" ? (n === 1 ? " recebido" : " recebidos") : ""}`;
+  const p = partial > 0 ? (n === 1 ? " (parcial)" : ` (${partial} ${partial === 1 ? "parcial" : "parciais"})`) : "";
+  return `${n} ${word}${p}`;
+}
+
+/** Rótulos do resumo da folha (tela e PDF): "Treinos recebidos" e "Frequência pelos treinos recebidos" no modo local do personal. */
+export function reportLabels(r: Pick<EvolutionReport, "base">): { treinos: string; frequencia: string } {
+  return r.base === "recebidos" ? { treinos: "Treinos recebidos", frequencia: "Frequência pelos treinos recebidos" } : { treinos: "Treinos feitos", frequencia: "Frequência" };
+}
+
+/** Valor da linha de treinos do resumo: "4 de 13 combinados", "4 (1 parcial) de 13 combinados", "4". */
+export function reportSessionsValue(r: Pick<EvolutionReport, "sessions" | "partial" | "planned">): string {
+  const p = r.partial > 0 ? ` (${r.partial} ${r.partial === 1 ? "parcial" : "parciais"})` : "";
+  return r.planned ? `${r.sessions}${p} de ${r.planned} combinados` : `${r.sessions}${p}`;
+}
+
+/**
+ * De onde vem o "combinados" (E2-meta-snapshot): a meta é a de hoje e vale para o período inteiro; o relatório não
+ * finge que era a mesma nas semanas passadas. null sem meta.
+ */
+export function reportGoalNote(r: Pick<EvolutionReport, "perWeek" | "planned">): string | null {
+  if (!r.perWeek || !r.planned) return null;
+  return `Combinados pela frequência atual: ${r.perWeek} ${r.perWeek === 1 ? "treino" : "treinos"} por semana.`;
+}
+
+export function buildReport(input: { profile: Pick<Profile, "name" | "daysPerWeek">; sessions: Session[]; metrics: BodyMetric[]; days: ReportDays; daysPerWeek?: number; base?: ReportBase; now?: Date }): EvolutionReport {
   const { profile } = input;
+  const base: ReportBase = input.base ?? "registrados";
   const to = todayISO(input.now ?? new Date());
   const all = [...input.sessions].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
   // Quem começou há menos tempo que o período pedido é avaliado desde o primeiro treino:
@@ -152,9 +209,10 @@ export function buildReport(input: { profile: Pick<Profile, "name" | "daysPerWee
   const previousSessions = before.filter((s) => dayOf(s.startedAt) >= prevFrom).length;
 
   // Frequência
-  const perWeek = Math.min(7, Math.max(0, input.daysPerWeek ?? profile.daysPerWeek ?? 0));
+  const perWeek = Math.min(7, Math.max(0, Math.round(input.daysPerWeek ?? profile.daysPerWeek ?? 0) || 0));
   const planned = perWeek ? Math.max(1, Math.round((perWeek * days) / 7)) : null;
   const adherencePct = planned ? Math.round((inPeriod.length / planned) * 100) : null;
+  const partial = inPeriod.filter((s) => completude(s).parcial).length;
   const weeks: { week: string; sessions: number }[] = [];
   for (let w = weekStart(from); w <= to; w = shiftDays(w, 7)) weeks.push({ week: w, sessions: 0 });
   for (const s of inPeriod) {
@@ -172,16 +230,14 @@ export function buildReport(input: { profile: Pick<Profile, "name" | "daysPerWee
     }),
   }));
 
-  // Tempo, volume e séries
+  // Tempo, volume e séries. Minutos pela regra única (R3-4: ativos; sessão antiga, a duração registrada até 180 min;
+  // acima, sem minutos, mas o treino conta). Volume pela convenção única (R3-6 B), nunca pelo `volumeKg` gravado.
   let minutes = 0;
   let sets = 0;
   let volumeKg = 0;
   for (const s of inPeriod) {
-    if (s.finishedAt) {
-      const m = (new Date(s.finishedAt).getTime() - new Date(s.startedAt).getTime()) / 60000;
-      if (m > 0 && m <= 240) minutes += Math.round(m);
-    }
-    volumeKg += s.volumeKg || sessionVolume(s);
+    minutes += activeMinutes(s) ?? 0;
+    volumeKg += volumeDaSessao(s);
     for (const e of s.exercises) sets += completedSets(e).length;
   }
 
@@ -243,11 +299,8 @@ export function buildReport(input: { profile: Pick<Profile, "name" | "daysPerWee
   // Frases prontas, do mais concreto para o mais geral
   const highlights: string[] = [];
   if (inPeriod.length) {
-    highlights.push(
-      planned
-        ? `${inPeriod.length} ${inPeriod.length === 1 ? "treino" : "treinos"} em ${days} dias, de ${planned} ${planned === 1 ? "combinado" : "combinados"} (${Math.min(adherencePct!, 999)}% de frequência).`
-        : `${inPeriod.length} ${inPeriod.length === 1 ? "treino" : "treinos"} em ${days} dias.`,
-    );
+    const count = treinosTexto(inPeriod.length, partial, base);
+    highlights.push(planned ? `${count} em ${days} dias, de ${planned} ${planned === 1 ? "combinado" : "combinados"} (${Math.min(adherencePct!, 999)}% de frequência).` : `${count} em ${days} dias.`);
   }
   if (strength[0]) {
     const s = strength[0];
@@ -260,7 +313,8 @@ export function buildReport(input: { profile: Pick<Profile, "name" | "daysPerWee
   if (waist && waist.delta !== 0) highlights.push(`Cintura: ${signed(waist.delta)} cm.`);
   if (inPeriod.length && previousSessions && inPeriod.length !== previousSessions) {
     const diff = inPeriod.length - previousSessions;
-    highlights.push(`${Math.abs(diff)} ${Math.abs(diff) === 1 ? "treino" : "treinos"} a ${diff > 0 ? "mais" : "menos"} que nos ${days} dias anteriores.`);
+    const word = Math.abs(diff) === 1 ? (base === "recebidos" ? "treino recebido" : "treino") : base === "recebidos" ? "treinos recebidos" : "treinos";
+    highlights.push(`${Math.abs(diff)} ${word} a ${diff > 0 ? "mais" : "menos"} que nos ${days} dias anteriores.`);
   }
 
   return {
@@ -268,7 +322,10 @@ export function buildReport(input: { profile: Pick<Profile, "name" | "daysPerWee
     from,
     to,
     days,
+    base,
     sessions: inPeriod.length,
+    partial,
+    perWeek: perWeek || null,
     planned,
     adherencePct,
     weeks,
@@ -291,12 +348,17 @@ export function buildReport(input: { profile: Pick<Profile, "name" | "daysPerWee
 export function reportToText(r: EvolutionReport, opts: { coachName?: string; message?: string; self?: boolean } = {}): string {
   const out: string[] = [`*${opts.self ? "Meu resumo de treino" : `Relatório de evolução — ${r.name.trim()}`}*`, `${br(r.from)} a ${br(r.to)}/${r.to.slice(0, 4)} (${r.days} dias)`];
 
-  out.push("", "*Frequência*");
+  const recebidos = r.base === "recebidos";
+  out.push("", `*${reportLabels(r).frequencia}*`);
   if (r.sessions) {
-    out.push(r.planned ? `${r.sessions} de ${r.planned} treinos combinados (${r.adherencePct}%)` : `${r.sessions} ${r.sessions === 1 ? "treino" : "treinos"}`);
+    const parciais = r.partial > 0 ? ` · ${r.partial} ${r.partial === 1 ? "parcial" : "parciais"}` : "";
+    if (r.planned) out.push(recebidos ? `${r.sessions} de ${r.planned} treinos combinados recebidos (${r.adherencePct}%)${parciais}` : `${r.sessions} de ${r.planned} treinos combinados (${r.adherencePct}%)${parciais}`);
+    else out.push(`${treinosTexto(r.sessions, 0, r.base)}${parciais}`);
+    const nota = reportGoalNote(r);
+    if (nota) out.push(nota);
     if (r.weeks.length > 1) out.push(`Semana a semana: ${r.weeks.map((w) => w.sessions).join(" · ")}`);
     if (r.minutes) out.push(`Tempo treinado: ${fmtDuration(r.minutes)}`);
-  } else out.push("Nenhum treino registrado no período.");
+  } else out.push(recebidos ? "Nenhum treino recebido no período." : "Nenhum treino registrado no período.");
 
   if (r.strength.length) {
     out.push("", "*Exercícios que melhoraram*");

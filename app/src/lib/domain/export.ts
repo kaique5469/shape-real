@@ -1,57 +1,11 @@
 import type { Food } from "./foods";
 import type { BodyMetric, DietPlan, Exercise, Profile, Program, Session } from "./types";
-import { UNIT_LABEL, unitOf } from "./exercises";
-import { TECHNIQUE_LABEL } from "./generator";
-import { completedSets } from "./progression";
 
 /**
- * CSV no formato do Excel brasileiro: separador ";", decimal com vírgula e BOM UTF-8
- * para os acentos abrirem corretamente.
+ * Planilhas (CSV): em export-csv.ts desde a rodada 3 (Fundação). Reexportadas aqui para nenhum importador mudar; a troca
+ * dos importadores e o fim desta reexportação são do RM-10 (M-B).
  */
-function cell(v: string | number | null | undefined): string {
-  if (v === null || v === undefined) return "";
-  const s = typeof v === "number" ? v.toLocaleString("pt-BR", { maximumFractionDigits: 2, useGrouping: false }) : v;
-  return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-function toCsv(rows: (string | number | null | undefined)[][]): string {
-  return "﻿" + rows.map((r) => r.map(cell).join(";")).join("\r\n");
-}
-
-const PROGRAM_HEAD = ["Ficha", "Dia", "Ordem", "Exercício", "Séries", "Mín", "Máx", "Unidade", "Carga (kg)", "Descanso (s)", "Técnica", "Observações"];
-
-function programRows(program: Program): (string | number | null)[][] {
-  const rows: (string | number | null)[][] = [];
-  for (const day of program.days) {
-    day.exercises.forEach((e, i) => {
-      rows.push([program.name, day.title ? `${day.key} — ${day.title}` : day.key, i + 1, e.name, e.sets, e.repsMin, e.repsMax, UNIT_LABEL[unitOf(e.exerciseId, e.unit)].noun, e.loadKg ?? null, e.restSec, e.technique === "normal" ? "" : TECHNIQUE_LABEL[e.technique], e.notes ?? ""]);
-    });
-  }
-  return rows;
-}
-
-export function programToCsv(program: Program): string {
-  return toCsv([PROGRAM_HEAD, ...programRows(program)]);
-}
-
-/** Várias fichas numa planilha só (a coluna "Ficha" separa uma da outra). */
-export function programsToCsv(programs: Program[]): string {
-  return toCsv([PROGRAM_HEAD, ...programs.flatMap(programRows)]);
-}
-
-export function sessionsToCsv(sessions: Session[]): string {
-  const rows: (string | number | null)[][] = [["Data", "Treino", "Exercício", "Série", "Carga (kg)", "Reps", "RPE", "Volume (kg)"]];
-  for (const s of [...sessions].sort((a, b) => a.startedAt.localeCompare(b.startedAt))) {
-    const date = new Date(s.startedAt).toLocaleDateString("pt-BR");
-    const label = [s.dayKey, s.dayTitle].filter(Boolean).join(" — ") || s.programName || "Treino livre";
-    for (const ex of s.exercises) {
-      completedSets(ex).forEach((set, i) => {
-        rows.push([date, label, ex.name, i + 1, set.loadKg ?? null, set.reps ?? null, set.rpe ?? null, (set.loadKg ?? 0) * (set.reps ?? 0)]);
-      });
-    }
-  }
-  return toCsv(rows);
-}
+export { programToCsv, programsToCsv, sessionsToCsv } from "./export-csv";
 
 export function downloadText(filename: string, content: string, mime = "text/csv;charset=utf-8") {
   const blob = new Blob([content], { type: mime });
@@ -113,9 +67,12 @@ export interface Backup extends BackupBundle {
  * `sr:sent:@desde` (início do registro de envio) não casa de propósito: restaurado num aparelho novo, ele
  * recomeça, e fichas antigas viram "sem informação" em vez de "não enviada" (o app deixa de afirmar).
  */
-export const SENT_KEY_RE = /^sr:sent:[\w-]{1,80}(?::at|:log|:ficha|:ack)?$/;
-/** Sufixos das chaves de envio de um perfil (`sr:sent:{id}{sufixo}`), na ordem em que entram na cópia. */
-export const SENT_SUFFIXES = ["", ":at", ":log", ":ficha", ":ack"] as const;
+export const SENT_KEY_RE = /^sr:sent:[\w-]{1,80}(?::at|:log|:ficha|:ack|:decl)?$/;
+/**
+ * Sufixos das chaves de envio de um perfil (`sr:sent:{id}{sufixo}`), na ordem em que entram na cópia. `:decl` (rodada 3,
+ * R3-3): o que a pessoa declarou sobre cada treino ("Já enviei", dispensar o lembrete); nunca é recibo.
+ */
+export const SENT_SUFFIXES = ["", ":at", ":log", ":ficha", ":ack", ":decl"] as const;
 export type SentSuffix = (typeof SENT_SUFFIXES)[number];
 /** Chave de envio de um perfil. */
 export const sentKeyOf = (profileId: string, suffix: SentSuffix = "") => `sr:sent:${profileId}${suffix}`;
@@ -131,6 +88,13 @@ const CUSTOM_ID = /^custom_[\w-]{1,80}$/;
 const none = (v: unknown) => v === undefined || v === null;
 const listOf = (v: unknown, ok: (x: unknown) => boolean, max = 100_000) => none(v) || (Array.isArray(v) && v.length <= max && v.every(ok));
 const customOk = (x: unknown) => isObj(x) && typeof x.id === "string" && CUSTOM_ID.test(x.id) && isText(x.name);
+/**
+ * Treino da cópia (R3-6 A): os exercícios precisam ser uma lista de objetos com `exerciseId` e `sets` em lista (uma
+ * cópia com `exercises = "x"` quebraria o histórico depois de gravada). Exercício próprio sem definição na cópia NÃO
+ * recusa: dá para apagar um exercício próprio que uma ficha ainda usa, e cópias legítimas têm essa referência.
+ */
+const sessionOk = (s: unknown) =>
+  isObj(s) && isId(s.id) && typeof s.startedAt === "string" && Array.isArray(s.exercises) && s.exercises.every((e) => isObj(e) && typeof e.exerciseId === "string" && Array.isArray(e.sets));
 
 function bundleOk(x: unknown): boolean {
   if (!isObj(x)) return false;
@@ -138,7 +102,7 @@ function bundleOk(x: unknown): boolean {
   if (!isObj(p) || !isId(p.id) || !isText(p.name) || (p.role !== "coach" && p.role !== "athlete")) return false;
   return (
     listOf(x.programs, (pr) => isObj(pr) && isId(pr.id) && Array.isArray(pr.days) && pr.days.every((d) => isObj(d) && Array.isArray(d.exercises) && d.exercises.every((e) => isObj(e) && typeof e.exerciseId === "string"))) &&
-    listOf(x.sessions, (s) => isObj(s) && isId(s.id) && typeof s.startedAt === "string") &&
+    listOf(x.sessions, sessionOk) &&
     listOf(x.metrics, (m) => isObj(m) && isId(m.id) && typeof m.date === "string") &&
     (none(x.diet) || (isObj(x.diet) && isId(x.diet.id))) &&
     listOf(x.customExercises, customOk) &&
@@ -150,6 +114,7 @@ function backupOk(x: unknown): x is Obj {
   return (
     bundleOk(x) &&
     isObj(x) &&
+    (none(x.v) || (typeof x.v === "number" && Number.isInteger(x.v) && x.v >= 1)) &&
     (none(x.exportedAt) || isText(x.exportedAt, 40)) &&
     listOf(x.students, bundleOk, 2000) &&
     (none(x.remoteCoach) || bundleOk(x.remoteCoach)) &&
@@ -170,18 +135,43 @@ function apagadasValidas(v: unknown): Record<string, string> {
   ) as Record<string, string>;
 }
 
+/** Por que a cópia não pode ser restaurada (R3-6 A): não é uma cópia do app, ou é de uma versão mais nova dele. */
+export type ProblemaDaCopia = "invalido" | "versao_nova";
+export const TEXTO_COPIA_INVALIDA = "Esse arquivo não é uma cópia do Shape Real.";
+export const TEXTO_COPIA_VERSAO_NOVA = "Esta cópia é de uma versão mais nova do app. Atualize e tente de novo.";
+export const TEXTO_PROBLEMA_DA_COPIA: Record<ProblemaDaCopia, string> = { invalido: TEXTO_COPIA_INVALIDA, versao_nova: TEXTO_COPIA_VERSAO_NOVA };
+
 /**
- * Lê o arquivo da cópia (v1 ou v2). null quando não é uma cópia do Shape Real.
- * Campos vazios (null) viram ausentes e chaves estranhas em `sent` são descartadas.
+ * Cópia de uma versão mais nova do app: `v` maior que BACKUP_VERSION, ou `format` presente e diferente do deste app.
+ * Conferido antes da estrutura (uma versão nova pode ter outro formato: o texto certo é "atualize", não "não é cópia").
  */
-export function parseBackup(text: string): Backup | null {
+export function copiaDeVersaoNova(raw: unknown): boolean {
+  if (!isObj(raw)) return false;
+  if (!none(raw.format) && raw.format !== BACKUP_FORMAT) return true;
+  return typeof raw.v === "number" && raw.v > BACKUP_VERSION;
+}
+
+/** A restauração recusou a cópia antes de qualquer gravação (`restoreBackup` com uma cópia que não passou na leitura). */
+export class CopiaRecusada extends Error {
+  constructor(public readonly problema: ProblemaDaCopia) {
+    super(TEXTO_PROBLEMA_DA_COPIA[problema]);
+    this.name = "CopiaRecusada";
+  }
+}
+
+/**
+ * Lê o arquivo da cópia (v1 ou v2) e diz por que não serve, quando não serve. Campos vazios (null) viram ausentes e
+ * chaves estranhas em `sent` são descartadas. Toda a validação acontece aqui, antes da primeira gravação.
+ */
+export function lerCopia(text: string): { copia: Backup } | { problema: ProblemaDaCopia } {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
   } catch {
-    return null;
+    return { problema: "invalido" };
   }
-  if (!backupOk(raw)) return null;
+  if (copiaDeVersaoNova(raw)) return { problema: "versao_nova" };
+  if (!backupOk(raw)) return { problema: "invalido" };
   const b = raw as unknown as Backup & { students?: BackupBundle[] | null; remoteCoach?: BackupBundle | null; sent?: Record<string, string> | null };
   const sent = Object.fromEntries(Object.entries(b.sent ?? {}).filter(([k]) => SENT_KEY_RE.test(k)));
   const apagadas = apagadasValidas(b.apagadas);
@@ -196,7 +186,13 @@ export function parseBackup(text: string): Backup | null {
   if (!out.remoteCoach) delete out.remoteCoach;
   if (!out.sent) delete out.sent;
   if (!out.apagadas) delete out.apagadas;
-  return out;
+  return { copia: out };
+}
+
+/** Lê o arquivo da cópia (v1 ou v2). null quando não serve (`lerCopia` diz o motivo). */
+export function parseBackup(text: string): Backup | null {
+  const r = lerCopia(text);
+  return "copia" in r ? r.copia : null;
 }
 
 /** Monta o arquivo v2 a partir do que foi lido do aparelho. */
@@ -360,10 +356,11 @@ const idDaRodada = (r: unknown): string | null => (isObj(r) && isId(r.id) ? (r.i
  *    peso, a altura e as limitações ficam como estão no aparelho; com a revogação, a autorização também;
  *  - o resto, como hoje: vale o que veio na cópia.
  * A anamnese que fica não é confiada aqui: quem lê usa `readAnamnese` (versão mais nova ou dado danificado viram trava).
- * `atual` null = aluno novo neste aparelho: devolve a cópia.
+ * `atual` null = aluno que não está neste aparelho (novo, ou removido por "Remover aluno"): vem a cópia, com o mesmo corte
+ * das rodadas apagadas aqui depois dela (R3-13, `semRodadasApagadas`).
  */
 export function mesclarRestauracao(atual: Profile | null, daCopia: Profile, apagadas: ReadonlyMap<string, string> = new Map()): Profile {
-  if (!atual) return daCopia;
+  if (!atual) return semRodadasApagadas(daCopia, apagadas);
   const revogada = marcaMaisNova(atual.saudeRevogadaEm, daCopia.saudeRevogadaEm);
   let apagada = marcaMaisNova(atual.respostasApagadasEm, daCopia.respostasApagadasEm);
   const idsApagados = new Set<string>();
@@ -420,4 +417,232 @@ export function mesclarRestauracao(atual: Profile | null, daCopia: Profile, apag
     if (out[k] === undefined) delete out[k];
   }
   return out;
+}
+
+/**
+ * R3-13: aluno que não está no aparelho (ex.: "Remover aluno" depois da cópia, que grava `sr:v1:qapagado` das rodadas
+ * dele). O mesmo corte do caso com perfil: saem as rodadas (`anamnese`, `anamnesePrev`) com marca de apagado neste
+ * aparelho depois da cópia (`apagadas`) ou respondidas antes da marca mais nova, e as liberações registradas antes dela.
+ * O resto do aluno (cadastro, fichas, treinos, medidas) volta: restaurar é um ato explícito. Sem marca, a cópia como
+ * veio (aparelho limpo: o limite do modo local, explicado na Privacidade).
+ */
+function semRodadasApagadas(daCopia: Profile, apagadas: ReadonlyMap<string, string>): Profile {
+  const ids = new Set<string>();
+  let corte = -Infinity;
+  for (const r of [daCopia.anamnese, daCopia.anamnesePrev] as unknown[]) {
+    const id = idDaRodada(r);
+    const t = id ? instante(apagadas.get(id)) : null;
+    if (id && t !== null) {
+      ids.add(id);
+      corte = Math.max(corte, t);
+    }
+  }
+  if (!ids.size) return daCopia;
+  const vale = (r: unknown) => isObj(r) && !ids.has(idDaRodada(r) ?? "") && (instante(r.answeredAt) ?? -Infinity) >= corte;
+  const out: Profile = { ...daCopia };
+  if (out.anamnese !== undefined && !vale(out.anamnese)) delete out.anamnese;
+  if (out.anamnesePrev !== undefined && !vale(out.anamnesePrev)) delete out.anamnesePrev;
+  if (Array.isArray(out.liberacoes)) {
+    const ficam = out.liberacoes.filter((l) => isObj(l) && (instante(l.registradoEm) ?? -Infinity) >= corte);
+    if (ficam.length) out.liberacoes = ficam;
+    else delete out.liberacoes;
+  }
+  return out;
+}
+
+/** Rodadas da cópia que não voltaram por terem sido apagadas aqui depois dela: a data mais nova; null se todas voltaram. */
+export function rodadasQueNaoVoltaram(daCopia: Profile, restaurado: Profile, apagadas: ReadonlyMap<string, string>): string | null {
+  const ficaram = new Set([restaurado.anamnese, restaurado.anamnesePrev].map(idDaRodada).filter((x): x is string => x !== null));
+  let em: { iso: string; t: number } | null = null;
+  for (const r of [daCopia.anamnese, daCopia.anamnesePrev] as unknown[]) {
+    const id = idDaRodada(r);
+    const iso = id ? apagadas.get(id) : undefined;
+    const t = instante(iso);
+    if (!id || ficaram.has(id) || t === null || !iso) continue;
+    if (!em || t > em.t) em = { iso, t };
+  }
+  return em?.iso ?? null;
+}
+
+/** "22/11" no fuso do aparelho (sem importar format.ts: este arquivo entra em todas as telas, e aquele traz o catálogo). */
+function diaMes(iso: string): string {
+  const d = new Date(iso);
+  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/** Aviso depois de restaurar (R3-13): uma linha por aluno cujas respostas de saúde não voltaram. */
+export function textoRodadasOmitidas(o: { nome: string; em: string }): string {
+  return `As respostas de saúde de ${o.nome.trim().split(/\s+/)[0] || o.nome} apagadas neste aparelho em ${diaMes(o.em)} não voltaram com a cópia.`;
+}
+
+// ---- plano de restauração (R3-6 A.4) ---------------------------------------------------------------------------------
+/**
+ * O que o aparelho tem, lido uma vez antes de restaurar: fichas, treinos e medidas por id (de qualquer perfil) e a dieta
+ * de cada perfil (uma por dono), e os ids dos perfis que já existem aqui.
+ */
+export interface AparelhoParaRestaurar {
+  fichas: ReadonlyMap<string, Program>;
+  dietas: ReadonlyMap<string, DietPlan>;
+  treinos: ReadonlyMap<string, Session>;
+  medidas: ReadonlyMap<string, BodyMetric>;
+  perfis: ReadonlySet<string>;
+}
+
+/** O que acontece com um registro da cópia: entra, fica o do aparelho, ou já está igual (nada a gravar). */
+export type DecisaoDaCopia = "entra" | "fica" | "igual";
+
+export interface PlanoRestauracao {
+  /** Por registro da cópia (`chaveDoRegistro`). Registro sem decisão (exercícios e alimentos próprios) entra. */
+  decisoes: ReadonlyMap<string, DecisaoDaCopia>;
+  /** Registros deste aparelho mais novos que os da cópia (ficha e dieta pelo `updatedAt`; treino diferente): ficam. */
+  mantidos: number;
+  /** Registros da cópia com id que já é de outro perfil deste aparelho: ficam com ele (nada muda de dono). */
+  deOutroPerfil: number;
+  entram: number;
+  iguais: number;
+  /** Alunos da cópia (do personal) que já estão neste aparelho: o cadastro deles volta ao da cópia. */
+  alunosQueJaEstao: number;
+  /** O perfil principal da cópia já está neste aparelho (o cadastro dele volta ao da cópia). */
+  perfilJaEsta: boolean;
+  /** Dono → id da ficha ativa neste aparelho: a escolha da ficha ativa fica a do aparelho. */
+  ativas: ReadonlyMap<string, string>;
+}
+
+export type TipoDeRegistro = "ficha" | "dieta" | "treino" | "medida";
+/** Chave de um registro no plano. A dieta é uma por dono: a chave é o id do dono. */
+export const chaveDoRegistro = (tipo: TipoDeRegistro, id: string) => `${tipo}:${id}`;
+
+type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
+/** Forma canônica (chaves em ordem, sem undefined/null em objeto), para comparar conteúdo sem depender da ordem. */
+function canonica(v: unknown): Json | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (Array.isArray(v)) return v.map((x) => canonica(x) ?? null);
+  if (typeof v === "object") {
+    const out: { [k: string]: Json } = {};
+    for (const k of Object.keys(v as object).sort()) {
+      const c = canonica((v as Record<string, unknown>)[k]);
+      if (c !== undefined) out[k] = c;
+    }
+    return out;
+  }
+  return typeof v === "number" || typeof v === "string" || typeof v === "boolean" ? v : undefined;
+}
+/** Mesmo conteúdo, ignorando as chaves indicadas (dono, `active`). */
+function mesmoConteudo(a: object, b: object, ignorar: readonly string[]): boolean {
+  const sem = (o: object) => JSON.stringify(canonica(Object.fromEntries(Object.entries(o).filter(([k]) => !ignorar.includes(k)))));
+  return sem(a) === sem(b);
+}
+
+/**
+ * Qual é mais novo pelo `updatedAt` (data da edição do conteúdo; `keepUpdatedAt`, DECISIONS de 23/11). Data ilegível
+ * nunca vence uma legível: a cópia sem data não troca um registro com data. Relógio de um dos aparelhos mexido para trás
+ * faz a edição parecer mais velha: não há como saber (limitação registrada).
+ */
+function maisNovo(aparelho: unknown, copia: unknown): "aparelho" | "copia" | "empate" {
+  const ta = instante(aparelho);
+  const tc = instante(copia);
+  if (ta !== null && tc !== null) return ta > tc ? "aparelho" : ta < tc ? "copia" : "empate";
+  if (ta !== null) return "aparelho";
+  if (tc !== null) return "copia";
+  return "empate";
+}
+
+/**
+ * Plano de restauração (R3-6 A.4), puro. Para cada registro da cópia:
+ *  - ficha e dieta: a do aparelho com `updatedAt` mais novo fica; a da cópia mais nova entra; empate com o mesmo
+ *    conteúdo é "igual" (com conteúdo diferente, entra, como antes);
+ *  - treino presente nos dois: igual, ou fica o do aparelho (foi mudado aqui depois da cópia);
+ *  - medida presente nos dois e diferente: entra (o resto da cópia entra, como antes);
+ *  - id que já é de OUTRO perfil deste aparelho (ex.: a cópia de um aluno restaurada no aparelho do personal, cuja
+ *    ficha tem o mesmo id da ficha do aluno no painel): fica com o dono daqui;
+ *  - o resto entra.
+ * O cadastro de quem já está aqui volta ao da cópia (`mesclarRestauracao`). A ficha ativa de cada perfil fica a do
+ * aparelho quando ele tem uma (`ativas`). `mesmoTreino`: quem chama passa `sameSession` (delivery.ts, fora deste arquivo
+ * para não pesar nas telas); sem ele, compara o conteúdo canônico. Restaurar o mesmo arquivo de novo dá tudo "igual".
+ */
+export function planoRestauracao(backup: Backup, aparelho: AparelhoParaRestaurar, mesmoTreino: (a: Session, b: Session) => boolean = (a, b) => mesmoConteudo(a, b, ["userId"])): PlanoRestauracao {
+  const decisoes = new Map<string, DecisaoDaCopia>();
+  let mantidos = 0;
+  let deOutroPerfil = 0;
+  let entram = 0;
+  let iguais = 0;
+  const decidir = (chave: string, d: DecisaoDaCopia | "outro") => {
+    if (d === "outro") {
+      deOutroPerfil += 1;
+      decisoes.set(chave, "fica");
+      return;
+    }
+    if (d === "fica") mantidos += 1;
+    else if (d === "entra") entram += 1;
+    else iguais += 1;
+    decisoes.set(chave, d);
+  };
+  const porData = (dev: { updatedAt?: string }, copia: { updatedAt?: string }, igual: boolean): DecisaoDaCopia => {
+    const quem = maisNovo(dev.updatedAt, copia.updatedAt);
+    return quem === "aparelho" ? "fica" : quem === "copia" ? "entra" : igual ? "igual" : "entra";
+  };
+
+  const ativas = new Map<string, string>();
+  for (const f of aparelho.fichas.values()) if (f.active) ativas.set(f.ownerId, f.id);
+
+  const bundles = [backup, ...(backup.students ?? [])];
+  for (const b of bundles) {
+    const dono = b.profile.id;
+    for (const p of b.programs ?? []) {
+      const dev = aparelho.fichas.get(p.id);
+      const chave = chaveDoRegistro("ficha", p.id);
+      if (!dev) decidir(chave, "entra");
+      else if (dev.ownerId !== dono) decidir(chave, "outro");
+      else decidir(chave, porData(dev, p, mesmoConteudo(dev, { ...p, ownerId: dono }, ["active"])));
+    }
+    if (b.diet) {
+      const dev = aparelho.dietas.get(dono);
+      const chave = chaveDoRegistro("dieta", dono);
+      if (!dev) decidir(chave, "entra");
+      else decidir(chave, porData(dev, b.diet, mesmoConteudo(dev, { ...b.diet, ownerId: dono }, [])));
+    }
+    for (const s of b.sessions ?? []) {
+      const dev = aparelho.treinos.get(s.id);
+      const chave = chaveDoRegistro("treino", s.id);
+      if (!dev) decidir(chave, "entra");
+      else if (dev.userId !== dono) decidir(chave, "outro");
+      else decidir(chave, mesmoTreino(dev, { ...s, userId: dono }) ? "igual" : "fica");
+    }
+    for (const m of b.metrics ?? []) {
+      const dev = aparelho.medidas.get(m.id);
+      const chave = chaveDoRegistro("medida", m.id);
+      if (!dev) decidir(chave, "entra");
+      else if (dev.userId !== dono) decidir(chave, "outro");
+      else decidir(chave, mesmoConteudo(dev, { ...m, userId: dono }, ["userId"]) ? "igual" : "entra");
+    }
+  }
+  return {
+    decisoes,
+    mantidos,
+    deOutroPerfil,
+    entram,
+    iguais,
+    alunosQueJaEstao: (backup.students ?? []).filter((s) => aparelho.perfis.has(s.profile.id)).length,
+    perfilJaEsta: aparelho.perfis.has(backup.profile.id),
+    ativas,
+  };
+}
+
+const registros = (n: number) => (n === 1 ? "1 registro" : `${n} registros`);
+
+/**
+ * Texto do diálogo de restaurar, antes de confirmar (substitui "Os mesmos registros que já estiverem neste aparelho são
+ * substituídos"): "3 registros deste aparelho são mais novos que a cópia e ficam como estão; 12 entram."
+ */
+export function textoDoPlano(p: Pick<PlanoRestauracao, "mantidos" | "deOutroPerfil" | "entram" | "iguais" | "alunosQueJaEstao" | "perfilJaEsta">): string[] {
+  const linhas: string[] = [];
+  const entram = p.entram === 0 ? "nada novo entra" : `${p.entram} ${p.entram === 1 ? "entra" : "entram"}`;
+  if (p.mantidos > 0) linhas.push(`${registros(p.mantidos)} deste aparelho ${p.mantidos === 1 ? "é mais novo" : "são mais novos"} que a cópia e ${p.mantidos === 1 ? "fica como está" : "ficam como estão"}; ${entram}.`);
+  else if (p.entram > 0) linhas.push(`Nenhum registro deste aparelho é mais novo que a cópia; ${entram}.`);
+  else linhas.push("Nada novo para entrar.");
+  if (p.iguais > 0) linhas[0] = `${linhas[0]} ${registros(p.iguais)} já ${p.iguais === 1 ? "está igual" : "estão iguais"}.`;
+  if (p.deOutroPerfil > 0) linhas.push(`${registros(p.deOutroPerfil)} da cópia já ${p.deOutroPerfil === 1 ? "pertence" : "pertencem"} a outro perfil deste aparelho e ${p.deOutroPerfil === 1 ? "fica" : "ficam"} com ele.`);
+  if (p.alunosQueJaEstao > 0) linhas.push("O cadastro dos alunos que já estão aqui volta ao da cópia.");
+  else if (p.perfilJaEsta) linhas.push("O seu cadastro volta ao da cópia.");
+  return linhas;
 }

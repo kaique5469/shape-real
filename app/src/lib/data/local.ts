@@ -33,11 +33,20 @@ function read<T>(name: string): T[] {
   }
 }
 
+/**
+ * Cota estourada no modo local (o único em que este repositório grava). Um texto só (rodada 3, R3-6 A): no beta não há
+ * conta na nuvem para oferecer. "Nada foi alterado" vale para a gravação que falhou; nas operações de várias gravações
+ * (restaurar a cópia, abrir link de ficha, registrar treinos recebidos) vale pela foto de `comFotoDoArmazenamento`.
+ */
+export const TEXTO_COTA_LOCAL = "Não coube neste aparelho. Nada foi alterado. Libere espaço e tente de novo.";
+/** A volta da foto também falhou: nunca mostrar sucesso. Padrão de `comFotoDoArmazenamento` (o caso da restauração). */
+export const TEXTO_RESTAURACAO_INCOMPLETA = "A restauração ficou incompleta. Restaure de novo o mesmo arquivo.";
+
 function write<T>(name: string, rows: T[]) {
   try {
     localStorage.setItem(PREFIX + name, JSON.stringify(rows));
   } catch (e) {
-    throw new DataError("Armazenamento do navegador cheio. Exporte seus dados ou crie uma conta na nuvem.", "limit");
+    throw new DataError(TEXTO_COTA_LOCAL, "limit");
   }
 }
 
@@ -102,6 +111,86 @@ function storageKeys(): string[] {
     }
   } catch {}
   return out;
+}
+
+// ---- foto do armazenamento (rodada 3, R3-6 A) ---------------------------------------
+/**
+ * A operação falhou e a volta à foto também falhou: o aparelho ficou com parte das gravações. A tela mostra a mensagem
+ * (nunca sucesso). `causa`: o erro original da operação.
+ */
+export class ArmazenamentoIncompleto extends DataError {
+  constructor(
+    message: string,
+    public readonly causa: unknown,
+  ) {
+    super(message, "limit");
+    this.name = "ArmazenamentoIncompleto";
+  }
+}
+
+/** Cota do localStorage estourada: a exceção do navegador (Chrome, Safari, Firefox) ou o DataError "limit" de `write`. */
+export function ehErroDeCota(e: unknown): boolean {
+  if (e instanceof DataError) return e.code === "limit";
+  if (!e || typeof e !== "object") return false;
+  const { name, code } = e as { name?: unknown; code?: unknown };
+  return name === "QuotaExceededError" || name === "NS_ERROR_DOM_QUOTA_REACHED" || code === 22 || code === 1014;
+}
+
+/** Chaves que entram na foto: os dados (`sr:v1:*`) e o registro de envio (`sr:sent:*`). O rascunho (`sr:draft:*`) fica fora. */
+const naFoto = (k: string) => k.startsWith(PREFIX) || k.startsWith(SENT_PREFIX);
+
+function tirarFoto(): Map<string, string> {
+  const foto = new Map<string, string>();
+  for (const k of storageKeys()) {
+    if (!naFoto(k)) continue;
+    const v = localStorage.getItem(k);
+    if (v !== null) foto.set(k, v);
+  }
+  return foto;
+}
+
+/**
+ * Devolve as chaves da foto ao que eram: apaga as novas (libera espaço) e regrava as que mudaram, primeiro as que
+ * diminuem (a que cresceu volta ao tamanho antigo antes de a que encolheu voltar a crescer). true = conferido igual.
+ */
+function voltarParaFoto(foto: Map<string, string>): boolean {
+  try {
+    for (const k of storageKeys()) if (naFoto(k) && !foto.has(k)) localStorage.removeItem(k);
+    const mudaram: { k: string; v: string; libera: number }[] = [];
+    for (const [k, v] of foto) {
+      const atual = localStorage.getItem(k);
+      if (atual !== v) mudaram.push({ k, v, libera: (atual?.length ?? 0) - v.length });
+    }
+    mudaram.sort((a, b) => b.libera - a.libera);
+    for (const { k, v } of mudaram) localStorage.setItem(k, v);
+    const agora = storageKeys().filter(naFoto);
+    return agora.length === foto.size && agora.every((k) => localStorage.getItem(k) === foto.get(k));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Roda `fn` com uma foto em memória das chaves `sr:v1:*` e `sr:sent:*` (valor ou ausência). Se `fn` lançar QUALQUER
+ * erro, inclusive a cota no meio de várias gravações, o armazenamento volta à foto e:
+ *  - cota → `DataError(TEXTO_COTA_LOCAL, "limit")` (nada foi alterado, conferido);
+ *  - outro erro → o mesmo erro, intacto (os erros tipados de quem chama continuam reconhecíveis);
+ *  - a volta também falhou → `ArmazenamentoIncompleto(incompleta)`.
+ * Sem marcador no armazenamento (seria mais uma gravação que pode falhar). Fica fora: o rascunho do treino
+ * (`sr:draft:*`), outras chaves e as fotos (IndexedDB). Usar em `restoreBackup`, `importFicha` e `importTreinos`, sem
+ * try/catch vazio dentro de `fn` (uma gravação engolida não volta). Pode ser aninhada. Uma gravação de outra aba feita
+ * enquanto `fn` espera é desfeita junto, se `fn` falhar (as gravações locais são síncronas; a janela é curta).
+ */
+export async function comFotoDoArmazenamento<T>(fn: () => T | Promise<T>, incompleta: string = TEXTO_RESTAURACAO_INCOMPLETA): Promise<T> {
+  const foto = tirarFoto();
+  try {
+    return await fn();
+  } catch (erro) {
+    const raiz = erro instanceof ArmazenamentoIncompleto ? erro.causa : erro;
+    if (!voltarParaFoto(foto)) throw new ArmazenamentoIncompleto(incompleta, raiz);
+    if (ehErroDeCota(raiz)) throw new DataError(TEXTO_COTA_LOCAL, "limit");
+    throw raiz;
+  }
 }
 
 /**
