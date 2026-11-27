@@ -750,8 +750,8 @@ pares intercalados contra o HEAD 11de1ab, kit `M/m-verif`), salvo indicação.
   primeira navegação interna terminada + ocioso (no máximo 3 s) + 3 s; 20 s depois do load sem navegação; página oculta.
   Nunca sem rede, com economia de dados ou em 2g/slow-2g, e a regra do questionário sem perfil continua. A situação é
   avaliada no momento do gatilho, não no load. Motivo: no load, o aquecimento disputava a banda com "Salvar no meu
-  celular". Toque até "Começar treino" clicável: 2,29 s na base contra 1,24 s (faixa 1,11–1,37); sem SW, 0,93 s.
-  A cobertura continua: as 14 telas guardadas 9,7 s depois do toque. Quem fecha o app antes de 20 s fica coberto pelo
+  celular". Toque até "Começar treino" clicável: 2,30 s na base contra 1,14 s (rodadas 1,08–1,40); sem SW, 0,92 s.
+  A cobertura continua: as 14 telas guardadas 9,3–9,8 s depois do toque. Quem fecha o app antes de 20 s fica coberto pelo
   gatilho da página oculta e pelo "guardar-esta", e, se o sistema encerrar o SW no meio do aquecimento, pela próxima
   abertura (ver "Trava de 6 h" abaixo).
 - **A regra do questionário sem perfil vale também para a página do load (revisão).** O gatilho (a) dispara depois de
@@ -831,15 +831,15 @@ pares intercalados contra o HEAD 11de1ab, kit `M/m-verif`), salvo indicação.
   regra do questionário sem perfil (custa só o HTML) e não lê as fontes do CSS. Resposta com redirecionamento nunca é
   guardada. Medido: o aluno que abriu o questionário uma vez reabre sem sinal com "Continuar de onde parei" (sr-pages 1,
   sr-assets 21, sem aquecimento).
-- **PostHog depois do load + 3 s + ocioso (RM-03).** O SDK sai do primeiro carregamento: −119,5 KB por rota (medida do tech lead sobre o
-  c6bd5e6; com o RM-05, −181,8 a −183,0 KB aqui). Os eventos de quem fecha a aba antes disso se perdem: a fila fica só em memória, com teto de 200
-  chamadas e 20 erros não tratados. Isso inclui as recargas do RM-02: com sinal fraco, uma navegação interna pode virar
+- **PostHog depois do load + 3 s + ocioso (RM-03).** O SDK sai do primeiro carregamento: −119,5 KB por rota (medida do
+  tech lead sobre o c6bd5e6; com o RM-05, −181,3 a −182,4 KB aqui). Os eventos de quem fecha a aba antes disso se
+  perdem: a fila fica só em memória, com teto de 200 chamadas e 20 erros não tratados. Isso inclui as recargas do RM-02: com sinal fraco, uma navegação interna pode virar
   recarga, e a página que vive menos que load + 3 s + ocioso perde a $pageview e o que esperava na fila (MEDIDO pela
   revisão, recarga 1,5 s depois do load em /abrir e /questionario: 1 $pageview em M-A, 2 na base; eventos de produto
   iguais no roteiro do questionário). Não guardamos a fila no aparelho para reenviar no próximo carregamento: seria um
   armazenamento novo de dados de medição (proibido para o aluno do link, que é justamente quem abre por link com sinal
-  fraco), com risco de evento duplicado na volta do bfcache, e mais código em toda rota, com o peso já 2 KB acima da
-  medida do tech lead. Efeito esperado (ESTIMADO): funis com menos registros nas sessões de sinal fraco. Não há
+  fraco), com risco de evento duplicado na volta do bfcache, e mais código em toda rota, com o peso já 2 a 3 KB acima
+  da medida do tech lead. Efeito esperado (ESTIMADO): funis com menos registros nas sessões de sinal fraco. Não há
   economia de dados (os ~120 KB vêm depois do load).
 - **Nova tentativa do SDK também com a rede ligada (revisão).** Antes só no evento `online`, que só dispara na passagem
   de sem rede para com rede: um import que falhasse com a rede ligada (sinal instável; chunk antigo com 404 depois de um
@@ -854,8 +854,9 @@ pares intercalados contra o HEAD 11de1ab, kit `M/m-verif`), salvo indicação.
   de instrumentation-client.ts ficam depois do init e mandam direto para o SDK (`captureException`, `handled: false`)
   até `window.__PosthogExtensions__.errorWrappingFunctions` existir; daí saem, para não mandar duas vezes. MEDIDO: erro
   6,0 s depois do load (extensão abortada) sai, com o horário dele; antes, não saía. A ausência de duplicata com a
-  extensão ligada é coberta por teste (ESTIMADO no navegador: a regra do kit aborta /ingest, inclusive a extensão). Medido: o SDK é pedido 3,0 s depois do load e o primeiro pedido a /ingest sai ~3,1 s depois
-  (na base, antes do load); nenhuma chave `ph_` em /questionario#d=.
+  extensão ligada é coberta por teste (ESTIMADO no navegador: a regra do kit aborta /ingest, inclusive a extensão).
+  Medido: o SDK é pedido 3,0 s depois do load e o primeiro pedido a /ingest sai 3,05–3,08 s depois (na base, antes do
+  load); nenhuma chave `ph_` em /questionario#d=.
 - **A $pageview da abertura é nossa (RM-03).** Ela sai com a URL e o horário de quando a página abriu (sem `?k=` e sem
   `#`). A do SDK é descartada uma vez por uma trava no `capture` público, porque a trava interna do SDK tem o nome
   encurtado no pacote publicado (um teste lê o pacote e falha se a forma mudar). Página que muda dentro da fila ganha uma
@@ -879,15 +880,48 @@ pares intercalados contra o HEAD 11de1ab, kit `M/m-verif`), salvo indicação.
   repositório que responde "Sem conexão…" a toda leitura e gravação, nunca com o armazenamento local; a entrada tenta de
   novo no `online`. Sair da conta sem o módulo vale só neste aparelho. Telas com `.catch(() => [])` mostram lista vazia
   nesse caso: quando a nuvem for ligada, o módulo tem que entrar na pré-carga (RM-12).
-- **Peso: −181,8 a −183,0 KB por rota, não −184 (desvio pequeno).** As duas bibliotecas saíram inteiras (nenhuma rota de
-  link nem /entrar carrega posthog-js ou @supabase antes do load). Os ~2,6 KB de diferença para a medição do tech lead
-  são, por conta (ESTIMADO), o código novo que entra em toda rota: gatilhos e "guardar-esta" (RM-01/RM-04) e a fila com a $pageview da
-  abertura (RM-03). Rotas: / 219,7; /entrar 260,0; /abrir 258,6; /questionario 316,3; /receber 296,0 KB.
+- **Peso: −181,3 a −182,4 KB por rota, não −184 (desvio pequeno).** As duas bibliotecas saíram inteiras (nenhuma rota de
+  link nem /entrar carrega posthog-js ou @supabase antes do load). Os 2,1 a 3,2 KB de diferença para a medição do tech
+  lead (−184,5) são, por conta (ESTIMADO), o código novo que entra em toda rota: gatilhos e "guardar-esta" (RM-01/RM-04),
+  a fila com a $pageview da abertura (RM-03) e, depois da revisão, a nova tentativa do SDK e os ouvintes de erro até a
+  captura do SDK (+0,6 KB sobre a integração). Rotas: / 220,3; /entrar 260,6; /abrir 259,2; /questionario 316,9;
+  /receber 296,5 KB.
 - **Kit: a conferência de privacidade da medição não via eventos (revisão).** Com o user agent padrão (HeadlessChrome) e
   `navigator.webdriver`, o posthog-js 1.453.2 descarta todo evento como robô: os "72 pedidos a /ingest sem dado
   sensível" eram só /flags, a config e a extensão, e a frase da integração "com /ingest abortado o SDK não manda evento"
   estava errada. `posthog-check.js`, `posthog-corpo.js` e `e2e/questionario.js` agora usam user agent de Android e
-  `webdriver` falso. Com eventos de verdade, nenhum vazamento (ver os números da revisão final abaixo).
-- **Medição local, não na Vercel.** Local, o servidor responde na hora, e a conversão no /abrir da base já fica em 2,29 s
-  (Vercel 4,70 s). A meta de 2,2 s passa com folga mesmo contra a referência local (controle sem SW + 0,35 s ≈ 1,3 s:
-  1,24 s). Android médio + SW, /hoje até "Começar treino": 1,50 → 1,22 s (meta 1,3 s).
+  `webdriver` falso. Com eventos de verdade, nenhum vazamento (ver "Medição final" no fim desta entrada).
+- **Medição local, não na Vercel.** Local, o servidor responde na hora, e a conversão no /abrir da base já fica em 2,30 s
+  (Vercel 4,70 s). A meta de 2,2 s passa com folga mesmo contra a referência local (controle sem SW + 0,35 s ≈ 1,2 a
+  1,3 s: 1,14 s). Android médio + SW, /hoje até "Começar treino": 1,35 → 1,18 s (meta 1,3 s).
+- **Medição final (corretor, sobre o código desta entrada; build local, base 11de1ab em pares intercalados; tudo
+  MEDIDO).** Onde diferem, estes números substituem os da integração citados acima.
+  - Peso (KB gzip, base → M-A): / 401,6 → 220,3; /entrar 441,9 → 260,6; /abrir 440,5 → 259,2; /questionario 499,3 →
+    316,9; /receber 478,0 → 296,5; /testar 396,3 → 214,9; /hoje 498,6 → 317,3; /sessao 504,9 → 323,6; /alunos 497,5 →
+    316,2. Nenhuma rota de link nem /entrar pede posthog-js ou @supabase antes do load.
+  - LCP (faixa de 2 rodadas): /abrir#d= 3,70–3,81 → 2,37–2,40 s; /questionario#d= 3,92–4,00 → 2,73–2,74;
+    /receber#d= 3,88–3,92 → 2,59–2,60; /entrar 3,31–3,34 → 2,16–2,22; / 0,84–0,87 → 0,82–0,88. Pronto: /abrir 2,42–2,47;
+    /questionario 2,81–2,89; /receber 2,72–2,79 (meta 2,8, perto do limite).
+  - Conversão em /abrir com SW: 2,25–2,40 → 1,08–1,40 s (mediana 1,14; 4 rodadas, porque as 2 primeiras variaram mais
+    de 10% entre si). Cobertura: 14 telas do CORE e a marca, 9,3–9,8 s depois do toque. noModule no aquecimento: 38,7 →
+    0 KB. Primeiro acesso por /abrir em 30 s: 1059 → 964 KB.
+  - Sinal fraco (m01-m04): "Começar treino" até "Série 1 feita" 7,57–7,74 → 2,22–2,29 s (aluno-liefi 8,18–8,22 →
+    2,51–2,64); menu Treinos 5,31–5,34 → 2,13–2,20 s (aluno-liefi 8,98–9,07 → 2,29–2,31); /hoje até "Começar treino"
+    2,82–2,98 → 0,69–0,73 s (HTML em 403–404 ms). Android médio + SW: 1,32–1,36 → 1,15–1,21 s. Personal: aluno nunca
+    aberto 11,8 → 11,5 s; Carla, aberta antes, 11,3 → 2,5 s.
+  - Sem sinal: questionário reabre depois de uma abertura (sr-pages 1, sr-assets 21); fluxos 13/13. O caso B do offline2
+    (`/treinos/[id]` sem sinal) falha na base e aqui: é o RM-13, de M-B.
+  - Medição de uso: uma $pageview por abertura; /hoje → /entrar dá duas, na ordem; nenhuma URL com `#` ou `k=`; nenhum
+    erro. Erro 6,0 s depois do load (extensão abortada) sai com o horário dele; erro da fila sai com o horário da ação
+    (0,40 s); erro de /receber enviado depois de sair da tela vai só com o tipo. Import com 503 e a rede ligada: novo
+    pedido em 18,4 s.
+  - Roteiros dos achados da revisão: "Saiba mais" no questionário sem perfil: 0 de 14 telas (base 0; antes da correção,
+    14); corpo preso 10 s: /hoje 0,69–0,72 s, sessão 2,24–2,35 s, menu Treinos 2,16–2,20 s (base 10,1–10,5 s); SW
+    encerrado no meio do aquecimento: a abertura seguinte guarda as 14 telas e a marca; trim com 320 arquivos: os 21
+    do /hoje ficam, e /hoje abre sem sinal com 22 botões; rascunho de mais de 6 h em rede lenta: abre sem recarga, na
+    base e aqui (sem sinal, o laço continua nos dois).
+  - Roteiros de navegador (medição abortada): beta 9/9, tester 10/10, tester2 7/7, tester3 7/7, pwa 4/4, questionario
+    27/27, com 132 eventos reais no questionário. Numa das duas execuções completas, 1 de 262 envios bateu na lista de
+    dados sensíveis com "2010", no caso 4, que não usa esse ano (só o caso 3 usa); a busca do roteiro não exige palavra
+    inteira e também bate em trechos de identificadores e horários (ESTIMADO). Na execução seguinte, que imprime o
+    trecho de cada acerto: 0 de 264.
