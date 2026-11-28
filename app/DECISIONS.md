@@ -1087,7 +1087,8 @@ do blog fora e a correção da pendência do IP (R3-9); e o peso medido do R3-19
   esses dados. Apague os arquivos se não precisar deles.") no fim de `TEXTO_REVOGAR`, do diálogo "Apagar respostas" e
   do "Remover {nome}?" (só no ramo de remover; o "Desvincular" da nuvem não). NÃO entra no diálogo de restaurar. A
   spec da anamnese (§11.2) dizia `TEXTO_REVOGAR` literal: o literal continua, com a frase depois.
-- **Aviso do link** (R3-17) no SendDietPanel e no SendFichaLink (save-summary.tsx, fora da barra compacta), só com o
+- **Aviso do link** (R3-17) no SendDietPanel e no SendFichaLink (save-summary.tsx, fora da barra compacta; substituído na
+  correção da revisão de 28/11: o aviso também na barra compacta), só com o
   envio liberado: sem ficha nem cardápio, ou com alteração por salvar, o aviso falaria de outro link. Carona do R3-3 no
   SendDietPanel: a cópia que falha mostra o mesmo texto do CopyButton e não registra o toque.
 - **Analytics**: a exceção `workout_completed.minutes` saiu do teste do inventário (a sessão já manda
@@ -1151,8 +1152,9 @@ do blog fora e a correção da pendência do IP (R3-9); e o peso medido do R3-19
   `TRANSFER_VERSION` continua 1.
 - Correção dos minutos depois de salvar (a spec diz antes): o treino já é gravado no Finalizar; a correção grava de
   novo e marca "(ajustado)", como sentimento e anotação.
-- Relógio do cabeçalho pelo tempo ativo (sem isso o treino de ontem retomado mostraria "1440:00"); para de crescer em
-  30 min sem atividade; rascunho antigo mostra a duração só até 180 min.
+- Relógio do cabeçalho pelo tempo ativo (sem isso o treino de ontem retomado mostraria "1440:00"); conta o intervalo
+  sem atividade só até 30 min e, passado isso, volta ao tempo ativo gravado (correção da revisão: antes parava em
+  +30 min, que o resumo nunca gravava); rascunho antigo mostra a duração só até 180 min.
 - Aviso de pausa no rodapé fixo (a retomada rola até o exercício e esconderia um aviso no topo).
 - R3-14: `cell()` põe apóstrofo em texto que começa com `=`, `+`, `-`, `@` (também depois de espaços), TAB ou CR;
   números nunca. R3-15: no modo local, "Treinos recebidos", "Frequência pelos treinos recebidos" e "N de P treinos
@@ -1356,3 +1358,221 @@ M-B, se a medição em aparelho mostrar prejuízo:
 - tirar o plano de restauração de export.ts (sai da raiz; muda os imports de dois testes);
 - `seedDemo` sob demanda no app-context, para tirar nutrition.ts e generator.ts da raiz (mexe no app-context; é
   decisão da M-B).
+
+## 2026-11-28 — Rodada 3, correção da revisão: o que mudou, desvios e peso
+
+**Estado.** `npx tsc --noEmit` limpo; `npx vitest run` com 105 arquivos e 2.361 testes verdes; `npm run build` sem erro
+(com `.env.production.local` só durante o build, token FICTÍCIO do PostHog, apagado depois). Servidor da porta 3572
+religado com o build da correção. Sem commit nem deploy.
+
+**Achados corrigidos (todos conferidos antes de mexer; nenhum falso positivo).**
+- Restaurar cópia antiga não desfaz mais o registro de envio (R3-6 A.4 + R3-3). `mesclarChaveDeEnvio` (delivery.ts) junta
+  cada chave `sr:sent:*` do aparelho com a da cópia: lista antiga por união (teto 500); `:at` e `:ficha` pela data mais
+  nova; `:log` por treino e `:decl` por treino e campo, a data mais nova; `:ack` por `nextAck`. Aparelho limpo: a cópia
+  entra como vinha.
+- Contato do personal anterior (R3-1). Nova chave local `sr:v1:contatos` (só ids; fora da cópia de segurança; sai com
+  "Apagar dados"). É gravada dentro da foto em `importFicha` (personal do link que vira ou já é contato, e o personal
+  anterior ao "Trocar de personal neste perfil") e em `restoreBackup` (contato criado). A cópia de um PERSONAL
+  restaurada tira o id dele da lista (é quem usa o aparelho). `criadoresEContatos` (perfis-de-entrada.ts) é a mesma conta
+  no `continueAsLocal`, no `perfisNesteAparelho`, no `importFicha` e no `restoreBackup`. Personal com aluno `managedBy`
+  dele continua entrando.
+- R3-13: aluno que não estava no aparelho e cujas rodadas todas ficaram de fora volta SEM os tokens do questionário, sem
+  os trechos deles nas limitações (o texto do personal fica), sem peso e altura iguais às respostas e sem os passos
+  clínicos (`semSaudeDasRodadasOmitidas`, chamada em `restoreBundle`). Feito fora de `mesclarRestauracao` para não mudar o
+  teste puro dela (que confere o cadastro de volta). `apagarRespostas` não foi chamado: anamnese-perfil.ts traz zod e o
+  gerador para /entrar. A retirada dos trechos é a mesma conta de `mergeLimitations(texto, tokens, [])`, conferida por
+  teste de paridade; o `normalize` foi escrito ali para não ligar restauracao.ts ao catálogo de exercícios (RM-10).
+  `PASSOS_CLINICOS` passou para anamnese-types.ts (uma lista só).
+- Homônimos em "Perfis neste aparelho": a linha de apoio diz o vínculo ("Aluno de Paulo Mendes", "Aluno sem personal",
+  "Personal") e, se ainda empatar, "criado em dd/mm"; com o nome inteiro igual, o botão leva o diferencial ("Continuar
+  como Rafael Souza (de Paulo)").
+- R3-4: o cabeçalho conta o intervalo sem atividade só até 30 min e, passado isso, volta ao tempo ativo gravado. No
+  Finalizar, a pausa longa antes do toque vira o aviso do resumo ("Você ficou 8 h fora. Esse tempo não entra no treino.").
+- R3-15: o calendário do relatório no modo local do personal diz "Treinos recebidos por dia", "Dias com treino recebido no
+  período", "treino recebido" e "nada recebido" (`reportCalendarLabels`); o do aluno não muda.
+- R3-9: "Uso do app" saiu da lista do que fica no navegador; um parágrafo logo depois diz que a medição de uso vai para o
+  PostHog. "o que você preencher no cadastro" virou "no seu perfil".
+- R3-17: o aviso do link aparece também na barra compacta depois de salvar (letra menor). Substitui a exceção "fora da
+  barra compacta" registrada na costura.
+- R3-3: na falha de cópia, o CopyButton mostra a mensagem inteira (link incluído) num campo só de leitura com
+  `ph-no-capture`, e a frase diz "segure o texto abaixo". O SendDietPanel usa o CopyButton (a cópia duplicada saiu).
+- R3-6: em /entrar o erro de "Restaurar cópia" vem logo abaixo do link, antes do texto de apoio, e a tela rola até ele
+  (`scrollIntoView` com `block: "nearest"`, sem animação). Medido a 360×740: fim do aviso em 740.
+- R3-1: o texto de autorização das telas de escolha do /abrir diz "Ao atualizar ou criar o perfil, você autoriza…".
+- Desvio do texto da spec: no Hoje, "Copiar de novo" virou **"Enviar de novo"**. O toque abre o diálogo de envio, com o
+  ícone de envio, e o rótulo passa a dizer o que o toque faz (o mesmo verbo do resumo, "Enviar de novo para {personal}").
+- Privacidade da medição: "Senti dor" (botão do treino e grupo do resumo) com `ph-no-capture`. Também no posthog-init.ts,
+  arquivo protegido da M-A, alterado só pela correção:
+  - `capture_performance`, `capture_heatmaps` e `capture_dead_clicks` em false;
+  - `before_send` descarta `$$heatmap` e `$dead_click` (segunda trava);
+  - `cleanBag` recursivo, para `navigationURL` e `$current_url` aninhados dos web vitals.
+  Conferido com a configuração remota simulada: 0 `$web_vitals`, 0 `$$heatmap`, nenhum `?k=` nem `#d=` e nenhum
+  `$autocapture` do "Senti dor".
+- R3-8: com o treino de hoje registrado, o card mostra o nome da ficha, e o aviso de `?ficha=1` aponta para "Ver o próximo
+  treino". Nos exemplos, `simulateSessions` não gera treino no dia de hoje (o "Ver como aluno" sempre abre com "Começar
+  treino").
+- R3-20:
+  - "Pular" e "OK" do descanso levam o foco à próxima série por marcar (sem nenhuma, ao "Finalizar treino");
+  - o fim do descanso com o foco perdido ou no rodapé foca o "OK";
+  - `<main>` no /entrar e no resumo do treino;
+  - "Sua semana" com o estado do dia em texto `sr-only`.
+  A spec deixava o foco para a lente 6 da M-B. Ficou aqui porque o achado é médio e a correção é pequena.
+
+**Testes que mudaram de asserção por causa de uma correção pedida** (nenhum outro):
+- session-telas.r3.test.ts: o relógio parado além de 30 min volta ao ativo;
+- costura.r3.test.ts: o aviso na barra compacta e o CopyButton no SendDietPanel;
+- hoje-tela.r3.test.ts: "Enviar de novo"; o mock do `useSearchParams` passou a ler o estado do teste;
+- analytics.fila.test.ts: as três opções novas do init, com o caso de web vitals, mapa de calor e clique morto.
+Só o caminho de import mudou (de export.ts para restauracao.ts) em export-restaurar, export.restauracao, export,
+transfer e transfer-client.restauracao: o Turbopack não descarta reexportação sem uso (o CSV, só reexportado por
+export.ts, estava no chunk raiz), então export.ts não reexporta a restauração. Testes novos:
+- correcao-revisao.r3.test.ts (22);
+- casos novos em transfer-client.restauracao, transfer-client.r3-1, link-identity, session-time e hoje-tela.
+O teste negativo do R3-20 foi feito num build local: sem o aria-label do "Mais ações", o leitor-de-tela.js sai com 1 e
+aponta `button#mais-…` em /sessao. Com o aria-label de volta, saem 0 problemas.
+
+**Peso (achado da integração).** Três módulos separados, sem mudar comportamento:
+- `domain/nutrition-base.ts`: metas, itens, totais e o cardápio-base. data/demo.ts, diet-share.ts, Hoje, Conta, cadastro
+  e diet-read importam daqui. nutrition.ts reexporta tudo e fica com o leitor de texto livre, que saiu do chunk raiz e das
+  rotas de link.
+- `domain/restauracao.ts`: a leitura da cópia e o plano de restauração. Saíram de export.ts, que entra em todas as telas.
+- `lib/link-client.ts`: o que os links gravam e o registro de envio. /abrir, /receber, /entrar, send-to-coach e
+  use-ficha-link importam daqui. transfer-client.ts ficou com a cópia de segurança e a restauração e reexporta link-client:
+  nenhum teste muda de import.
+
+Kit da rodada M, `ETAPAS=peso`, KB gzip-6 sem noModule; rótulo `r3-fix` contra `ma2` e `r3-integ`:
+
+| Rota | M-A | Integração | Agora | Agora − M-A |
+|---|---|---|---|---|
+| / | 220,3 | 225,4 | 223,0 | +2,7 |
+| /entrar | 260,6 | 271,5 | 267,1 | +6,5 |
+| /abrir | 259,2 | 269,3 | 260,2 | +1,0 |
+| /questionario | 316,9 | 325,8 | 318,0 | +1,1 |
+| /receber | 296,5 | 306,0 | 297,0 | +0,5 |
+| /testar | 214,9 | 219,8 | 211,6 | −3,3 |
+| /hoje | 317,3 | 293,3 | 290,2 | −27,1 |
+| /sessao | 323,6 | 338,2 | 329,1 | +5,5 |
+| /alunos | 316,2 | 326,9 | 323,2 | +7,0 |
+
+O chunk raiz ficou menor que o da M-A (o /testar, que é quase só ele, caiu 3,3 KB). Rotas que seguem mais de 2 KB acima
+da M-A, com o motivo:
+- **/ (+2,7):** o leitor de texto livre saiu da raiz e foi para a landing, que o usa na demonstração da dieta
+  (diet-demo.tsx, com o R3-5). Carregar o leitor sob demanda mexe na demonstração que o RM-17 (M-B) refaz.
+- **/entrar (+6,5):** "Perfis neste aparelho" (R3-1) e "Restaurar cópia" com plano, validação e R3-13 (R3-6) são desta
+  tela. Carregar a restauração só no toque quebraria restaurar sem sinal, porque o chunk sob demanda não está no
+  aquecimento do service worker.
+- **/sessao (+5,5):** "Senti dor", aviso de pausa, "Corrigir minutos" e o envio ao personal no resumo (R3-3, R3-4, R3-7),
+  com link-client e link-identity.
+- **/alunos (+7,0):** o lembrete de cópia (backup-reminder) importa `makeBackup` de transfer-client, que traz a
+  restauração. Tirar isso exige mudar o import do lembrete, e os testes dele simulam transfer-client. Também dá para
+  carregar só no toque, mas aí a cópia não sai sem sinal. Fica para o RM-10 da M-B.
+
+
+## 2026-11-28 — Rodada 3, QA final: correção das duas falhas (só no kit de medição)
+
+**Estado.** O QA final não achou defeito do app. As duas falhas eram do kit de medição, e só o kit mudou: nada em `src`,
+`public` ou `next.config.ts`. `npx tsc --noEmit` limpo; `npx vitest run` com 105 arquivos e 2.361 testes verdes;
+`npm run build` sem erro (com `.env.production.local` só durante o build, token FICTÍCIO do PostHog, apagado depois),
+BUILD_ID `_kfb540w_GH9XDDyE-XUt`. O servidor da porta 3572 foi religado com esse build (grupo em `rodada3/server.pid`). O
+log do servidor do QA, com as 270 tentativas de proxy, foi guardado em `rodada3/server-3572.qa-final.log`. Sem commit
+nem deploy.
+
+**Falha 1: o `e2e/questionario.js` deixava a medição de uso chegar ao servidor.**
+- Conferida antes de mexer. Rodei o roteiro original atrás de um proxy de diagnóstico que responde ele mesmo a
+  `/ingest/**`. Chegaram 68 `POST /ingest/e/?compression=base64`, todos `no-cors`, `text/plain` e com o user agent padrão:
+  são os `navigator.sendBeacon` do pagehide (o lote pendente e a fila de nova tentativa do posthog-js), que saem pelo
+  processo do navegador, fora do `context.route`.
+- **Desvio da correção sugerida pelo QA.** Trocar o beacon por um fetch comum para a mesma URL não basta. Com uma marca
+  na URL, 29 desses fetches ainda chegaram ao proxy numa execução inteira, sempre no pagehide e com o user agent padrão.
+  Por isso o beacon vira um fetch comum para `http://127.0.0.1:9` (porta fechada, mesma máquina), com o mesmo caminho.
+  Se o route vê o pedido, guarda o corpo e aborta. Se não vê, a conexão é recusada ali mesmo. Depois da troca: 0 pedidos
+  no proxy de diagnóstico e 0 tentativas de proxy no log do 3572 (execução do `run-e2e.sh r3-corr`, 27/27 passos).
+- **Limite, que já existia antes.** O corpo do beacon do pagehide não entra na checagem de privacidade. O Playwright não
+  entrega nada do documento que está saindo: testei route, `exposeBinding` e `console`. Os mesmos tipos de evento chegam
+  pelos envios normais, que o route lê (132 eventos reais por execução), e o filtro do app é testado em
+  `analytics.allowlist.test.ts`.
+- Mesma troca no `rodada3/e2e/estudo2.js`, que também usava o fetch para a mesma URL. O `ONLY=qa15` passou 11/11, com os
+  8 eventos lidos e 0 tentativas de proxy.
+- **Ajustes no mesmo roteiro (desvios declarados, só no roteiro).**
+  - A checagem de privacidade agora lê corpo em base64 puro, o formato do beacon. Antes ela o lia como texto cru.
+  - A checagem também ignora "anos" que aparecem dentro de uuid ou carimbo de tempo. Era falso positivo intermitente: "2010"
+    na base M-A (`out/ma2`), "1980" e "1950" no diagnóstico do QA, "1992" na minha reprodução. Esses casos vão para as
+    notas com o trecho. Na execução final ficaram 2 descartes, ambos "2015" dentro do uuid de um evento `$set`.
+  - O aviso "chegada do ?enviada=1 sem a barra de envio" era falso negativo intermitente, também na base M-A. A barra é
+    sticky e vem depois da lista de exercícios no DOM, e o texto do main era cortado em 1.500 caracteres. A captura da
+    minha reprodução mostra a barra na tela. Agora o roteiro espera o texto e lê o main inteiro.
+
+**Falha 2: o `aluno-liefi.js` esperava um alvo que o R3-8 tirou do Hoje.**
+- Conferida: com o treino de hoje registrado, o Hoje mostra "Começar o treino A agora" só dentro de "Ver o próximo
+  treino", que vem fechado. Por isso o passo "Concluir → /hoje" estourava (">25000") nos 3 perfis.
+- O alvo passa a ser `^Começar treino|^Enviar treino para |^Enviar \d+ treinos para |^Enviar \d+ de \d+ treinos`. São os
+  rótulos de `rotuloDoEnvio` em delivery.ts. O resumo da sessão diz "Enviar para …" e não casa com eles. "Começar
+  treino" continua no alvo para medir builds anteriores ao R3-8.
+- Rodada `r3-corr`: médio 176 ms, lie-fi 2.243 ms, offline 350 ms (M-A: 144, 2.268 e 394). Com o passo destravado, os
+  menus Treinos e Evolução no lie-fi medem a navegação de verdade (2.232 e 2.300 ms; M-A 2.292 e 2.300).
+
+**QA final (registro).** O QA acrescentou o cenário de rollback do R3-2, porque o build anterior já estava servido.
+Também usou uma vez `pkill -P <pid>`, que a regra proíbe, só nos próprios processos `tail` e `grep`, e registrou isso. A
+pasta `rodada3/qa/build-ma` pode ser apagada quando o rollback não precisar mais de reteste.
+
+## 2026-11-28 — Rodada 3, fechamento: feito, parcial, adiado e o que vai para a M-B
+
+**Estado, conferido no fechamento.**
+- Árvore: HEAD `86cb6d3` (WIP) com 46 mudanças sem commit.
+- Suíte inteira, rodada agora (28/11, 05:45 UTC): `npx tsc --noEmit` limpo; `npx vitest run` com 105 arquivos e 2.361
+  testes verdes. Log em `rodada3/fechamento/vitest.json`.
+- Build local de produção: BUILD_ID `_kfb540w_GH9XDDyE-XUt`. O `/api/versao` respondeu
+  `{ sha: "local", at: "2026-11-28T05:15:56.804Z", protocolo: 1, copia: 2 }` com `no-store`. Nenhum arquivo de `src`,
+  `public` ou `next.config.ts` é mais novo que esse build.
+- O QA final (2ª passada) não achou defeito do app:
+  - os 16 cenários do passo 6 deram 132/132 conferências;
+  - os roteiros do kit e as cópias ajustadas, incluindo o leitor de tela, passaram;
+  - as 14 metas de tempo ficaram no alvo, com a maior piora em +1,8% contra a M-A.
+- Servidor da porta 3572 (grupo 16013) parado pelo grupo no fechamento. Nada sobrou: nem processo, nem porta ocupada,
+  nem zumbi.
+- Sem commit, push nem deploy.
+
+**Feito: implementado e validado no build local de produção.**
+- R3-1, R3-3, R3-4, R3-5, R3-7, R3-8, R3-10, R3-11, R3-12 (no navegador só na revisão), R3-13, R3-14, R3-15, R3-16 (só
+  teste unitário), R3-17, R3-18, R3-19 e R3-20.
+- Nenhum item chegou a "validado em preview": não existe Preview da Vercel desta árvore.
+- A tabela item a item (modo afetado, teste, evidência, risco residual, status e a coluna "público" vazia) está em
+  `rodada3/fechamento.md`.
+
+**Parcial.**
+- **R3-2:** o código e os itens 2 (cliente antigo) e 4 (rollback) do checklist foram feitos na máquina, com o build
+  50b5d58 servido de verdade. Os itens 1 (SHA no alias) e 3 (registro de releases) dependem do deploy. Checklist com o
+  rollback: `rodada3/checklist-release.md`.
+- **R3-6 A.5:** o passo no aparelho do dono (Safari → app instalado) não foi feito, porque depende do aparelho. O
+  resto do R3-6 está feito.
+- **R3-9:** o texto está feito. Antes de publicar, três pendências do dono:
+  - reconferir "Discard client IP data";
+  - abrir o domínio do blog;
+  - revisão jurídica, com controlador e contato.
+- **R3-1:** o QA-05 (dois links na mesma aba) não foi retestado no navegador. O código é de antes da rodada; o QA-04
+  foi retestado na revisão.
+
+**Adiado.** O "Depois" da entrada de 27/11 continua igual. A rodada acrescenta, todos como decisão do dono:
+- se a meta semanal conta sessões ou dias distintos;
+- revisão profissional dos textos de dor (R3-7), do cuidado (R3-11) e do cardápio e da água (R3-12);
+- reduzir o que o link da ficha leva (R3-17);
+- "restaurar mesmo assim" a saúde omitida (R3-13).
+
+**Para a M-B.** O "Vai para M-B" de 27/11 continua igual. A rodada acrescenta:
+- **Peso:**
+  - /alunos (+7,0 KB): tirar a restauração do lembrete de cópia (RM-10);
+  - / (+2,7 KB): leitor de dieta sob demanda na demonstração (RM-17);
+  - /entrar (+6,5 KB) e /sessao (+5,5 KB) ficam pelos motivos da correção da revisão.
+- **Lente 6** com TalkBack, VoiceOver e tablet, reaproveitando `rodada3/e2e/leitor-de-tela.js`. A parte de foco do
+  R3-20 já entrou nesta rodada.
+- **Alvos menores que 44 px** que já existiam antes da rodada e a revisão listou:
+  - perguntas da FAQ da landing (28 px de altura);
+  - "Voltar ao início" (35 px) e "Demonstração do aluno/personal" (36 px), no /entrar.
+  O − e + de 32 px seguem a entrada de 22/11.
+- **Kit:** o `beta.js` original do kit (`mobile/m-verif/e2e`) ainda falha no passo "personal-recebe-os-treinos",
+  porque o texto do relatório mudou por design. A cópia ajustada (`rodada3/e2e/beta.js`) dá 9/9. Trocar o seletor do
+  kit antes de a M-B medir.
+
+**Erratas do nosso handoff.** As 26 correções que procedem (14 inteiras e 12 em parte) estão em
+`rodada3/errata-handoff.md`, no formato onde estava, o que dizia e o que passa a valer. O documento do handoff não foi
+editado.
