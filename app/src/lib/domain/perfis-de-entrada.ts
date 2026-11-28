@@ -53,3 +53,32 @@ export function criadoresDeConteudo(perfis: readonly Pick<Profile, "id" | "role"
 export function perfisDeEntrada(perfis: readonly Profile[], criadores?: ReadonlySet<string>): Profile[] {
   return perfis.filter((p) => !ehPerfilDeTesteOuExemplo(p) && !(p.role === "athlete" && p.managedBy) && !ehContatoDePersonal(p, perfis, criadores));
 }
+
+/**
+ * Contatos de personal criados neste aparelho pelo link ou pela cópia de um aluno (`sr:v1:contatos`, só ids; correção
+ * da revisão da rodada 3). Depois de "Trocar de personal neste perfil", o contato antigo só ficava de fora da lista pela
+ * ficha ou pela dieta dele que restasse no perfil; excluída a ficha (ou trocada a dieta), virava "personal sem alunos" e
+ * aparecia em "Perfis neste aparelho". Quem lê soma estes ids a `criadores` (a regra de `ehContatoDePersonal` continua:
+ * um personal com aluno `managedBy` dele entra sempre). Sem campo novo no perfil, no link ou na cópia.
+ */
+export const CONTATOS_KEY = "sr:v1:contatos";
+/** Teto da lista (ids curtos; um aparelho tem poucos personais). */
+export const CONTATOS_MAX = 100;
+
+/** Lê a lista gravada; ilegível ou ausente = vazia. Só ids no formato dos perfis. */
+export function parseContatos(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw) as unknown;
+    return Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === "string" && x.length >= 1 && x.length <= 120))] : [];
+  } catch {
+    return [];
+  }
+}
+
+/** A lista com `ids` acrescentados (sem repetir; ao passar do teto, saem os mais antigos). */
+export function comContatos(lista: readonly string[], ids: readonly string[]): string[] {
+  const out = lista.filter((x) => !ids.includes(x));
+  out.push(...new Set(ids));
+  return out.slice(-CONTATOS_MAX);
+}

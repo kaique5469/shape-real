@@ -227,6 +227,81 @@ export function nextAck(prev: FichaAck | null, incoming: FichaAck): FichaAck {
   return b > a ? incoming : prev;
 }
 
+// ---- restauração das chaves de envio (rodada 3, correção da revisão) ---------------------------------------
+/** Teto da lista antiga `sr:sent:{id}` (o mesmo de `markSessionsSent`). */
+export const SENT_LIST_MAX = 500;
+const SUFIXO_RE = /:(at|log|ficha|ack|decl)$/;
+const lerJson = (s: string | null): unknown => {
+  if (s === null) return null;
+  try {
+    return JSON.parse(s) as unknown;
+  } catch {
+    return null;
+  }
+};
+const quando = (iso: string | undefined) => (iso && isIsoDate(iso) ? Date.parse(iso) : -Infinity);
+/** Mantém as `max` entradas de data mais nova (o mesmo corte de `addPrepEntries` e `addDeclaracoes`). */
+function cortar<T>(rec: Record<string, T>, data: (v: T) => number, max: number): Record<string, T> {
+  const ids = Object.keys(rec);
+  if (ids.length <= max) return rec;
+  const ficam = new Set(ids.sort((a, b) => data(rec[b]!) - data(rec[a]!)).slice(0, max));
+  return Object.fromEntries(Object.entries(rec).filter(([id]) => ficam.has(id)));
+}
+
+/**
+ * Valor a gravar numa chave de envio (`sr:sent:{id}{sufixo}`) ao restaurar uma cópia: junta o que o aparelho tem
+ * (`atual`) com o que veio no arquivo (`daCopia`), sem nunca desfazer um registro mais novo do aparelho (restaurar uma
+ * cópia antiga no mesmo aparelho não pode voltar o treino a "para enviar" nem a ficha a "mudou depois do envio"):
+ *  - lista antiga: a união dos ids (teto SENT_LIST_MAX, saem os mais antigos da cópia);
+ *  - `:at`: a hora mais nova;
+ *  - `:log`: por treino, o toque mais novo; `:decl`: por treino e por campo, a data mais nova (teto PREP_LOG_MAX);
+ *  - `:ficha`: o registro de envio com `at` mais novo; `:ack`: `nextAck` (o eco nunca volta atrás).
+ * Sem valor no aparelho, o da cópia como veio (aparelho limpo: como antes). Lado ilegível = o outro lado.
+ */
+export function mesclarChaveDeEnvio(chave: string, atual: string | null, daCopia: string): string {
+  if (atual === null || atual === daCopia) return daCopia;
+  const a = lerJson(atual);
+  const c = lerJson(daCopia);
+  switch (SUFIXO_RE.exec(chave)?.[1]) {
+    case "at":
+      return quando(daCopia) > quando(atual) ? daCopia : atual;
+    case "log": {
+      const out = parsePrepLog(a);
+      for (const [id, e] of Object.entries(parsePrepLog(c))) if (!hasOwn(out, id) || Date.parse(e.at) > Date.parse(out[id]!.at)) out[id] = e;
+      return JSON.stringify(cortar(out, (e) => Date.parse(e.at), PREP_LOG_MAX));
+    }
+    case "decl": {
+      const out = parseDeclaracoes(a);
+      for (const [id, d] of Object.entries(parseDeclaracoes(c))) {
+        const ja: DeclaracaoEnvio = { ...out[id] };
+        for (const campo of ["enviei", "dispensei"] as const) if (d[campo] && quando(d[campo]) > quando(ja[campo])) ja[campo] = d[campo];
+        out[id] = ja;
+      }
+      return JSON.stringify(cortar(out, ultimaDeclaracao, PREP_LOG_MAX));
+    }
+    case "ficha": {
+      const ra = parseFichaSendRecord(a);
+      const rc = parseFichaSendRecord(c);
+      if (!ra) return daCopia;
+      return rc && Date.parse(rc.at) > Date.parse(ra.at) ? daCopia : atual;
+    }
+    case "ack": {
+      const ka = parseFichaAck(a);
+      const kc = parseFichaAck(c);
+      if (!ka) return daCopia;
+      return kc && nextAck(ka, kc) === kc ? daCopia : atual;
+    }
+    default: {
+      const lista = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : null);
+      const la = lista(a);
+      const lc = lista(c);
+      if (!la) return daCopia;
+      if (!lc) return atual;
+      return JSON.stringify([...new Set([...lc, ...la])].slice(-SENT_LIST_MAX));
+    }
+  }
+}
+
 // ---- U2a: estado do envio de cada treino (aparelho do aluno) ------------------------------------------
 const hasOwn = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k);
 const DAY_MS = 86_400_000;

@@ -4,7 +4,7 @@ import { localRepo } from "@/lib/app-context";
 import { track } from "@/lib/analytics";
 import { comFotoDoArmazenamento, lastBackupAt, markBackupDone, TEXTO_COTA_LOCAL } from "@/lib/data/local";
 import { DataError, type Repository } from "@/lib/data/repository";
-import { addDeclaracoes, addPrepEntries, fichaDelivery, fichaEchoOf, fichaVersao, isIsoDate, nextAck, parseDeclaracoes, parseFichaAck, parseFichaSendRecord, parsePrepLog, sameSession, type DeclaracaoEnvio, type FichaAck, type FichaDelivery, type FichaSendRecord, type FichaVersao, type PrepEntry, type PrepVia, type VersionPair } from "@/lib/domain/delivery";
+import { addDeclaracoes, addPrepEntries, fichaDelivery, fichaEchoOf, fichaVersao, isIsoDate, mesclarChaveDeEnvio, nextAck, parseDeclaracoes, parseFichaAck, parseFichaSendRecord, parsePrepLog, sameSession, type DeclaracaoEnvio, type FichaAck, type FichaDelivery, type FichaSendRecord, type FichaVersao, type PrepEntry, type PrepVia, type VersionPair } from "@/lib/domain/delivery";
 import { uid } from "@/lib/domain/ids";
 import {
   backupAgeBucket,
@@ -709,7 +709,9 @@ export async function restoreBackup(b: Backup): Promise<ResultadoDaRestauracao> 
       localRepo.linkDirect(b.profile.id, s.profile.id, now);
     }
     if (rc && contato !== "manter" && b.profile.remoteCoach?.id === rc.profile.id) localRepo.linkDirect(rc.profile.id, b.profile.id, now);
-    for (const [k, v] of Object.entries(b.sent ?? {})) if (SENT_KEY_RE.test(k)) localStorage.setItem(k, v);
+    // Mescla com o registro de envio do aparelho (`mesclarChaveDeEnvio`): uma cópia mais antiga nunca desfaz um "Já enviei",
+    // um toque de envio ou o envio da ficha feitos aqui depois dela (o plano diz que o aparelho "fica como está").
+    for (const [k, v] of Object.entries(b.sent ?? {})) if (SENT_KEY_RE.test(k)) localStorage.setItem(k, mesclarChaveDeEnvio(k, localStorage.getItem(k), v));
     // Rodadas apagadas no aparelho de onde a cópia saiu: o link antigo do WhatsApp avisa também aqui.
     restoreApagadas(b.apagadas);
     // O conteúdo restaurado já tem cópia: o lembrete conta a partir da data do arquivo (conferido: só avança).
