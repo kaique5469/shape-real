@@ -1,5 +1,6 @@
 import type { Food } from "@/lib/domain/foods";
 import { sessionsThisWeek, weeklyGoal } from "@/lib/domain/attention";
+import { parciaisNaSemana } from "@/lib/domain/completude";
 import type {
   BodyMetric,
   DietPlan,
@@ -130,5 +131,6 @@ export function summarizeStudent(
     // Calculados aqui, com os dados já carregados: /alunos não busca treinos e ficha de cada aluno de novo.
     sessionsWeek: sessionsThisWeek(sessions.map((s) => s.startedAt), now),
     weeklyGoal: weeklyGoal(active?.daysPerWeek, profile.daysPerWeek),
+    partialWeek: parciaisNaSemana(sessions, now),
   };
 }

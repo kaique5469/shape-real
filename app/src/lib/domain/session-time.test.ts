@@ -184,6 +184,8 @@ describe("duracaoDoTreino e duracaoTexto", () => {
     expect(duracaoTexto(duracaoDoTreino({ startedAt: t0, finishedAt: depois(90), activeMin: 42 }))).toBe("42 min ativos");
     expect(duracaoTexto(duracaoDoTreino({ startedAt: t0, finishedAt: depois(90), activeMin: 40, activeEdited: true }))).toBe("40 min ativos (ajustado)");
     expect(duracaoTexto(duracaoDoTreino({ startedAt: t0, finishedAt: depois(55) }))).toBe("55 min (início ao fim)");
+    expect(duracaoTexto(duracaoDoTreino({ startedAt: t0, finishedAt: depois(55) }), { longo: true })).toBe("Duração registrada (início ao fim): 55 min");
+    expect(duracaoTexto(duracaoDoTreino({ startedAt: t0, finishedAt: depois(90), activeMin: 42 }), { longo: true })).toBe("42 min ativos");
   });
 
   it("sessão antiga acima de 180 min: sem minutos (nunca inventa)", () => {

@@ -2,9 +2,26 @@
 
 import { useState } from "react";
 import { Check } from "lucide-react";
-import { PLANS, brl } from "@/lib/domain/plans";
+import { PLANS, brl, type PlanDef } from "@/lib/domain/plans";
 import { LinkButton, Segmented, cx } from "@/components/ui";
 import { track } from "@/lib/analytics";
+
+/**
+ * Rótulo honesto do plano anual (rodada 3, R3-9), sem mudar preço: "2 meses grátis" só quando o anual é exatamente
+ * 10 mensalidades (hoje, o Personal); senão a economia em reais ("economia de R$ 89,80", hoje o Pro). Conta em
+ * centavos (nada de 19,9 × 12 = 238,79999…). null sem anual, sem economia ou no plano grátis.
+ */
+export function rotuloAnual(p: Pick<PlanDef, "priceMonthly" | "priceYearly">): string | null {
+  if (!p.priceYearly || p.priceMonthly <= 0) return null;
+  const mensal = Math.round(p.priceMonthly * 100);
+  const economia = 12 * mensal - Math.round(p.priceYearly * 100);
+  if (economia <= 0) return null;
+  if (economia % mensal === 0) {
+    const meses = economia / mensal;
+    return meses === 1 ? "1 mês grátis" : `${meses} meses grátis`;
+  }
+  return `economia de ${brl(economia / 100)}`;
+}
 
 export function Pricing() {
   const [yearly, setYearly] = useState(true);
@@ -17,7 +34,7 @@ export function Pricing() {
         onChange={(v) => setYearly(v === "ano")}
         options={[
           { value: "mes", label: "Mensal" },
-          { value: "ano", label: "Anual (2 meses grátis)" },
+          { value: "ano", label: "Anual" },
         ]}
         size="sm"
       />
@@ -25,6 +42,7 @@ export function Pricing() {
         {plans.map((p) => {
           const featured = p.id === "pro";
           const monthly = yearly && p.priceYearly ? p.priceYearly / 12 : p.priceMonthly;
+          const anual = yearly ? rotuloAnual(p) : null;
           return (
             <div key={p.id} className={cx("flex flex-col rounded-[10px] border p-6", featured ? "border-iron bg-paper shadow-lift" : "border-rule-strong bg-paper/70")}>
               <div className="flex items-baseline justify-between gap-2">
@@ -36,7 +54,10 @@ export function Pricing() {
                 <span className="num plate-type text-[2.5rem] leading-none">{p.priceMonthly === 0 ? "R$ 0" : brl(monthly)}</span>
                 {p.priceMonthly > 0 ? <span className="text-sm text-steel"> /mês</span> : null}
               </p>
-              <p className="num mt-1 h-5 text-xs text-steel">{p.priceMonthly > 0 && yearly && p.priceYearly ? `cobrado ${brl(p.priceYearly)} por ano` : p.priceMonthly > 0 ? "cancele quando quiser" : "para sempre"}</p>
+              <p className={cx("num mt-1 text-xs text-steel", yearly ? "min-h-10" : "min-h-5")}>
+                {p.priceMonthly > 0 && yearly && p.priceYearly ? `cobrado ${brl(p.priceYearly)} por ano` : p.priceMonthly > 0 ? "cancele quando quiser" : "para sempre"}
+                {anual ? <span className="block font-semibold text-iron">{anual}</span> : null}
+              </p>
               <ul className="mt-5 flex-1 space-y-2.5 text-[0.9375rem]">
                 {p.features.map((f) => (
                   <li key={f} className="flex gap-2">

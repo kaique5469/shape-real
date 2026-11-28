@@ -14,7 +14,7 @@ import { ROTULO_EXEMPLO, acoesDoAlerta, registroDoQuestionario, textoCoberto, te
 import { ehExemplo, type Alerta, type NivelAlerta, type WorkStyle } from "@/lib/domain/anamnese-types";
 import { waLink } from "@/lib/domain/format";
 import { readAnamnese } from "@/lib/domain/questionario-link";
-import { PROBLEMA_RESUMO, VELHO_TEXTO, summarize } from "@/lib/domain/resumo";
+import { PROBLEMA_RESUMO, VELHO_TEXTO, casoSemAlertas, summarize } from "@/lib/domain/resumo";
 import { NIVEL_ROTULO, comConversei } from "@/lib/domain/triagem";
 import type { Profile } from "@/lib/domain/types";
 
@@ -231,7 +231,12 @@ export function ResumoAluno(props: {
         {fortes.length ? <ul className="space-y-2.5">{fortes.map(card)}</ul> : null}
         {resumo.semAlertasTexto ? (
           <p className="flex items-start gap-2 text-[0.9375rem]">
-            <CircleCheck className="mt-0.5 size-[18px] shrink-0 text-done" aria-hidden />
+            {/* R3-11: com cuidado (azul) para revisar, ícone de informação neutro; o check verde só sem nenhum alerta. */}
+            {casoSemAlertas(resumo.alertas) === "cuidado" ? (
+              <Info className="mt-0.5 size-[18px] shrink-0 text-steel" aria-hidden />
+            ) : (
+              <CircleCheck className="mt-0.5 size-[18px] shrink-0 text-done" aria-hidden />
+            )}
             <span className="min-w-0">{resumo.semAlertasTexto}</span>
           </p>
         ) : null}

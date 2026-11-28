@@ -6,8 +6,10 @@ import { calendarDaysSince, sessionsThisWeek, weeklyGoal } from "@/lib/domain/at
 import { crefLabel } from "@/lib/domain/cref";
 import { getExercise } from "@/lib/domain/exercises";
 import { firstName, waLink, waPhone } from "@/lib/domain/format";
-import { RETURN_AFTER_DAYS, bestSet, completedSets, fmtMark, recordSetOf } from "@/lib/domain/progression";
+import { todayISO } from "@/lib/domain/ids";
+import { RETURN_AFTER_DAYS, bestSet, completedSets, fmtMark, recordSetOf, volumeDaSessao, weekStart } from "@/lib/domain/progression";
 import { revealAfterResize, scrollDeltaToReveal } from "@/lib/domain/session-flow";
+import { completude } from "@/lib/domain/completude";
 import type { ExerciseLog, Profile, Program, Session, SetLog } from "@/lib/domain/types";
 
 /** Carrega dados assíncronos com estados de carregamento/erro e recarga manual. */
@@ -216,11 +218,149 @@ export function weekGoal(sessions: readonly Pick<Session, "startedAt">[], progra
  * de 10 em 10 kg a 40 kg) a redução pode ser maior. null quando não há pausa (ou nenhum treino).
  */
 export function returnNotice(sessions: readonly Pick<Session, "startedAt">[], now = new Date()): string | null {
+  const aviso = avisoDePausa(sessions, now);
+  return aviso?.tipo === "volta" ? aviso.texto : null;
+}
+
+// ---- Hoje: treino registrado, descanso e volta (rodada 3, R3-8) --------------------------------------------------
+
+/**
+ * Dias de calendário sem registro a partir dos quais o Hoje convida a retomar, sem culpa e dispensável. De
+ * RETURN_AFTER_DAYS em diante vale o aviso de volta (cargas mais leves), que não muda.
+ */
+export const RETOMAR_APOS_DIAS = 7;
+
+export const TEXTO_RETOMAR = "Faz alguns dias que você não registra. Quer retomar ou ajustar a rotina?";
+
+/** Data legível: data ilegível (registro estragado) nunca vira "hoje" nem "há N dias". */
+const temData = (s: Pick<Session, "startedAt">) => typeof s.startedAt === "string" && Number.isFinite(Date.parse(s.startedAt));
+const maisRecentePrimeiro = (a: Pick<Session, "startedAt">, b: Pick<Session, "startedAt">) => Date.parse(b.startedAt) - Date.parse(a.startedAt);
+/** "Treino B" ou "Treino livre". */
+const nomeDoTreino = (s: Pick<Session, "dayKey">) => (s.dayKey ? `Treino ${s.dayKey}` : "Treino livre");
+/** Mesmo dia do calendário no fuso do aparelho (um treino às 23h30 é de hoje, mesmo já sendo amanhã em UTC). */
+const ehHoje = (s: Pick<Session, "startedAt">, now: Date) => todayISO(new Date(s.startedAt)) === todayISO(now);
+/** Próximo dia da ficha ativa ("Treino C"), pela mesma rotação do card de próximo treino. null sem ficha com dias. */
+function proximoDia(program: Program | null | undefined, sessions: readonly Session[]): string | null {
+  return program && program.days.length ? `Treino ${nextDayKey(program, [...sessions])}` : null;
+}
+
+export type AvisoDePausa =
+  /** 7 a 13 dias: convite sem culpa, dispensável. */
+  | { tipo: "retomar"; dias: number; texto: string }
+  /** 14 ou mais: o aviso de volta de sempre (as cargas sugeridas vêm mais leves). */
+  | { tipo: "volta"; dias: number; texto: string };
+
+/**
+ * Pausa desde o último treino registrado (dias de calendário no fuso do aparelho). null sem treino, com treino há
+ * menos de RETOMAR_APOS_DIAS dias ou com o último treino no futuro (relógio mudado: nunca inventa pausa).
+ */
+export function avisoDePausa(sessions: readonly Pick<Session, "startedAt">[], now = new Date()): AvisoDePausa | null {
   let last: string | null = null;
-  for (const s of sessions) if (!last || s.startedAt.localeCompare(last) > 0) last = s.startedAt;
+  for (const s of sessions) if (temData(s) && (!last || Date.parse(s.startedAt) > Date.parse(last))) last = s.startedAt;
   if (!last) return null;
-  const days = calendarDaysSince(last, now);
-  return days >= RETURN_AFTER_DAYS ? `Faz ${days} dias desde o último treino. Hoje as cargas sugeridas vêm mais leves.` : null;
+  const dias = calendarDaysSince(last, now);
+  if (dias >= RETURN_AFTER_DAYS) return { tipo: "volta", dias, texto: `Faz ${dias} dias desde o último treino. Hoje as cargas sugeridas vêm mais leves.` };
+  if (dias >= RETOMAR_APOS_DIAS) return { tipo: "retomar", dias, texto: TEXTO_RETOMAR };
+  return null;
+}
+
+/** Id do treino mais recente (pela data de início legível); null sem nenhum. */
+export function ultimoTreinoId(sessions: readonly Pick<Session, "id" | "startedAt">[]): string | null {
+  let last: Pick<Session, "id" | "startedAt"> | null = null;
+  for (const s of sessions) if (temData(s) && (!last || Date.parse(s.startedAt) > Date.parse(last.startedAt))) last = s;
+  return last?.id ?? null;
+}
+
+/**
+ * "Dispensar" do convite de retomar (7 a 13 dias) vale para a pausa atual: guarda só o id do último treino (aleatório,
+ * sem data nem conteúdo), por pessoa. Treino novo e outra pausa trazem o convite de volta. Conveniência deste
+ * aparelho: fora de `sr:v1:*` e da cópia de segurança; sem armazenamento, o convite só volta a aparecer.
+ */
+const retomarKey = (userId: string) => `sr:hoje-retomar:${userId}`;
+
+export function retomarDispensadoPara(userId: string): string | null {
+  try {
+    return localStorage.getItem(retomarKey(userId));
+  } catch {
+    return null;
+  }
+}
+
+/** Grava o "Dispensar" do convite de retomar para o último treino de agora. false = não gravou (some só nesta tela). */
+export function dispensarRetomar(userId: string, ultimoId: string): boolean {
+  try {
+    localStorage.setItem(retomarKey(userId), ultimoId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** O convite de retomar aparece: pausa de 7 a 13 dias e não dispensado para o último treino de agora. */
+export function mostraRetomar(aviso: AvisoDePausa | null, ultimoId: string | null, dispensadoPara: string | null): boolean {
+  return aviso?.tipo === "retomar" && (ultimoId === null || dispensadoPara !== ultimoId);
+}
+
+/** Card "Treino de hoje registrado": o dia já está fechado, o próximo aparece só como secundário. */
+export interface TreinoDeHoje {
+  /** "Treino B registrado hoje", "Treino livre registrado hoje" ou "2 treinos registrados hoje". */
+  titulo: string;
+  /** "1 de 24 séries" só com `plannedSets` e menos séries feitas que as planejadas (R3-4); senão null, sem número. */
+  completude: string | null;
+  /** O título com a completude: "Treino B registrado hoje · 1 de 24 séries". */
+  linha: string;
+  /** "Próximo: Treino C" (secundário, sem empurrar outro treino hoje); null sem ficha ativa com dias. */
+  proximo: string | null;
+}
+
+/**
+ * Treino(s) registrado(s) hoje, no fuso do aparelho. null sem treino hoje (o Hoje fica como era). Não oferece
+ * "Continuar" (a sessão já está salva; abrir /sessao de novo criaria outra sessão no mesmo dia).
+ */
+export function treinoDeHoje(sessions: readonly Session[], program: Program | null | undefined, now = new Date()): TreinoDeHoje | null {
+  const deHoje = sessions.filter((s) => temData(s) && ehHoje(s, now)).sort(maisRecentePrimeiro);
+  if (!deHoje.length) return null;
+  const titulo = deHoje.length === 1 ? `${nomeDoTreino(deHoje[0]!)} registrado hoje` : `${deHoje.length} treinos registrados hoje`;
+  const comp = deHoje.length === 1 ? completude(deHoje[0]!).texto : null;
+  const prox = proximoDia(program, sessions);
+  return { titulo, completude: comp, linha: comp ? `${titulo} · ${comp}` : titulo, proximo: prox ? `Próximo: ${prox}` : null };
+}
+
+/**
+ * Último treino parcial (abaixo do limiar de "parcial" da R3-4, só com `plannedSets`): "Treino A ficou parcial (1 de
+ * 24). Próximo: Treino B." null quando o último treino é de hoje (o card de hoje cobre), quando faz RETOMAR_APOS_DIAS
+ * dias ou mais (o convite de retomar vale mais) ou quando não foi parcial. "Escolher dia" já permite repetir o A.
+ */
+export function ultimoTreinoParcial(sessions: readonly Session[], program: Program | null | undefined, now = new Date()): string | null {
+  const ultimo = sessions.filter(temData).sort(maisRecentePrimeiro)[0];
+  if (!ultimo || ehHoje(ultimo, now) || calendarDaysSince(ultimo.startedAt, now) >= RETOMAR_APOS_DIAS) return null;
+  const c = completude(ultimo);
+  if (!c.parcial || c.planejadas === null) return null;
+  const prox = proximoDia(program, sessions);
+  return `${nomeDoTreino(ultimo)} ficou parcial (${c.feitas} de ${c.planejadas}).${prox ? ` Próximo: ${prox}.` : ""}`;
+}
+
+/**
+ * Volume da semana (segunda a domingo, fuso do aparelho) pela convenção única `volumeDaSessao` (R3-6 B): o
+ * `volumeKg` gravado na sessão é só cache e pode vir de uma regra antiga (assistida contada, série por tempo).
+ */
+export function volumeDaSemana(sessions: readonly Session[], now = new Date()): number {
+  const semana = weekStart(now.toISOString());
+  let kg = 0;
+  for (const s of sessions) if (temData(s) && weekStart(s.startedAt) === semana) kg += volumeDaSessao(s);
+  return kg;
+}
+
+// ---- Painel do personal (/alunos) -------------------------------------------------------------------------------
+
+/**
+ * Cabeçalho e card da semana do painel (rodada 3, R3-15). No modo local o personal só tem os treinos que o aluno
+ * mandou: o painel fala em "mandar treino", nunca em "treinou". Na nuvem, os textos de antes.
+ */
+export function textosDoPainel(local: boolean): { sub: string; semana: string } {
+  return local
+    ? { sub: "Quem mandou treino, quem está com a ficha vencendo e quem está sem notícias.", semana: "Mandaram treino na semana" }
+    : { sub: "Quem treinou, quem está com a ficha vencendo e quem precisa de um empurrão.", semana: "Treinaram na semana" };
 }
 
 /** Personal de quem o aluno vê o Hoje: "Acompanhamento de Camila Duarte · CREF 012345-G/SP" e "Falar com Camila". */

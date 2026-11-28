@@ -6,7 +6,7 @@ import { Alert, Button, Dialog } from "@/components/ui";
 import { reportError, track } from "@/lib/analytics";
 import { evAnamneseDeleted } from "@/lib/anamnese-events";
 import { useApp } from "@/lib/app-context";
-import { APAGAR_CAIXA, APAGAR_TITULO, apagarRespostas, idsDeRespostas } from "@/lib/domain/anamnese-perfil";
+import { APAGAR_CAIXA, APAGAR_TITULO, TEXTO_COPIAS_ANTIGAS, apagarRespostas, idsDeRespostas } from "@/lib/domain/anamnese-perfil";
 import { ehExemplo } from "@/lib/domain/anamnese-types";
 import type { Profile } from "@/lib/domain/types";
 import { esquecerQuestionarioDoAluno } from "@/lib/questionario-client";
@@ -54,7 +54,9 @@ export function ApagarRespostasDialog({ open, onClose, student, onSaved }: { ope
   return (
     <Dialog open={open} onClose={onClose} title={APAGAR_TITULO(student.name)}>
       <div className="ph-no-capture space-y-4">
-        <p className="text-[0.9375rem] text-steel">Saem deste aparelho as respostas, as liberações registradas e o pedido pendente. Não dá para desfazer.</p>
+        <p className="text-[0.9375rem] text-steel">
+          Saem deste aparelho as respostas, as liberações registradas e o pedido pendente. Não dá para desfazer. {TEXTO_COPIAS_ANTIGAS}
+        </p>
         <label className="flex min-h-11 cursor-pointer items-start gap-3 rounded-[var(--radius-ficha)] border border-rule-strong bg-paper p-3 text-[0.9375rem] font-semibold">
           <input type="checkbox" checked={comCadastro} onChange={(e) => setComCadastro(e.target.checked)} className="mt-0.5 size-5 shrink-0 accent-[var(--color-iron)]" />
           <span>{APAGAR_CAIXA}</span>

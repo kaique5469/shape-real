@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Suspense, use, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, CalendarClock, CalendarX, ClipboardList, Eye, FileText, MessageCircle, MoreHorizontal, Pencil, Plus, Send, Trash2, TriangleAlert, UserMinus } from "lucide-react";
+import { ArrowLeft, CalendarClock, CalendarX, ClipboardList, Eye, FileText, Info, MessageCircle, MoreHorizontal, Pencil, Plus, Send, Trash2, TriangleAlert, UserMinus } from "lucide-react";
 import { ApagarRespostasDialog } from "@/components/anamnese/apagar-respostas-dialog";
 import { PedirQuestionario } from "@/components/anamnese/pedir-questionario";
 import { ProximosPassos } from "@/components/anamnese/proximos-passos";
@@ -20,13 +20,13 @@ import { ActionSheet, Alert, Badge, Button, Dialog, IconButton, LinkButton, Pane
 import { useApp } from "@/lib/app-context";
 import { fmtDate, fmtNum, relativeDay, useLoad } from "@/lib/hooks";
 import { SECAO_TITULO, comNomes } from "@/lib/domain/anamnese";
-import { avisoCadastroNovo, marcarVisto, rotuloFazerQuestionario, temRespostas, textoPelaMetade } from "@/lib/domain/anamnese-perfil";
+import { TEXTO_COPIAS_ANTIGAS, avisoCadastroNovo, marcarVisto, rotuloFazerQuestionario, temRespostas, textoPelaMetade } from "@/lib/domain/anamnese-perfil";
 import { ehExemplo, type WorkStyle } from "@/lib/domain/anamnese-types";
 import { firstName, programValidity, waLink, waPhone } from "@/lib/domain/format";
 import { GOAL_LABEL, LEVEL_LABEL } from "@/lib/domain/generator";
 import { volumeDaSessao, weekStart } from "@/lib/domain/progression";
 import { weeklyGoal } from "@/lib/domain/attention";
-import { activeMinutes } from "@/lib/domain/session-time";
+import { completudeLinha, duracaoDoTreino, duracaoTexto } from "@/lib/domain/session-time";
 import { summarize } from "@/lib/domain/resumo";
 import { reportError, track } from "@/lib/analytics";
 import { RECEBER_TEXTO } from "@/lib/questionario-receber";
@@ -351,8 +351,9 @@ function Aluno({ id }: { id: string }) {
 
       <Dialog open={confirm} onClose={() => setConfirm(false)} title={managed ? `Remover ${first}?` : `Desvincular ${first}?`}>
         <p className="text-[0.9375rem] text-steel">
+          {/* R3-9 item 4: remover apaga deste aparelho, não do arquivo de cópia baixado antes (a frase das cópias). */}
           {managed
-            ? "A ficha, a dieta, os treinos registrados, as medidas e as fotos deste aluno são apagados. Não dá para desfazer."
+            ? `A ficha, a dieta, os treinos registrados, as medidas e as fotos deste aluno são apagados. Não dá para desfazer. ${TEXTO_COPIAS_ANTIGAS}`
             : "Você perde o acesso aos treinos, medidas e fotos. O aluno mantém a conta e os dados dele."}
         </p>
         <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -525,9 +526,12 @@ function SummaryPanels({ student, data, onTab, onEdit }: { student: Profile; dat
     { label: "Cintura", unit: "cm", ...latest("waistCm") },
   ];
   const hasMeasures = measures.some((m) => m.value);
-  // Minutos e volume pelas regras únicas (R3-4, R3-6 B), nunca fim − início nem o `volumeKg` gravado.
-  const minutes = last ? activeMinutes(last) : null;
+  // Minutos, completude e volume pelas regras únicas (R3-4, R3-6 B), nunca fim − início, `sets.length` nem o
+  // `volumeKg` gravado. Dor marcada no treino recebido (R3-7): o nome de cada exercício, como na mensagem de envio.
+  const minutes = last ? duracaoTexto(duracaoDoTreino(last)) : null;
+  const lastSeries = last ? completudeLinha(last) : null;
   const lastVolume = last ? volumeDaSessao(last) : 0;
+  const lastPains = last ? last.exercises.filter((e) => e.pain === true).map((e) => e.name) : [];
 
   return (
     <div className="no-print space-y-4">
@@ -535,10 +539,13 @@ function SummaryPanels({ student, data, onTab, onEdit }: { student: Profile; dat
         <Panel title={mode === "local" ? "Treinos recebidos nas últimas 4 semanas" : "Frequência nas últimas 4 semanas"}>
           <ul className="space-y-2">
             {weeks.map((w, i) => {
-              const slots = Math.max(target, w.count, 1);
+              // A meta é a de hoje (E2-meta-snapshot): "de {meta}" e as casas vazias só em "Esta semana"; as semanas
+              // passadas mostram só a contagem, sem reescrever o passado com a meta atual.
+              const current = i === 3;
+              const slots = Math.max(current ? target : 0, w.count, 1);
               return (
                 <li key={w.start} className="flex items-center gap-3 text-sm">
-                  <span className="num w-24 shrink-0 text-steel">{i === 3 ? "Esta semana" : fmtDate(w.start, { day: "2-digit", month: "2-digit" })}</span>
+                  <span className="num w-24 shrink-0 text-steel">{current ? "Esta semana" : fmtDate(w.start, { day: "2-digit", month: "2-digit" })}</span>
                   <span className="flex flex-1 flex-wrap gap-1" aria-hidden>
                     {Array.from({ length: slots }, (_, k) => (
                       <span key={k} className={cx("h-3.5 w-5 rounded-[3px] border", k < w.count ? "border-plate-green bg-plate-green" : "border-rule-strong bg-transparent")} />
@@ -547,7 +554,7 @@ function SummaryPanels({ student, data, onTab, onEdit }: { student: Profile; dat
                   {/* Indicador sem cor de estado (U7 R6): os quadradinhos já mostram a proporção. */}
                   <span className="num shrink-0 font-semibold text-iron">
                     {w.count}
-                    {target ? ` de ${target}` : ""}
+                    {target && current ? ` de ${target}` : ""}
                   </span>
                 </li>
               );
@@ -573,9 +580,16 @@ function SummaryPanels({ student, data, onTab, onEdit }: { student: Profile; dat
               </p>
               <p className="num mt-0.5 text-sm text-steel">
                 {relativeDay(last.startedAt)}
-                {minutes ? ` · ${minutes} min` : ""}
+                {minutes ? ` · ${minutes}` : ""}
+                {lastSeries ? ` · ${lastSeries}` : ""}
                 {lastVolume ? ` · ${fmtNum(lastVolume, 0)} kg de volume` : ""}
               </p>
+              {lastPains.length ? (
+                <p className="mt-2 flex items-start gap-1.5 text-sm font-semibold text-iron">
+                  <Info className="mt-0.5 size-4 shrink-0 text-info-ink" aria-hidden />
+                  <span className="min-w-0">Dor marcada: {lastPains.join(", ")}</span>
+                </p>
+              ) : null}
               {last.prs.length ? (
                 <p className="mt-2">
                   <RecordMark count={last.prs.length} />

@@ -8,9 +8,21 @@ const securityHeaders = [
   { key: "Permissions-Policy", value: "camera=(self), microphone=(), geolocation=()" },
 ];
 
+/**
+ * Build identificável (rodada 3, R3-2). SHA curto do commit que a Vercel publica (7 caracteres hexadecimais) ou "local"
+ * (build na máquina, variável ausente ou fora do formato). A hora vai para process.env na primeira leitura deste arquivo:
+ * as leituras seguintes no mesmo build (servidor e navegador) herdam o mesmo valor. Só isso entra no pacote: nada de
+ * segredo (src/lib/versao.ts confere o formato de novo antes de mostrar).
+ */
+const shaDoCommit = (process.env.VERCEL_GIT_COMMIT_SHA ?? "").trim().toLowerCase().slice(0, 7);
+const BUILD_SHA = /^[0-9a-f]{7}$/.test(shaDoCommit) ? shaDoCommit : "local";
+process.env.NEXT_PUBLIC_BUILD_AT ||= new Date().toISOString();
+const BUILD_AT = process.env.NEXT_PUBLIC_BUILD_AT;
+
 const config: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  env: { NEXT_PUBLIC_BUILD_SHA: BUILD_SHA, NEXT_PUBLIC_BUILD_AT: BUILD_AT },
   async headers() {
     return [
       { source: "/:path*", headers: securityHeaders },

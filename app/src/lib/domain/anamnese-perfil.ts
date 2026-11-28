@@ -107,8 +107,15 @@ export function temSaudeNoQuestionario(p: Profile): boolean {
   });
 }
 
-/** Confirmação ao desmarcar a autorização em "Editar dados" (spec §11.2), literal. */
-export const TEXTO_REVOGAR = "As respostas de saúde do questionário e as liberações registradas serão apagadas.";
+/**
+ * Rodada 3 (R3-9 item 4): frase curta das cópias de segurança, a mesma nas três confirmações que apagam saúde neste
+ * aparelho (revogar, "Apagar respostas" e "Remover {nome}?"). Apagar aqui não alcança um arquivo de cópia baixado antes.
+ * Nunca no diálogo de restaurar: depois do R3-13, restaurar no mesmo aparelho não traz a saúde de volta.
+ */
+export const TEXTO_COPIAS_ANTIGAS = "Cópias de segurança feitas antes continuam com esses dados. Apague os arquivos se não precisar deles.";
+
+/** Confirmação ao desmarcar a autorização em "Editar dados" (spec §11.2, literal), com a frase das cópias (R3-9). */
+export const TEXTO_REVOGAR = `As respostas de saúde do questionário e as liberações registradas serão apagadas. ${TEXTO_COPIAS_ANTIGAS}`;
 
 /**
  * Autorização de saúde retirada (spec §11.2): `stripHealth` nas respostas atuais e anteriores (as ilegíveis saem

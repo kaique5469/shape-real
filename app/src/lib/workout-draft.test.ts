@@ -2,7 +2,34 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { assignLinks, linkGroups } from "@/lib/domain/session-flow";
 import type { PlannedExercise, Program, Session, Technique } from "@/lib/domain/types";
 import { startRest } from "@/lib/domain/rest";
-import { buildDraft, decimalsOf, defaultPlan, draftHasWork, draftKey, draftProgressText, parseDraft, parsePtNumber, readDraftInfo, restDelayBand, resumeOpenUid, saveDraft, splitCompareLine, suggestionEdit, swapInDraft, tween, unmarkBand, type WorkoutDraft } from "./workout-draft";
+import {
+  addedLog,
+  buildDraft,
+  decidirRascunho,
+  decimalsOf,
+  defaultPlan,
+  draftHasWork,
+  draftKey,
+  draftProgressText,
+  initialLoad,
+  marcarRetomado,
+  parseDraft,
+  parsePtNumber,
+  RASCUNHO_FRESCO_MS,
+  readDraftInfo,
+  restDelayBand,
+  resumeOpenUid,
+  saveDraft,
+  splitCompareLine,
+  suggestionEdit,
+  swapInDraft,
+  tween,
+  unmarkBand,
+  type WorkoutDraft,
+} from "./workout-draft";
+import { PAIN_SUGGESTION_TEXT } from "@/lib/domain/progression";
+import { activeMinutes, minutosAtivosAoFinalizar, registrarAtividade } from "@/lib/domain/session-time";
+import { sessaoParaSalvar } from "@/lib/domain/session-flow";
 
 const session: Session = {
   id: "s1",
@@ -445,4 +472,214 @@ describe("resumeOpenUid (U8a)", () => {
     expect(resumeOpenUid({ exercises: [] }, "u1")).toBeNull();
   });
   it("aberto já concluído continua valendo (a pessoa estava nele)", () => expect(resumeOpenUid({ exercises: [ex("u1", [false]), ex("u2", [true])] }, "u2")).toBe("u2"));
+});
+
+// ───────────────────────── Rodada 3, trilha S ─────────────────────────
+
+/** Histórico com o supino da ficha (A) feito na última vez, com ou sem "Senti dor". */
+const supinoFeito = (pain: boolean, startedAt = "2026-11-24T10:00:00Z"): Session => ({
+  id: `h-${startedAt}`,
+  userId: "u",
+  programId: "p1",
+  dayKey: "A",
+  startedAt,
+  finishedAt: startedAt,
+  exercises: [{ uid: "h1", exerciseId: "supino_reto_barra", name: "Supino reto com barra", sets: [{ loadKg: 50, reps: 12, done: true }, { loadKg: 50, reps: 12, done: true }, { loadKg: 50, reps: 12, done: true }, { loadKg: 50, reps: 12, done: true }], ...(pain ? { pain: true } : {}) }],
+  volumeKg: 0,
+  prs: [],
+});
+const comCarga: Program = { ...program, days: program.days.map((d) => ({ ...d, exercises: d.exercises.map((e) => (e.exerciseId === "supino_reto_barra" ? { ...e, loadKg: 50 } : e)) })) };
+
+describe("R3-7: dor marcada da última vez → carga vazia e nenhuma sugestão de carga", () => {
+  it("aceite: buildDraft com dor no supino → séries com loadKg null, mesmo com a carga na ficha (a última feita)", () => {
+    const d = buildDraft("u", comCarga, "A", [supinoFeito(true)]);
+    const sup = d.session.exercises.find((e) => e.exerciseId === "supino_reto_barra")!;
+    expect(sup.sets.every((s) => s.loadKg === null)).toBe(true);
+    expect(d.suggestions[sup.uid]).toEqual({ kind: "dor", loadKg: null, text: PAIN_SUGGESTION_TEXT });
+    expect(d.suggestions[sup.uid]!.text).not.toMatch(/Manter|aument/i);
+  });
+
+  it("negativo: sem dor, sugestão e carga inicial iguais a hoje (fechou o topo → 52,5 kg)", () => {
+    const d = buildDraft("u", comCarga, "A", [supinoFeito(false)]);
+    const sup = d.session.exercises.find((e) => e.exerciseId === "supino_reto_barra")!;
+    expect(d.suggestions[sup.uid]).toMatchObject({ kind: "aumentar", loadKg: 52.5 });
+    expect(sup.sets.every((s) => s.loadKg === 52.5)).toBe(true);
+  });
+
+  it("aceite: dor em outro exercício não afeta este", () => {
+    const hist: Session = { ...supinoFeito(false), exercises: [...supinoFeito(false).exercises, { uid: "h2", exerciseId: "agachamento_livre", name: "Agachamento livre", pain: true, sets: [{ loadKg: 60, reps: 10, done: true }] }] };
+    const d = buildDraft("u", comCarga, "A", [hist]);
+    const sup = d.session.exercises.find((e) => e.exerciseId === "supino_reto_barra")!;
+    const ag = d.session.exercises.find((e) => e.exerciseId === "agachamento_livre")!;
+    expect(d.suggestions[sup.uid]!.kind).toBe("aumentar");
+    expect(d.suggestions[ag.uid]!.kind).toBe("dor");
+    expect(ag.sets.every((s) => s.loadKg === null)).toBe(true);
+  });
+
+  it("initialLoad: dor zera em qualquer unidade e implemento; o resto como antes", () => {
+    const dor = { kind: "dor", loadKg: null, text: PAIN_SUGGESTION_TEXT } as const;
+    const manter = { kind: "manter", loadKg: 40, text: "x" } as const;
+    expect(initialLoad("reps", "barra", dor, 50)).toBeNull();
+    expect(initialLoad("reps", "peso_corporal", dor, 10)).toBeNull();
+    expect(initialLoad("seg", "peso_corporal", dor, 10)).toBeNull();
+    expect(initialLoad("reps", "barra", manter, 50)).toBe(40);
+    expect(initialLoad("reps", "barra", { ...manter, loadKg: null }, 50)).toBe(50);
+    expect(initialLoad("reps", "peso_corporal", { ...manter, loadKg: null }, 0)).toBeNull();
+    expect(initialLoad("seg", "peso_corporal", manter, 10)).toBe(10);
+    expect(initialLoad("min", "maquina", manter, 10)).toBeNull();
+    expect(initialLoad("reps", "barra", null, 50)).toBe(50);
+  });
+
+  it("exercício por tempo com dor: a sugestão de dor fica no rascunho (texto de cuidado), sem carga", () => {
+    const prancha: Program = { ...program, days: [{ key: "C", title: "", focus: [], exercises: [planned("p-pr", "prancha", "Prancha", "normal", { repsMin: 30, repsMax: 45, loadKg: 10 })] }] };
+    const hist: Session = { ...supinoFeito(false), exercises: [{ uid: "h3", exerciseId: "prancha", name: "Prancha", unit: "seg", pain: true, sets: [{ loadKg: 10, reps: 45, done: true }] }] };
+    const d = buildDraft("u", prancha, "C", [hist]);
+    const pr = d.session.exercises[0]!;
+    expect(d.suggestions[pr.uid]?.kind).toBe("dor");
+    expect(pr.sets.every((s) => s.loadKg === null)).toBe(true);
+    // Sem dor, a prancha continua sem sugestão guardada (como sempre) e com o peso extra da ficha.
+    const sem = buildDraft("u", prancha, "C", [{ ...hist, exercises: [{ ...hist.exercises[0]!, pain: undefined }] }]);
+    expect(sem.suggestions).toEqual({});
+    expect(sem.session.exercises[0]!.sets[0]!.loadKg).toBe(10);
+  });
+
+  it("adicionar exercício na hora com dor da última vez: séries vazias e a sugestão de dor", () => {
+    const a = addedLog({ id: "supino_reto_barra", name: "Supino reto com barra", compound: true }, [supinoFeito(true)], "novo");
+    expect(a.log.sets.every((s) => s.loadKg === null)).toBe(true);
+    expect(a.suggestion?.kind).toBe("dor");
+    // Negativo: sem dor, a carga sugerida (como antes).
+    const b = addedLog({ id: "supino_reto_barra", name: "Supino reto com barra", compound: true }, [supinoFeito(false)], "novo");
+    expect(b.log.sets.every((s) => s.loadKg === b.suggestion!.loadKg)).toBe(true);
+    expect(b).toMatchObject({ restSec: 120, log: { uid: "novo", exerciseId: "supino_reto_barra", unit: "reps", planned: defaultPlan({ id: "supino_reto_barra", compound: true }) } });
+    // Por tempo, sem dor: sem sugestão e sem carga (como antes).
+    const c = addedLog({ id: "prancha", name: "Prancha", compound: false }, [], "p");
+    expect(c.suggestion).toBeNull();
+    expect(c.log.sets.every((s) => s.loadKg === null)).toBe(true);
+  });
+
+  it("trocar para um exercício com dor marcada: séries vazias e a sugestão de dor", () => {
+    const d = buildDraft("u", program, "A", []);
+    const uid = d.session.exercises[1]!.uid;
+    const out = swapInDraft(d, uid, { id: "supino_reto_halter", name: "Supino reto com halteres", compound: true }, [{ ...supinoFeito(true), exercises: [{ ...supinoFeito(true).exercises[0]!, exerciseId: "supino_reto_halter" }] }]);
+    expect(out.suggestions[uid]?.kind).toBe("dor");
+    expect(out.session.exercises[1]!.sets.every((s) => s.loadKg === null)).toBe(true);
+  });
+
+  it("rascunho gravado com sugestão de dor volta igual (nunca com carga, mesmo alterado à mão)", () => {
+    const raw = JSON.stringify({ session, suggestions: { a: { kind: "dor", loadKg: 40, text: PAIN_SUGGESTION_TEXT } }, restSec: {} });
+    expect(parseDraft(raw)?.suggestions.a).toEqual({ kind: "dor", loadKg: null, text: PAIN_SUGGESTION_TEXT });
+  });
+});
+
+describe("R3-4: relógio no rascunho (tempo) e recarregar", () => {
+  const store = new Map<string, string>();
+  beforeEach(() => {
+    store.clear();
+    (globalThis as { localStorage?: Pick<Storage, "getItem" | "setItem" | "removeItem"> }).localStorage = {
+      getItem: (k) => store.get(k) ?? null,
+      setItem: (k, v) => void store.set(k, v),
+      removeItem: (k) => void store.delete(k),
+    };
+  });
+  afterEach(() => {
+    delete (globalThis as { localStorage?: unknown }).localStorage;
+  });
+
+  it("buildDraft começa o relógio no início do treino", () => {
+    const d = buildDraft("u", program, "A", []);
+    expect(d.tempo).toEqual({ lastActivityAt: d.session.startedAt, activeMs: 0, pausedMs: 0 });
+  });
+
+  it("aceite: saveDraft com intervalos e pausa → parseDraft dá o mesmo activeMinutes e as mesmas séries", () => {
+    const d = buildDraft("u", program, "A", []);
+    const t0 = Date.parse(d.session.startedAt);
+    let tempo = d.tempo!;
+    for (const min of [5, 12, 20, 20 + 90, 20 + 90 + 10]) tempo = registrarAtividade(tempo, t0 + min * 60_000).tempo;
+    d.session.exercises[0]!.sets[0] = { loadKg: 60, reps: 10, done: true };
+    saveDraft("u", { ...d, tempo }, null);
+    const back = parseDraft(store.get(draftKey("u")))!;
+    expect(back.tempo).toEqual(tempo);
+    expect(back.tempo!.pausedMs).toBe(90 * 60_000);
+    expect(back.session.exercises).toEqual(d.session.exercises);
+    const fim = t0 + (20 + 90 + 15) * 60_000;
+    expect(minutosAtivosAoFinalizar(back.tempo!, fim)).toBe(minutosAtivosAoFinalizar(tempo, fim));
+    expect(minutosAtivosAoFinalizar(back.tempo!, fim)).toBe(35);
+  });
+
+  it("rascunho antigo sem relógio continua abrindo (sem tempo); relógio inválido é descartado", () => {
+    expect(parseDraft(JSON.stringify({ session }))).not.toHaveProperty("tempo");
+    expect(parseDraft(JSON.stringify({ session, tempo: { lastActivityAt: "x", activeMs: 1, pausedMs: 0 } }))).not.toHaveProperty("tempo");
+  });
+
+  it("retomar o rascunho e finalizar → 1 sessão só (o id do rascunho)", () => {
+    const d = buildDraft("u", program, "A", []);
+    d.session.exercises[0]!.sets[0] = { loadKg: 60, reps: 10, done: true };
+    saveDraft("u", d, null);
+    const back = parseDraft(store.get(draftKey("u")))!;
+    const agora = new Date(Date.parse(d.session.startedAt) + 30 * 60_000);
+    const a = sessaoParaSalvar(back.session, { agora, tempo: back.tempo });
+    const b = sessaoParaSalvar(d.session, { agora, tempo: d.tempo });
+    expect(a!.id).toBe(d.session.id);
+    expect(b!.id).toBe(a!.id);
+    expect(activeMinutes(a!)).toBe(30);
+  });
+});
+
+describe("R3-10: retomar o treino de ontem sem laço", () => {
+  const T = Date.parse("2026-11-25T20:00:00Z");
+  const h = (horas: number) => new Date(T - horas * 3_600_000).toISOString();
+  const comTrabalho = (startedAt: string): WorkoutDraft => ({ session: { ...session, startedAt }, suggestions: {}, restSec: {} });
+  const semTrabalho = (startedAt: string): WorkoutDraft => ({ session: { ...session, startedAt, exercises: [{ ...session.exercises[0]!, sets: [{ loadKg: 40, reps: null, done: false }] }] }, suggestions: {}, restSec: {} });
+  const mesmo = { programId: "p1", dayKey: "B" };
+
+  it("aceite: rascunho de 7 h marcado como retomado não volta a ser pendente", () => {
+    const d = marcarRetomado(comTrabalho(h(7)), new Date(T - 60_000));
+    expect(decidirRascunho(d, mesmo, T)).toBe("retomar");
+  });
+
+  it("negativo: rascunho de 7 h NÃO retomado continua perguntando (nada some sem a pessoa escolher)", () => {
+    expect(decidirRascunho(comTrabalho(h(7)), mesmo, T)).toBe("perguntar");
+  });
+
+  it("retomado há mais de 6 h volta a perguntar (a regra é a mesma, contada da retomada)", () => {
+    const d = marcarRetomado(comTrabalho(h(30)), new Date(T - RASCUNHO_FRESCO_MS));
+    expect(decidirRascunho(d, mesmo, T)).toBe("perguntar");
+  });
+
+  it("negativo: outro treino com trabalho continua perguntando, mesmo retomado (\"Começar outro\" pede confirmação)", () => {
+    const d = marcarRetomado(comTrabalho(h(1)), new Date(T - 60_000));
+    expect(decidirRascunho(d, { programId: "p1", dayKey: "A" }, T)).toBe("perguntar");
+    expect(decidirRascunho(d, { programId: "p2", dayKey: "B" }, T)).toBe("perguntar");
+  });
+
+  it("como antes: mesmo treino recente reabre; sem dia no endereço vale o do rascunho; sem trabalho, treino novo", () => {
+    expect(decidirRascunho(comTrabalho(h(1)), mesmo, T)).toBe("retomar");
+    expect(decidirRascunho(comTrabalho(h(1)), { programId: "p1", dayKey: null }, T)).toBe("retomar");
+    expect(decidirRascunho(semTrabalho(h(7)), mesmo, T)).toBe("novo");
+    expect(decidirRascunho(semTrabalho(h(1)), { programId: "p1", dayKey: "A" }, T)).toBe("novo");
+  });
+
+  it("início ilegível: nunca reabre direto (pergunta, porque há trabalho)", () => {
+    expect(decidirRascunho(comTrabalho("ontem"), mesmo, T)).toBe("perguntar");
+  });
+
+  it("a retomada sobrevive a recarregar (saveDraft + parseDraft); rascunho antigo abre sem ela", () => {
+    const store = new Map<string, string>();
+    (globalThis as { localStorage?: Pick<Storage, "getItem" | "setItem" | "removeItem"> }).localStorage = {
+      getItem: (k) => store.get(k) ?? null,
+      setItem: (k, v) => void store.set(k, v),
+      removeItem: (k) => void store.delete(k),
+    };
+    try {
+      const d = marcarRetomado(comTrabalho(h(7)), new Date(T - 60_000));
+      saveDraft("u", d, null);
+      const back = parseDraft(store.get(draftKey("u")))!;
+      expect(back.resumedAt).toBe(d.resumedAt);
+      expect(decidirRascunho(back, mesmo, T)).toBe("retomar");
+      expect(parseDraft(JSON.stringify({ session }))).not.toHaveProperty("resumedAt");
+      expect(parseDraft(JSON.stringify({ session, resumedAt: "amanhã" }))).not.toHaveProperty("resumedAt");
+    } finally {
+      delete (globalThis as { localStorage?: unknown }).localStorage;
+    }
+  });
 });

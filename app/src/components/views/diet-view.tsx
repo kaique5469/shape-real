@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Check, CircleAlert, Copy, IdCard, MessageCircle, MoreHorizontal, Plus, Printer, Replace, Search, Sparkles, Trash2, Wand2, X } from "lucide-react";
 import { shareNames } from "@/components/program/program-share";
+import { TEXTO_COPIA_FALHOU } from "@/components/copy-button";
 import { DeliveryLine, StatusRegion } from "@/components/delivery-status";
 import { ActionSheet, Alert, Button, Dialog, Empty, Field, IconButton, Input, Panel, Select, Skeleton, Textarea, cx, type SheetAction } from "@/components/ui";
 import { DietRead, NotesRead, PlanVsTargets } from "@/components/views/diet-read";
@@ -34,7 +35,7 @@ import { allFoods, getFood, type Food } from "@/lib/domain/foods";
 import { SOLO_TESTER_ID } from "@/lib/domain/ficha-context";
 import { firstName, fmtDayMonth, waLink, waPhone } from "@/lib/domain/format";
 import { uid } from "@/lib/domain/ids";
-import { ACTIVITY_LABEL, analyzeDietText, buildDietTemplate, dietTotals, itemFromFood, sumItems, targetsForProfile } from "@/lib/domain/nutrition";
+import { ACTIVITY_LABEL, analyzeDietText, buildDietTemplate, descartarNaoLido, dietTotals, editarItem, itemFromFood, removerItem, revisarAnalise, sumItems, targetsForProfile, type LeituraDieta, type LeituraItem } from "@/lib/domain/nutrition";
 import { coachSignature, signerFor } from "@/lib/domain/program-share";
 import { fichaDeliveryLines, prepStatusText, type PrepVia } from "@/lib/domain/delivery";
 import { consentConfirmed } from "@/lib/domain/transfer";
@@ -44,6 +45,8 @@ import { useFichaDelivery, useFichaLink } from "@/lib/use-ficha-link";
 import type { ActivityLevel, DietItem, DietPlan, MacroTargets, Meal, Profile } from "@/lib/domain/types";
 
 const CRN_KEY = "sr:crn";
+/** R3-12: sem trocar alimento grama por grama (a própria base desmente essa troca). */
+const NOTAS_PLACEHOLDER = "Ex.: horários, preferências, o que evitar";
 const int = (v: number) => Math.round(v).toLocaleString("pt-BR");
 const countItems = (meals: Meal[]) => meals.reduce((n, m) => n + m.items.length, 0);
 /** "24/11/2026" (impressão). */
@@ -632,7 +635,7 @@ export function DietView({ owner, mode, onDeliveryChange }: { owner: Profile; mo
               <NotesRead notes={diet.notes} origin={origin} />
             ) : (
               <Field label="Orientações gerais" hint={coach ? "Água, substituições, pré e pós-treino. Vai junto no texto do WhatsApp." : "Água, substituições, lembretes para você."}>
-                <Textarea value={diet.notes ?? ""} onChange={(e) => change((d) => ({ ...d, notes: e.target.value }))} rows={3} maxLength={800} placeholder="Ex.: 35 ml de água por kg. Pode trocar arroz por batata ou macarrão na mesma quantidade." />
+                <Textarea value={diet.notes ?? ""} onChange={(e) => change((d) => ({ ...d, notes: e.target.value }))} rows={3} maxLength={800} placeholder={NOTAS_PLACEHOLDER} />
               </Field>
             )}
           </section>
@@ -959,6 +962,8 @@ function SendDietPanel({
   const first = firstName(student.name);
   const [tick, setTick] = useState(0);
   const [msgCopied, setMsgCopied] = useState(false);
+  // Cópia que falhou (sem permissão, navegador sem suporte): nada é registrado e a linha diz o que fazer (R3-3).
+  const [copyFailed, setCopyFailed] = useState(false);
   // Com alterações não salvas, o link levaria a versão antiga: só monta depois de salvar.
   const { estado, erro, toque, aoEnviar } = useFichaLink(student, !dirty, { where: "dieta", version });
   // `version` (salvamentos) e `tick` (toques aqui) só sobem: a soma muda sempre que um dos dois muda.
@@ -1017,20 +1022,37 @@ function SendDietPanel({
           onClick={async () => {
             if (!estado) return;
             try {
+              if (!navigator.clipboard?.writeText) throw new Error("sem área de transferência");
               await navigator.clipboard.writeText(estado.texto);
-              setMsgCopied(true);
-              sent("copy");
-              setTimeout(() => setMsgCopied(false), 2000);
             } catch {
-              /* sem área de transferência: o botão do WhatsApp continua */
+              // Sem área de transferência: nada é registrado; o botão do WhatsApp continua.
+              setMsgCopied(false);
+              setCopyFailed(true);
+              return;
             }
+            setCopyFailed(false);
+            setMsgCopied(true);
+            sent("copy");
+            setTimeout(() => setMsgCopied(false), 2000);
           }}
         >
           {msgCopied ? "Copiado" : "Copiar mensagem"}
         </Button>
       </div>
+      {/* Sempre montada (região viva): vazia, fica fora do fluxo. Ícone e frase: a falha não depende só da cor. */}
+      <p role="status" className={cx("mt-1.5 flex items-start gap-1.5 text-sm text-danger", !copyFailed && "sr-only")}>
+        {copyFailed ? (
+          <>
+            <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            <span className="min-w-0">{TEXTO_COPIA_FALHOU}</span>
+          </>
+        ) : null}
+      </p>
       {/* Montada junto com os botões, antes de qualquer toque; só o texto muda. */}
       <StatusRegion className="mt-2" text={toque ? prepStatusText(toque.via, toque.at, first, "personal") : null} icon={toque?.via === "copy" ? "copia" : "whatsapp"} />
+      {/* R3-17: o que vai no link e quem consegue ler (o mesmo aviso do envio da ficha). */}
+      {/* Só com o envio liberado: sem ficha nem cardápio (ou com alterações por salvar) o aviso falaria de outro link. */}
+      {!off && estado ? <p className="mt-2 text-sm text-steel">{estado.aviso}</p> : null}
 
       <div className="mt-4 border-t border-rule pt-3">
         <h3 className="text-sm font-bold">Outras formas</h3>
@@ -1178,8 +1200,8 @@ function DietBodyForm({ owner, onManual }: { owner: Profile; onManual: () => voi
   );
 }
 
-/** Campo de gramas: aceita apagar e redigitar; confirma valores entre 1 e 2000 g. */
-function GramsInput({ value, onChange, label }: { value: number; onChange: (g: number) => void; label: string }) {
+/** Campo de gramas: aceita apagar e redigitar; confirma valores entre 1 e `max` (2000 g no cardápio). Em ml quando 1 ml ≈ 1 g. */
+function GramsInput({ value, onChange, label, id, unit = "g", max = 2000 }: { value: number; onChange: (g: number) => void; label: string; id?: string; unit?: "g" | "ml"; max?: number }) {
   const [text, setText] = useState(String(value));
   const [focused, setFocused] = useState(false);
   useEffect(() => {
@@ -1188,6 +1210,7 @@ function GramsInput({ value, onChange, label }: { value: number; onChange: (g: n
   return (
     <span className="relative shrink-0">
       <input
+        id={id}
         aria-label={label}
         inputMode="numeric"
         value={text}
@@ -1199,12 +1222,12 @@ function GramsInput({ value, onChange, label }: { value: number; onChange: (g: n
           const raw = e.target.value.replace(/\D/g, "").slice(0, 4);
           setText(raw);
           const n = Number(raw);
-          if (raw && n >= 1 && n <= 2000) onChange(n);
+          if (raw && n >= 1 && n <= max) onChange(n);
         }}
         onBlur={() => setFocused(false)}
-        className="num h-11 w-20 rounded-[6px] border border-field bg-paper pl-2 pr-6 text-right text-base font-bold focus:border-iron focus:outline-none"
+        className={cx("num h-11 rounded-[6px] border border-field bg-paper pl-2 text-right text-base font-bold focus:border-iron focus:outline-none", unit === "ml" ? "w-24 pr-8" : "w-20 pr-6")}
       />
-      <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-steel">g</span>
+      <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-steel">{unit}</span>
     </span>
   );
 }
@@ -1486,23 +1509,64 @@ function CreateFood({ initialName, onCancel, onCreated }: { initialName: string;
   );
 }
 
+/** Resultado na tela: o da IA (sem `leitura`) ou o do motor (com `leitura`, `parcial` e `conferir`, R3-5). */
+type Resultado = DietAnalysis & {
+  source: string;
+  notice?: string;
+  quota?: boolean;
+  leitura?: LeituraDieta["leitura"];
+  parcial?: boolean;
+  conferir?: number;
+  /** A pessoa mexeu na leitura (editou, escolheu, removeu ou tirou da conta). */
+  revisado?: boolean;
+};
+
+/** O total dito ao leitor de tela depois de uma correção. */
+function totalFalado(r: Resultado, t: MacroTargets): string {
+  if (!r.meals.length) return "Nenhum alimento na conta.";
+  return `Total${r.parcial ? " parcial" : ""}: ${int(r.totals.kcal)} de ${int(t.kcal)} kcal e ${int(r.totals.proteinG)} g de proteína.`;
+}
+
 /**
  * "Conferir o que comi" (aluno) / "Analisar o que {aluno} comeu" (personal). `useLabel` (R12): "Usar como cardápio"
  * (personal), "Usar como meu cardápio" (plano próprio ou sem plano) ou null (plano do personal, no aparelho do aluno).
+ * R3-5: o resultado mostra o que não foi lido logo abaixo do resumo e os itens lidos ANTES das dicas, cada um com
+ * quantidade editável, remover e "Confira" quando a leitura tem dúvida; cada correção refaz a conta na hora.
  */
 function Analyzer({ owner, targets, coach, aiOn, useLabel, onUse }: { owner: Profile; targets: MacroTargets; coach: boolean; aiOn: boolean; useLabel: string | null; onUse: (meals: Meal[]) => void }) {
   const { user, accessToken, mode: dataMode } = useApp();
   const [open, setOpen] = useState(!coach);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-  const [res, setRes] = useState<(DietAnalysis & { source: string; notice?: string; quota?: boolean }) | null>(null);
+  const [res, setRes] = useState<Resultado | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  /** Anúncio para o leitor de tela depois de uma correção (o total muda sem a pessoa sair do lugar). */
+  const [aviso, setAviso] = useState<string | null>(null);
+  const avisoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resumoRef = useRef<HTMLParagraphElement>(null);
+  const idBase = useId();
+  const qtdId = (itemUid: string) => `${idBase}-q-${itemUid}`;
+  const naoContarId = (i: number) => `${idBase}-nc-${i}`;
   const who = firstName(owner.name);
+
+  useEffect(
+    () => () => {
+      if (avisoTimer.current) clearTimeout(avisoTimer.current);
+    },
+    [],
+  );
+
+  /** Resultado novo: o resumo também vai para a região viva (a análise chega sozinha, às vezes depois da rede). */
+  function mostrar(r: Resultado) {
+    if (avisoTimer.current) clearTimeout(avisoTimer.current);
+    setAviso(`Análise pronta. ${r.summary}`);
+    setRes(r);
+  }
 
   /** Análise pelo motor de regras, no aparelho: o texto da refeição e o peso não saem do celular. */
   function runLocal(offline: boolean) {
     const r = analyzeDietText(text, targets, owner.weightKg);
-    setRes({ ...r, source: "motor", notice: offline && aiOn ? "Sem conexão agora: a análise foi feita pela base de alimentos do app, sem a IA." : undefined });
+    mostrar({ ...r, source: "motor", notice: offline && aiOn ? "Sem conexão agora: a análise foi feita pela base de alimentos do app, sem a IA." : undefined });
     track("diet_analyzed", { source: offline ? "offline" : "motor", where: coach ? "coach" : "self", itens: itemsBand(countItems(r.meals)) } satisfies DietAnalyzedProps);
   }
 
@@ -1513,7 +1577,7 @@ function Analyzer({ owner, targets, coach, aiOn, useLabel, onUse }: { owner: Pro
       // IA desligada: nenhuma chamada a /api/ai/* (mesma regra da geração da ficha no onboarding).
       if (!(await aiAvailable(dataMode === "supabase"))) return runLocal(false);
       const r = await aiDietAnalyze({ text, targets, goal: owner.goal, weightKg: pesoParaIA(owner), ownerId: owner.id, createdBy: user!.id }, await accessToken());
-      setRes({ ...r.data, source: r.source, notice: r.notice, quota: r.quota });
+      mostrar({ ...r.data, source: r.source, notice: r.notice, quota: r.quota });
       track("diet_analyzed", { source: r.source, where: coach ? "coach" : "self", itens: itemsBand(countItems(r.data.meals)) } satisfies DietAnalyzedProps);
     } catch (e) {
       if (e instanceof OfflineError) return runLocal(true);
@@ -1523,7 +1587,48 @@ function Analyzer({ owner, targets, coach, aiOn, useLabel, onUse }: { owner: Pro
     }
   }
 
+  /** Revisão (R3-5): refaz a conta com a correção e anuncia o total novo (com atraso enquanto a pessoa digita). */
+  function revisar(l: Pick<LeituraDieta, "meals" | "unknown"> & { leitura?: LeituraDieta["leitura"] }, feito: string, atraso = 0) {
+    if (!res) return;
+    const next: Resultado = { ...res, ...revisarAnalise(l, targets, owner.weightKg, res.source === "ia"), revisado: true };
+    setRes(next);
+    if (avisoTimer.current) clearTimeout(avisoTimer.current);
+    const falado = `${feito} ${totalFalado(next, targets)}`;
+    avisoTimer.current = setTimeout(() => setAviso(falado), atraso);
+  }
+
+  /** Depois que o controle tocado some (opção escolhida, item removido), o foco vai para um vizinho que faça sentido. */
+  function focarDepois(id: string | null) {
+    setTimeout(() => {
+      const alvo = id ? document.getElementById(id) : null;
+      (alvo ?? resumoRef.current)?.focus();
+    }, 0);
+  }
+
+  function remover(itemUid: string) {
+    if (!res) return;
+    const ordem = res.meals.flatMap((m) => m.items.map((i) => i.uid));
+    const at = ordem.indexOf(itemUid);
+    const vizinho = ordem[at + 1] ?? ordem[at - 1] ?? null;
+    revisar(removerItem(res, itemUid), "Item removido.");
+    focarDepois(vizinho ? qtdId(vizinho) : null);
+  }
+
+  function naoContar(index: number) {
+    if (!res) return;
+    const resta = res.unknown.length - 1;
+    revisar(descartarNaoLido(res, index), "Trecho fora da conta.");
+    focarDepois(resta > index ? naoContarId(index) : resta > 0 ? naoContarId(index - 1) : null);
+  }
+
+  function conferido(itemUid: string, grams: number, feito: string) {
+    if (!res) return;
+    revisar(editarItem(res, itemUid, grams), feito);
+    focarDepois(qtdId(itemUid));
+  }
+
   const recognized = res?.meals.filter((m) => m.items.length) ?? [];
+  const dicasOcultas = res?.source === "ia" && res.revisado;
 
   return (
     <Panel
@@ -1561,74 +1666,172 @@ function Analyzer({ owner, targets, coach, aiOn, useLabel, onUse }: { owner: Pro
               {err}
             </Alert>
           ) : null}
+          <p role="status" className="sr-only">
+            {aviso ?? ""}
+          </p>
           {res ? (
             <div className="mt-4 space-y-3 border-t border-rule pt-4">
               {res.notice?.trim() ? <Alert tone={res.quota ? "warn" : "info"}>{res.notice}</Alert> : null}
-              {/* Sem nota nem cor de problema (U3 R11/R13): resumo, números e as dicas, com ✓ (steel) e ponto (iron). */}
-              <div data-area="dieta-numeros" className="space-y-3">
-                <div className="min-w-0">
-                  <p className="font-semibold">{res.summary}</p>
-                  <p className="num text-sm text-steel">
-                    {int(res.totals.kcal)} de {int(targets.kcal)} kcal · proteína {int(res.totals.proteinG)} de {int(targets.proteinG)} g
-                  </p>
-                  <p className="num text-sm text-steel">
-                    carboidrato {int(res.totals.carbsG)} g · gordura {int(res.totals.fatG)} g
-                  </p>
-                </div>
-                {res.highlights.length ? (
-                  <ul className="space-y-1 text-[0.9375rem]">
-                    {res.highlights.map((h) => (
-                      <li key={h} className="flex gap-2">
-                        <Check className="mt-1 size-4 shrink-0 text-steel" aria-hidden />
-                        {h}
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-                {res.adjustments.length ? (
-                  <ul className="space-y-1 text-[0.9375rem]">
-                    {res.adjustments.map((h) => (
-                      <li key={h} className="flex gap-2">
-                        <span className="ml-[5px] mr-[5px] mt-2 size-1.5 shrink-0 rounded-full bg-iron" aria-hidden />
-                        {h}
-                      </li>
-                    ))}
-                  </ul>
+              {/* Sem nota nem cor de problema (U3 R11/R13): resumo e números em iron/steel. Sem alimento lido, sem totais. */}
+              <div data-area="dieta-numeros" className="min-w-0">
+                <p ref={resumoRef} tabIndex={-1} className="font-semibold">
+                  {res.summary}
+                </p>
+                {res.meals.length ? (
+                  <>
+                    <p className="num text-sm text-steel">
+                      {int(res.totals.kcal)} de {int(targets.kcal)} kcal{res.parcial ? " (parcial)" : ""} · proteína {int(res.totals.proteinG)} de {int(targets.proteinG)} g
+                    </p>
+                    <p className="num text-sm text-steel">
+                      carboidrato {int(res.totals.carbsG)} g · gordura {int(res.totals.fatG)} g
+                    </p>
+                  </>
                 ) : null}
               </div>
+              {res.unknown.length ? (
+                <Alert tone="warn">
+                  <p>{res.unknown.length === 1 ? "Não reconheci este trecho:" : `Não reconheci estes ${res.unknown.length} trechos:`}</p>
+                  <ul className="mt-1">
+                    {res.unknown.map((u, i) => (
+                      <li key={`${i}:${u}`} className="flex flex-wrap items-center justify-between gap-x-3">
+                        <strong className="min-w-0 [overflow-wrap:anywhere]">{u}</strong>
+                        <Button id={naoContarId(i)} variant="ghost" size="sm" className="-mr-2" aria-label={`Não contar “${u}”`} onClick={() => naoContar(i)}>
+                          Não contar
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-1 text-sm">Corrija no texto acima, com a quantidade e o nome do alimento, e analise de novo. Se um trecho não conta, toque em “Não contar”.</p>
+                </Alert>
+              ) : null}
               {recognized.length ? (
-                <details className="rounded-[6px] border border-rule">
-                  <summary className="flex min-h-11 cursor-pointer items-center px-3 text-sm font-semibold">O que foi reconhecido</summary>
-                  <div className="space-y-2 border-t border-rule px-3 py-2">
+                <section data-area="dieta-numeros" aria-labelledby={`${idBase}-itens`} className="rounded-[6px] border border-rule">
+                  <div className="border-b border-rule px-3 py-2">
+                    <h3 id={`${idBase}-itens`} className="text-sm font-bold">
+                      O que eu li
+                    </h3>
+                    <p className="text-xs text-steel">Corrija a quantidade ou remova um item: o total é refeito na hora.</p>
+                  </div>
+                  <div className="divide-y divide-rule">
                     {recognized.map((m) => (
-                      <div key={m.uid}>
+                      <div key={m.uid} className="px-3 pt-2">
                         <p className="text-sm font-bold">{m.name}</p>
-                        <ul className="num text-sm text-steel">
+                        <ul className="divide-y divide-rule">
                           {m.items.map((i) => (
-                            <li key={i.uid}>
-                              {i.name} · {int(i.grams)} g · {int(i.kcal)} kcal
-                            </li>
+                            <ItemLido
+                              key={i.uid}
+                              item={i}
+                              leitura={res.leitura?.[i.uid]}
+                              inputId={qtdId(i.uid)}
+                              onGrams={(g) => revisar(editarItem(res, i.uid, g), "Quantidade alterada.", 800)}
+                              onRemove={() => remover(i.uid)}
+                              onConferido={(g, feito) => conferido(i.uid, g, feito)}
+                            />
                           ))}
                         </ul>
                       </div>
                     ))}
                   </div>
-                </details>
+                </section>
               ) : null}
-              {res.unknown.length ? (
-                <Alert tone="warn">
-                  Não reconheci: <strong>{res.unknown.join("; ")}</strong>. Tente com a quantidade e o nome do alimento, ou crie o alimento ao montar o cardápio.
-                </Alert>
+              {dicasOcultas ? (
+                <p className="text-sm text-steel">Totais refeitos com a sua correção. As dicas da IA eram da leitura anterior e foram tiradas.</p>
+              ) : res.highlights.length || res.adjustments.length ? (
+                <div data-area="dieta-numeros" className="space-y-1">
+                  {res.highlights.length ? (
+                    <ul className="space-y-1 text-[0.9375rem]">
+                      {res.highlights.map((h) => (
+                        <li key={h} className="flex gap-2">
+                          <Check className="mt-1 size-4 shrink-0 text-steel" aria-hidden />
+                          {h}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {res.adjustments.length ? (
+                    <ul className="space-y-1 text-[0.9375rem]">
+                      {res.adjustments.map((h) => (
+                        <li key={h} className="flex gap-2">
+                          <span className="ml-[5px] mr-[5px] mt-2 size-1.5 shrink-0 rounded-full bg-iron" aria-hidden />
+                          {h}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
               ) : null}
               {recognized.length && useLabel ? (
-                <Button variant="secondary" size="sm" onClick={() => onUse(recognized)}>
-                  {useLabel}
-                </Button>
+                <div className="space-y-1">
+                  {res.conferir ? (
+                    <p className="text-sm text-steel">
+                      {res.conferir === 1 ? "1 item ainda está para conferir: ele entra no cardápio com a quantidade de agora." : `${res.conferir} itens ainda estão para conferir: eles entram no cardápio com a quantidade de agora.`}
+                    </p>
+                  ) : null}
+                  <Button variant="secondary" size="sm" onClick={() => onUse(recognized)}>
+                    {useLabel}
+                  </Button>
+                </div>
               ) : null}
             </div>
           ) : null}
         </>
       ) : null}
     </Panel>
+  );
+}
+
+const fmtG = (v: number) => (Math.round(v * 10) / 10).toLocaleString("pt-BR");
+
+/**
+ * Um item lido, na revisão (R3-5): nome, quantidade editável (g, ou ml quando 1 ml ≈ 1 g), remover, e o que a leitura
+ * precisa mostrar: a aproximação ("você escreveu…"), a conversão de ml e o "Confira" com as opções ou "Está certo".
+ */
+export function ItemLido({ item, leitura, inputId, onGrams, onRemove, onConferido }: { item: DietItem; leitura?: LeituraItem; inputId: string; onGrams: (g: number) => void; onRemove: () => void; onConferido: (g: number, feito: string) => void }) {
+  const unit = leitura?.medida === "ml" ? "ml" : "g";
+  return (
+    <li className="py-2">
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1 pt-0.5">
+          <p className="font-semibold leading-snug">{item.name}</p>
+          <p className="num text-sm text-steel">
+            {int(item.kcal)} kcal · {fmtG(item.proteinG)} g de proteína
+          </p>
+        </div>
+        <GramsInput id={inputId} value={item.grams} unit={unit} max={3000} label={`Quantidade de ${item.name}, em ${unit === "ml" ? "ml" : "gramas"}`} onChange={onGrams} />
+        <IconButton label={`Remover ${item.name}`} onClick={onRemove} className="-mr-2">
+          <Trash2 className="size-4" aria-hidden />
+        </IconButton>
+      </div>
+      {leitura?.aproximado && leitura.entrada ? <p className="mt-1 text-sm text-steel [overflow-wrap:anywhere]">Você escreveu “{leitura.entrada}”. É o mais próximo na base.</p> : null}
+      {leitura?.conversao ? <p className="num mt-1 text-sm text-steel">{leitura.conversao}</p> : null}
+      {leitura?.confira ? (
+        <div className="mt-2 rounded-[6px] border border-warn-line bg-warn-surface px-3 py-2">
+          <p className="flex items-start gap-1.5 text-sm">
+            <CircleAlert className="mt-0.5 size-4 shrink-0 text-warn-ink" aria-hidden />
+            <span className="min-w-0">
+              <strong>Confira:</strong> {leitura.confira}
+            </span>
+          </p>
+          <div role="group" aria-label={`Conferir ${item.name}`} className="mt-2 flex flex-wrap gap-2">
+            {leitura.opcoes?.length ? (
+              leitura.opcoes.map((o) => (
+                <button
+                  key={o.rotulo}
+                  type="button"
+                  onClick={() => onConferido(o.grams, "Quantidade escolhida.")}
+                  className="num min-h-11 rounded-[var(--radius-ficha)] border border-rule-strong bg-paper px-3 py-2 text-left text-sm font-semibold hover:border-iron"
+                >
+                  {o.rotulo}
+                </button>
+              ))
+            ) : (
+              <Button variant="secondary" size="sm" icon={<Check className="size-4" aria-hidden />} onClick={() => onConferido(item.grams, "Item conferido.")}>
+                Está certo
+              </Button>
+            )}
+          </div>
+        </div>
+      ) : null}
+    </li>
   );
 }

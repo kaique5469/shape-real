@@ -98,6 +98,8 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
   const [openedAt] = useState(() => Date.now());
   const ready = useRef(false);
   const [notFound, setNotFound] = useState(false);
+  /** Anúncio (só leitor de tela) quando Mín e Máx trocam de lugar ao sair do campo. */
+  const [faixaAviso, setFaixaAviso] = useState<string | null>(null);
   const autoPrint = useRef(false);
   const saveBar = useRef<HTMLDivElement>(null);
   const barAction = useRef<HTMLDivElement>(null);
@@ -302,6 +304,15 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
   const patchDay = (patch: Partial<WorkoutDay>) => changeDays((days) => days.map((x, i) => (i === index ? { ...x, ...patch } : x)));
   const changeList = (fn: (ex: PlannedExercise[]) => PlannedExercise[]) => changeDays((days) => days.map((x, i) => (i === index ? { ...x, exercises: fn(x.exercises) } : x)));
   const changeEx = (u: string, patch: Partial<PlannedExercise>) => changeList((list) => list.map((e) => (e.uid === u ? { ...e, ...patch } : e)));
+
+  /** Mín e Máx (R3-6): nunca grava faixa invertida; ao sair do campo, troca na hora e avisa o leitor de tela. */
+  function editarFaixa(e: PlannedExercise, campo: "min" | "max", v: number, final: boolean) {
+    const next = faixaAoEditar(campo, v, e, final);
+    if (!next) return;
+    changeEx(e.uid, next);
+    const trocou = final && (campo === "min" ? v > e.repsMax : v < e.repsMin);
+    setFaixaAviso(trocou ? `Faixa posta em ordem: de ${next.repsMin} a ${next.repsMax}.` : null);
+  }
 
   function pick(e: Exercise) {
     const scheme = repScheme(program!.goal, program!.level, e, program!.system, false);
@@ -560,6 +571,9 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
         <p className="num text-sm text-steel">
           {d.exercises.length ? `${d.exercises.length} ${d.exercises.length === 1 ? "exercício" : "exercícios"} · cerca de ${estimateDayMinutes(d)} min` : "Nenhum exercício neste treino ainda."}
         </p>
+        <p role="status" className="sr-only">
+          {faixaAviso ?? ""}
+        </p>
 
         {d.exercises.length ? (
           <ol className="space-y-2">
@@ -599,8 +613,8 @@ export function ProgramEditor({ programId, onSaved, student, back }: Props) {
                           <NumField label={labels.single} value={e.repsMax} min={1} max={labels.hi} onCommit={(v) => changeEx(e.uid, { repsMin: v ?? 1, repsMax: v ?? 1 })} className="col-span-2" />
                         ) : (
                           <>
-                            <NumField label={labels.min} value={e.repsMin} min={1} max={labels.hi} onCommit={(v, final) => changeEx(e.uid, final ? { repsMin: v ?? 1, repsMax: Math.max(e.repsMax, v ?? 1) } : { repsMin: v ?? 1 })} />
-                            <NumField label={labels.max} value={e.repsMax} min={1} max={labels.hi} onCommit={(v, final) => changeEx(e.uid, final ? { repsMax: v ?? 1, repsMin: Math.min(e.repsMin, v ?? 1) } : { repsMax: v ?? 1 })} />
+                            <NumField label={labels.min} value={e.repsMin} min={1} max={labels.hi} onCommit={(v, final) => editarFaixa(e, "min", v ?? 1, final)} />
+                            <NumField label={labels.max} value={e.repsMax} min={1} max={labels.hi} onCommit={(v, final) => editarFaixa(e, "max", v ?? 1, final)} />
                           </>
                         )}
                         {unit !== "min" ? <NumField label="Carga (kg)" value={e.loadKg ?? null} min={0} max={999} decimal allowEmpty onCommit={(v) => changeEx(e.uid, { loadKg: v || null })} /> : null}
@@ -887,6 +901,19 @@ function swap<T>(list: T[], a: number, b: number): T[] {
   const copy = [...list];
   [copy[a], copy[b]] = [copy[b]!, copy[a]!];
   return copy;
+}
+
+/**
+ * Faixa de repetições (ou segundos) ao editar Mín ou Máx (R3-6). Enquanto digita, só grava o que mantém a faixa em
+ * ordem: "12–8" nunca aparece no resumo do exercício. Ao sair do campo (`final`), uma faixa invertida troca na hora
+ * (Mín 12 com Máx 8 vira 8–12), como o link já faz com ficha antiga. null = nada a gravar agora.
+ */
+export function faixaAoEditar(campo: "min" | "max", v: number, atual: { repsMin: number; repsMax: number }, final: boolean): { repsMin: number; repsMax: number } | null {
+  const outro = campo === "min" ? atual.repsMax : atual.repsMin;
+  if (final) return { repsMin: Math.min(v, outro), repsMax: Math.max(v, outro) };
+  const invertida = campo === "min" ? v > outro : v < outro;
+  if (invertida) return null;
+  return campo === "min" ? { repsMin: v, repsMax: atual.repsMax } : { repsMin: atual.repsMin, repsMax: v };
 }
 
 const show = (v: number | null) => (v === null ? "" : String(v).replace(".", ","));

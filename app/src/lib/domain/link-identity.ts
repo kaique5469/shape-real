@@ -1,9 +1,11 @@
 import type { FichaPacket, TreinosPacket } from "./transfer";
 import type { Profile } from "./types";
+import { ehContatoDePersonal, ehPerfilDeTesteOuExemplo } from "./perfis-de-entrada";
 
 /**
- * Rodada 3 (R3-1): identidade nos links. PURO: só tipos importados (spec-m §5; entra em /abrir, /receber, /entrar e
- * app-context sem peso). Nome nunca é identidade: nada aqui compara `name` (só o usa para escrever o texto).
+ * Rodada 3 (R3-1): identidade nos links. PURO: só tipos importados, mais perfis-de-entrada.ts, também puro (spec-m §5;
+ * entra em /abrir, /receber e /entrar sem peso; o app-context importa só perfis-de-entrada.ts). Nome nunca é
+ * identidade: nada aqui compara `name` (só o usa para escrever o texto).
  *
  *  - `fichaLinkMatch`: como o link de ficha se relaciona com o perfil aberto (o /abrir decide a tela por ele, e
  *    `importFicha` decide o que pode gravar);
@@ -48,38 +50,20 @@ export function destinoPadrao(match: FichaLinkMatch): "update" | "new" | null {
   return match === "novo" ? "new" : match === "mesmo" ? "update" : null;
 }
 
+/**
+ * O perfil de aluno deste aparelho que É o do link, pelos ids (`remoteCoach.id` = `coach.id` e `remoteCoach.studentRef`
+ * = `student.ref`), nunca pelo nome. Só perfil de entrada de aluno (sem teste ou exemplo, sem `managedBy`) e só quando
+ * há exatamente um; senão, null. O /abrir usa quando o perfil aberto não é esse (ou não há perfil aberto, depois de
+ * "Sair"): o link atualiza o perfil que já existe ("mesmo") em vez de criar um segundo perfil da mesma pessoa.
+ */
+export function perfilDoLinkNoAparelho(packet: Pick<FichaPacket, "coach" | "student">, perfis: readonly Profile[]): Profile | null {
+  const achados = perfis.filter((p) => p.role === "athlete" && !p.managedBy && !ehPerfilDeTesteOuExemplo(p) && Boolean(p.remoteCoach?.studentRef) && p.remoteCoach?.id === packet.coach.id && p.remoteCoach?.studentRef === packet.student.ref);
+  return achados.length === 1 ? achados[0]! : null;
+}
+
 // ---- perfis de entrada -----------------------------------------------------------------------------------------
-/**
- * Perfis do modo teste (/testar: "teste-personal", "teste-solo", "teste-ex-*") e da demonstração ("demo-*"), e os
- * alunos de exemplo (`sample`). Ids literais: importar data/demo.ts quebraria a pureza (há teste que confere com as
- * constantes de lá).
- */
-const PREFIXOS_DE_TESTE = ["teste-", "demo-"] as const;
-export function ehPerfilDeTesteOuExemplo(p: Pick<Profile, "id" | "sample">): boolean {
-  return p.sample === true || PREFIXOS_DE_TESTE.some((x) => p.id.startsWith(x));
-}
-
-/**
- * O contato do personal criado pelo link no celular do aluno: perfil de personal que é `remoteCoach.id` de um aluno
- * deste aparelho sem `managedBy` e que não tem nenhum aluno com `managedBy` igual ao id dele. Sem campo novo (contatos
- * antigos não têm marca): a regra só olha os perfis.
- */
-export function ehContatoDePersonal(p: Pick<Profile, "id" | "role">, perfis: readonly Profile[]): boolean {
-  if (p.role !== "coach") return false;
-  const apontado = perfis.some((a) => a.role === "athlete" && !a.managedBy && a.id !== p.id && a.remoteCoach?.id === p.id);
-  if (!apontado) return false;
-  return !perfis.some((a) => a.role === "athlete" && a.managedBy === p.id);
-}
-
-/**
- * Perfis de entrada deste aparelho: os que alguém usa como "eu" ("Perfis neste aparelho" em /entrar). Ficam fora:
- * perfil de teste e de exemplo; aluno com `managedBy` (registro de um aluno do personal: entrar nele seria o "Ver como"
- * sem o "Voltar ao painel"); e o contato do personal (`ehContatoDePersonal`: entrar nele abriria um painel de personal
- * falso, com o aluno dentro). Todo o resto entra, inclusive o personal sem alunos. A ordem é a de `perfis`.
- */
-export function perfisDeEntrada(perfis: readonly Profile[]): Profile[] {
-  return perfis.filter((p) => !ehPerfilDeTesteOuExemplo(p) && !(p.role === "athlete" && p.managedBy) && !ehContatoDePersonal(p, perfis));
-}
+// Moram em perfis-de-entrada.ts (o app-context só precisa delas); reexportadas aqui para os importadores de sempre.
+export { criadoresDeConteudo, ehContatoDePersonal, ehPerfilDeTesteOuExemplo, perfisDeEntrada } from "./perfis-de-entrada";
 
 /**
  * O que um link (ou uma cópia de segurança) pode fazer com o personal que vem nele, avaliado ANTES da primeira gravação
@@ -92,10 +76,10 @@ export function perfisDeEntrada(perfis: readonly Profile[]): Profile[] {
  * Perfis de teste e de demonstração com esse id também ficam ("manter"): não são contato.
  */
 export type ContatoDoPersonal = "criar" | "atualizar" | "manter";
-export function contatoDoPersonal(coachId: string, perfis: readonly Profile[]): ContatoDoPersonal {
+export function contatoDoPersonal(coachId: string, perfis: readonly Profile[], criadores?: ReadonlySet<string>): ContatoDoPersonal {
   const p = perfis.find((x) => x.id === coachId);
   if (!p) return "criar";
-  return ehContatoDePersonal(p, perfis) ? "atualizar" : "manter";
+  return ehContatoDePersonal(p, perfis, criadores) ? "atualizar" : "manter";
 }
 
 /** "Personal" ou "Aluno" (a lista "Perfis neste aparelho" não mostra nenhum dado de saúde). */
@@ -117,6 +101,24 @@ export function ultimoUso(datas: readonly (string | null | undefined)[]): string
     if (!melhor || t > melhor.t) melhor = { iso: d, t };
   }
   return melhor?.iso ?? null;
+}
+
+/** "Último uso em 25/11" (no fuso do aparelho); com o ano quando não é o de `agora`. "" com data ilegível. */
+export function textoUltimoUso(iso: string, agora: Date = new Date()): string {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return "";
+  const dia = `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
+  return `Último uso em ${d.getFullYear() === agora.getFullYear() ? dia : `${dia}/${d.getFullYear()}`}`;
+}
+
+/**
+ * Botão de "Perfis neste aparelho": "Continuar como Ana"; com o nome inteiro quando outro perfil da lista tem o mesmo
+ * primeiro nome (o nome não identifica ninguém, mas o botão precisa ser distinguível na tela e no leitor de tela).
+ */
+export function rotuloContinuarComo(p: Pick<Profile, "id" | "name">, lista: readonly Pick<Profile, "id" | "name">[]): string {
+  const meu = primeiro(p.name).toLocaleLowerCase("pt-BR");
+  const repete = lista.some((o) => o.id !== p.id && primeiro(o.name).toLocaleLowerCase("pt-BR") === meu);
+  return `Continuar como ${repete ? p.name.trim().replace(/\s+/g, " ") : primeiro(p.name)}`;
 }
 
 /** Perfis de entrada do mais recente para o mais antigo (`ultimoUso`); sem data, no fim, na ordem em que vieram. */
@@ -161,8 +163,7 @@ export interface TelaDoLink {
  * antes). `perfil` = o perfil aberto; `aluno` e `personal` = os nomes do link.
  */
 export function telaDoLink(match: FichaLinkMatch, ctx: { perfil: Pick<Profile, "name" | "remoteCoach">; aluno: string; personal: string }): TelaDoLink | null {
-  const perfil = primeiro(ctx.perfil.name);
-  const aluno = primeiro(ctx.aluno);
+  const [perfil, aluno] = nomesDistinguiveis(ctx.perfil.name, ctx.aluno);
   const personal = ctx.personal.trim();
   const destino = `Este link é para ${aluno}, de ${personal}.`;
   const voltar = { acao: "voltar" as const, rotulo: "Voltar" };
@@ -177,7 +178,8 @@ export function telaDoLink(match: FichaLinkMatch, ctx: { perfil: Pick<Profile, "
     case "outro_aluno":
       return {
         titulo: "Este link é de outro aluno",
-        linhas: [`Este celular está com o perfil de ${perfil}. ${destino}`, `O perfil de ${perfil} fica como está.`],
+        // Homônimos: o mesmo nome não é a mesma pessoa (o link traz outro cadastro do personal).
+        linhas: [`Este celular está com o perfil de ${perfil}. ${destino}`, ...(perfil === aluno ? [`Mesmo nome, outro cadastro de ${personal}.`] : []), `O perfil de ${perfil} fica como está.`],
         acoes: [{ acao: "criar", rotulo: `Criar perfil separado para ${aluno}` }, voltar],
       };
     case "outro_personal": {
@@ -191,6 +193,38 @@ export function telaDoLink(match: FichaLinkMatch, ctx: { perfil: Pick<Profile, "
     default:
       return null;
   }
+}
+
+/**
+ * Primeiros nomes para o texto; os nomes inteiros quando os primeiros coincidem ("Ana Souza" e "Ana Lima"), senão a
+ * frase "perfil de Ana… link para Ana" não distingue as duas pessoas.
+ */
+function nomesDistinguiveis(a: string, b: string): [string, string] {
+  const pa = primeiro(a);
+  const pb = primeiro(b);
+  if (pa.toLocaleLowerCase("pt-BR") !== pb.toLocaleLowerCase("pt-BR")) return [pa, pb];
+  return [a.trim().replace(/\s+/g, " "), b.trim().replace(/\s+/g, " ")];
+}
+
+/**
+ * /abrir com outro perfil aberto quando o perfil do link já existe neste celular (`perfilDoLinkNoAparelho`, pelos ids):
+ * a ação é atualizar esse perfil, nunca criar um segundo perfil da mesma pessoa. O perfil aberto fica como está.
+ */
+export function telaDoLinkDeOutroPerfil(ctx: { perfil: Pick<Profile, "name">; dono: Pick<Profile, "name">; personal: string }): TelaDoLink {
+  const [perfil, dono] = nomesDistinguiveis(ctx.perfil.name, ctx.dono.name);
+  return {
+    titulo: `Este link é do perfil de ${dono}`,
+    linhas: [`Este celular está com o perfil de ${perfil}. O link é para ${dono}, de ${ctx.personal.trim()}, que já tem perfil neste celular.`, `O perfil de ${perfil} fica como está.`],
+    acoes: [
+      { acao: "atualizar", rotulo: `Atualizar o perfil de ${dono}` },
+      { acao: "voltar", rotulo: "Voltar" },
+    ],
+  };
+}
+
+/** /abrir sem perfil aberto (depois de "Sair"), com o perfil do link neste celular: quem vai ser atualizado. */
+export function textoPerfilDoLink(dono: Pick<Profile, "name">): string {
+  return `Este link é do perfil de ${dono.name.trim().replace(/\s+/g, " ")}, que já está neste celular.`;
 }
 
 /** Explicação logo abaixo de "Trocar de personal neste perfil" (consentimento explícito; o histórico fica). */

@@ -33,7 +33,7 @@ const FAQ = [
   },
   {
     q: "Meus dados de saúde ficam seguros?",
-    a: "Medidas, fotos e dieta são dados sensíveis pela LGPD. No beta, tudo fica guardado no seu próprio celular, sem cadastro: só circula o que você mesmo envia pelo WhatsApp (e, no teste com IA por convite, o pedido feito à IA). Você pode exportar um backup, restaurar em outro aparelho ou apagar tudo quando quiser.",
+    a: "Medidas, fotos e dieta são dados sensíveis pela LGPD. No beta, tudo fica guardado no seu próprio celular, sem cadastro: só circula o que você mesmo envia pelo WhatsApp (e, no teste com IA por convite, o pedido feito à IA). Você pode exportar um backup, restaurar em outro aparelho ou apagar tudo deste aparelho quando quiser (o que você já mandou pelo WhatsApp fica com quem recebeu).",
   },
   {
     q: "Funciona no celular na academia?",
@@ -167,13 +167,13 @@ export default function Landing() {
             <div>
               <h2 className="plate-type text-[2rem] leading-tight text-balance sm:text-[2.6rem]">Personal: todos os alunos numa planilha viva.</h2>
               <p className="mt-4 text-[1.0625rem] text-chalk/70">
-                Pare de mandar ficha em PDF e cobrar foto de carga pelo WhatsApp. Envie ficha e dieta pelo app e veja quem treinou, quanto levantou e quem sumiu.
+                Envie ficha e dieta pelo app. Depois do treino, o aluno devolve o resultado pelo WhatsApp e você vê quem treinou, quanto levantou e quem está sem dar notícias.
               </p>
               <ul className="mt-7 space-y-3.5 text-[0.9375rem]">
                 {[
                   [Send, "Ficha e dieta chegam ao aluno por link no WhatsApp"],
                   [ClipboardList, "Ficha montada por regras que você entende e edita — você revisa e envia"],
-                  [Users, "Painel de aderência com alerta de aluno parado"],
+                  [Users, "Painel com os treinos devolvidos e alerta de quem está sem notícias"],
                   [ShieldCheck, "Alunos usam recursos Pro sem pagar"],
                 ].map(([Icon, t]) => {
                   const I = Icon as typeof Send;

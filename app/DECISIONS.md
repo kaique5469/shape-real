@@ -1059,3 +1059,300 @@ afiliados e anúncios; esconder o menu em paisagem (E8). As decisões que são d
 a convenção do volume (R3-6 B); a mudança da promessa do diálogo de restaurar (R3-6 A.4) e a frase que substitui a de
 "Remover aluno" + restaurar (R3-13); a §6.2 da spec da anamnese e o D-20 (R3-11); a regra única da meta (R3-16); o link
 do blog fora e a correção da pendência do IP (R3-9); e o peso medido do R3-19 em / e /abrir.
+
+## 2026-11-27 — Rodada 3, costura: pontas ligadas e desvios das trilhas
+
+**Pontas ligadas na costura.**
+- **Hoje** (H + L + S): banner forte só com `toSend` e linha dos copiados com [Já enviei] [Copiar de novo] [Dispensar]
+  (hook do L, tela do H); card "Treino B registrado hoje · 1 de 24 séries" pelo `plannedSets` (`completude`); "Sua
+  semana" com "2 de 3" e, embaixo, "1 parcial" (`parciaisNaSemana`, session-time.ts), só com meta e só com 1 ou mais.
+  Sem meta, o card mostra o volume e nenhum rótulo de parcial.
+- **/alunos**: a linha do aluno ganha "· 1 parcial" depois de "2 de 4 na semana" (`StudentSummary.partialWeek`,
+  calculado em `summarizeStudent` pela mesma regra; vale para o local e, quando existir, para a nuvem).
+- **Duração**: nenhum leitor faz `finishedAt − startedAt` fora de `activeMinutes` (session-time.ts). Hoje e /alunos
+  não mostram duração de treino (o "cerca de N min" do Hoje é a estimativa da ficha, não do treino feito).
+- **Volume**: nenhum leitor usa `s.volumeKg` (Hoje por `volumeDaSemana`, relatório, CSV, página do aluno, Histórico,
+  Evolução e sessão por `volumeDaSessao`/`volumeElegivel`; demo.ts grava o cache por `sessionVolume`, que delega).
+  `sameSession` passa a ignorar `volumeKg`: o cache recalculado na chegada pelo link não faz um treino igual virar
+  "atualizado" no /receber nem "diferente" no plano de restauração. Com isso o pedido do L (recalcular o `volumeKg` em
+  `importTreinos`) já está coberto: `parsePacket` recalcula e a comparação ignora o cache.
+- **Dor no treino recebido** (S): a prévia do /receber mostra "Dor marcada: {exercícios}" em cada treino com dor, com
+  ícone (como a página do aluno e o Histórico).
+- **Conta** (L + H): no modo local, o "Sair" explica "Seus dados continuam neste aparelho; para voltar, toque no seu
+  nome na entrada." (`aria-describedby`) e leva a /entrar ("Perfis neste aparelho"); na nuvem, segue para /. A
+  autorização de saúde diz "Fica neste celular; só vai para o personal o que você enviar." no modo local (R3-9 item
+  5); na nuvem fica o texto de antes ("Só eu e o personal que eu aceitar temos acesso."), que só lá é verdadeiro.
+  "Apagar dados deste aparelho" também tira `sr:hoje-retomar:*` (o "Dispensar" do convite de retomar).
+- **Frase curta das cópias** (R3-9 item 4): `TEXTO_COPIAS_ANTIGAS` ("Cópias de segurança feitas antes continuam com
+  esses dados. Apague os arquivos se não precisar deles.") no fim de `TEXTO_REVOGAR`, do diálogo "Apagar respostas" e
+  do "Remover {nome}?" (só no ramo de remover; o "Desvincular" da nuvem não). NÃO entra no diálogo de restaurar. A
+  spec da anamnese (§11.2) dizia `TEXTO_REVOGAR` literal: o literal continua, com a frase depois.
+- **Aviso do link** (R3-17) no SendDietPanel e no SendFichaLink (save-summary.tsx, fora da barra compacta), só com o
+  envio liberado: sem ficha nem cardápio, ou com alteração por salvar, o aviso falaria de outro link. Carona do R3-3 no
+  SendDietPanel: a cópia que falha mostra o mesmo texto do CopyButton e não registra o toque.
+- **Analytics**: a exceção `workout_completed.minutes` saiu do teste do inventário (a sessão já manda
+  `minutos_ativos`). Nenhuma chave nova em `track()` nas trilhas.
+- **Comentário de `semAlertasTexto`** (anamnese-types.ts) descreve os três casos do R3-11.
+- **Meta semanal: continua contando sessões** (Hoje, /alunos e relatório, sem mudança). O adendo recomenda dias
+  distintos; trocar muda os três juntos (`sessionsThisWeek` e report.ts) e o "150%" do repro só aparece com dois
+  treinos no mesmo dia. Fica para o dono decidir.
+- Peso: `summarizeStudent` (repository.ts, carregado pelo AppProvider em todas as rotas) passou a importar
+  session-time.ts; /entrar, /abrir, /receber e /questionario já o tinham pelo transfer.ts. ESTIMATIVA para / e /testar:
+  menos de 0,5 KB gzip (só `parciaisNaSemana` e `completude`). A integração mede.
+
+**Trilha L (R3-1, R3-6 A, R3-13, R3-3, R3-17).**
+1. "Manter" o personal como perfil de entrada também tira o vínculo e os exercícios próprios do link, não só o
+   contato. Sem isso o aluno do link entraria no painel do personal, e a próxima cópia o tornaria aluno dele.
+2. `importTreinos` pede `confirmedOther` também com link de outro personal (o adendo só pede o aviso na tela; a camada
+   garante que a tela o mostrou). Mesmo personal e aluno do link: nada muda.
+3. Contato do personal = regra do adendo + "criador de conteúdo" (quem criou ficha ou dieta de aluno sem
+   `managedBy`), sem campo novo: depois de "Trocar de personal", o contato antigo não aparece como perfil de entrada.
+4. "Perfis neste aparelho" fica em transfer-client.ts (não pesa no app-context); no app-context só `continueAsLocal` e
+   `perfisDeEntrada`.
+5. A restauração lê `sr:v1:{programs,sessions,metrics,diets}` direto, uma vez (`colecaoLocal`): o repositório não lê
+   por id entre perfis.
+6. R3-13 substitui a frase "Aluno inexistente no aparelho continua recebendo a cópia como veio" (entrada de 27/11,
+   correção da revisão da rodada 2): sem perfil no aparelho, a cópia passa pelo mesmo corte das rodadas marcadas ou
+   respondidas antes da marca mais nova. Sem marca nenhuma, a saúde volta: é o limite do modo local.
+7. Plano de restauração: muda a promessa do diálogo (as linhas do plano no lugar de "os mesmos registros são
+   substituídos"); treino diferente dos dois lados fica o do aparelho; medida diferente entra a da cópia; ficha e
+   dieta, a mais nova pelo `updatedAt` (empate com conteúdo diferente: a cópia, como antes; data ilegível nunca vence);
+   a ficha ativa continua a do aparelho. Relógio mexido para trás pode fazer uma edição parecer mais velha.
+8. R3-3: copiar de novo depois de "Já enviei" volta a "preparado" (vale o fato mais novo). Dispensar vale só para os
+   toques anteriores.
+9. R3-17: o aviso cita peso, altura e limitações, não sexo nem ano de nascimento, para caber a 360 px.
+10. /abrir: o perfil do link que já está no celular é atualizado, nunca duplicado (busca só por `remoteCoach.id` e
+    `studentRef`, só perfil de entrada, só com exatamente um). Sem perfil aberto, entra como "mesmo"; com outro aberto,
+    "Este link é do perfil de {dono}" com "Atualizar o perfil de {dono}" e "Voltar".
+11. Homônimos: com o mesmo primeiro nome, as telas usam o nome inteiro; com nomes iguais, "Mesmo nome, outro cadastro
+    de {personal}."
+12. "Ver como" no /abrir: "Voltar ao painel" leva a /alunos; no /receber o personal fica na página.
+13. Restaurar que falha mantém o diálogo aberto com o erro e "Tentar de novo"; o perfil com rodadas omitidas só abre
+    em "Continuar" (o aviso do R3-13 sumia no redirecionamento).
+14. CopyButton vira um bloco (`flex-1 flex-col`): o botão e a linha de falha juntos em qualquer fila.
+15. /receber: o aviso de outro personal vem antes da escolha; o botão de confirmação usa o nome inteiro do aluno.
+
+**Trilha S (R3-7, R3-4, R3-10, R3-6 B, R3-14, R3-15, R3-16).**
+- R3-10: as duas soluções. `resumeSaved` usa `history.replaceState` (sem navegação sem sinal) e grava `resumedAt` no
+  rascunho; a regra das 6 h (`decidirRascunho`) conta da retomada. Só uma delas não cobre "recarregar continua no
+  treino" com rascunho antigo, nem depende do service worker no recarregamento forçado.
+- R3-4: um limiar só, 30 min (`PAUSA_LONGA_MS`): intervalo de até 30 min conta inteiro; acima disso sai inteiro, com
+  "Você ficou {X} fora. Esse tempo não entra no treino." Minutos de cardio marcados justificam o intervalo. Relógio que
+  volta não soma. Rascunho antigo sem relógio: sem `activeMin`, vale a duração registrada até 180 min, rotulada
+  "início ao fim". O esboço da spec (cortar acima de 20 min para 20) criava um degrau e contradizia o aviso.
+- Completude: `plannedSets` = séries no treino ao finalizar (inclui as acrescentadas). "{feitas} de {planejadas}"
+  sempre que menor; o rótulo "parcial" só abaixo de 50% (`LIMIAR_PARCIAL`).
+- Volume, convenção única: carga × reps só em série feita contada em reps (`unitOf`); assistida, tempo e peso
+  corporal sem carga dão 0; unilateral não dobra. `volumeKg` é cache, recalculado no Finalizar e na chegada pelo link.
+- Dor: treino sem nenhuma série feita continua sem salvar (a dor de quem parou o treino inteiro não fica). Trocar o
+  exercício tira o "Senti dor" dele. Desmarcar no resumo tira do que é gravado e enviado o exercício que só estava
+  lá pela dor (a tela continua mostrando). "Senti dor" é caixa opcional, nunca obrigatória, nunca no analytics.
+- Campos novos do link tolerantes (`.optional().catch(undefined)`): valor malformado some e o link nunca é recusado.
+  `TRANSFER_VERSION` continua 1.
+- Correção dos minutos depois de salvar (a spec diz antes): o treino já é gravado no Finalizar; a correção grava de
+  novo e marca "(ajustado)", como sentimento e anotação.
+- Relógio do cabeçalho pelo tempo ativo (sem isso o treino de ontem retomado mostraria "1440:00"); para de crescer em
+  30 min sem atividade; rascunho antigo mostra a duração só até 180 min.
+- Aviso de pausa no rodapé fixo (a retomada rola até o exercício e esconderia um aviso no topo).
+- R3-14: `cell()` põe apóstrofo em texto que começa com `=`, `+`, `-`, `@` (também depois de espaços), TAB ou CR;
+  números nunca. R3-15: no modo local, "Treinos recebidos", "Frequência pelos treinos recebidos" e "N de P treinos
+  combinados recebidos" no relatório e no texto do WhatsApp. R3-16: meta por `weeklyGoal` na página do aluno e
+  `reportGoal` no relatório; "de {meta}" só em "Esta semana" e a nota "Combinados pela frequência atual: N treinos por
+  semana." (E2-meta-snapshot). E2-relatorio-sem-base: "Nenhum exercício com carga tem dois registros no período para
+  comparar."
+- Os testes de texto pedidos em transfer.test.ts e report.test.ts estão em transfer.r3.test.ts e report.r3.test.ts.
+
+**Trilha N (R3-11, R3-12, R3-5, faixa do R3-6).**
+- R3-11 altera a §6.2 da spec da anamnese e o D-20 (o D-30 continua): com algum alerta azul e nada mais forte, "Há
+  cuidados para revisar nas respostas de DD/MM (veja abaixo). Nenhum deles trava ou limita a ficha. Isso não
+  substitui a avaliação presencial." e ícone `Info` em steel (neutro; o azul é o tom dos cartões logo abaixo). Com
+  A-GESTANTE-OK, "Nenhum deles trava a ficha." (o token ajusta a ficha, "não limita" seria falso). A-PARQ-INCOMPLETO
+  passa a valer fora do junto, sem recusar o pacote.
+- R3-5: medida explícita depois de uma contagem vence a porção padrão; "cada" multiplica, "no total" usa a medida
+  inteira, sem nenhum dos dois o item fica "confira" com as duas leituras (no total parcial entra a menor). ml → g só
+  para `ML_IGUAL_G` (foods.ts), com a conversão visível. Entradas cruas da TACO (`arroz_cru`, `macarrao_cru`,
+  `feijao_cru`); "cru" sem entrada crua fica "confira" (sem o apelido "feijão preto cru", que mudava a ordem da busca).
+  Pacote sem peso = 100 g com "confira"; teto de 3 kg por item com "confira". Corrigida a vírgula decimal ("0,5 kg"
+  dava 3000 g). A unidade original continua sem ser gravada (Depois).
+- Resumo parcial diz "item(ns) não reconhecido(s)", não "linha(s)" (dois trechos podem estar na mesma linha); o pedido
+  varia com o que falta conferir. No total parcial também saem "Distribua a proteína" e "Não encontrei salada".
+- Revisão na Dieta: itens da IA editáveis, e depois da correção as dicas da IA saem com uma linha explicando (o motor
+  não refaz dica de item sem `foodId`). "Não contar" por trecho não lido (decisão explícita da pessoa). "Usar como
+  cardápio" com item a conferir não pede confirmação, só a linha "1 item ainda está para conferir…". Teto de 3000 g na
+  revisão; o editor do cardápio continua com 2000. Região viva "Análise pronta. {resumo}" e, depois de cada correção,
+  "{o que mudou} Total [parcial]: …" (800 ms de espera ao digitar). Foco: remover vai para a quantidade do item
+  seguinte; "Não contar" vai para o próximo "Não contar"; escolher opção ou "Está certo" vai para a quantidade.
+- R3-12: nota nova do cardápio ("Cardápio de referência montado para as suas metas. Para trocar um alimento, edite o
+  item: o total do dia é recalculado."); a frase da água fica até a decisão do dono; dieta já salva não é reescrita.
+- R3-6 (editor): a faixa invertida troca Mín e Máx ao sair do campo (antes igualava) e anuncia "Faixa posta em ordem:
+  de 8 a 12."; fichas antigas salvas invertidas só se ajeitam na primeira edição ou salvamento (`normalizeForSave`).
+- O teste da matriz chama-se nutrition.handoff.test.ts (o adendo dizia nutrition.r3-5.test.ts).
+- Redação final do texto de saúde (frase do cuidado, nota do cardápio, frase da água) fica com o dono.
+
+**Trilha H (R3-9, R3-18, R3-2, R3-8, listStudents).**
+- Link do blog fora (site-chrome.tsx) enquanto a main tiver autoria ou credenciais não comprovadas; volta em 2 linhas
+  se o dono confirmar que o domínio não mostra esse bloco.
+- R3-18: o parágrafo do personal na landing perdeu "Pare de mandar ficha em PDF e cobrar foto de carga pelo WhatsApp."
+  e o "no painel" da redação do adendo. O aceite pede até 4 linhas a 360 px; medido com Archivo 17 px: texto do adendo
+  5 linhas, com a frase do PDF 6, o escolhido 4. O dono pode reescrever.
+- R3-9 item 3: "Discard client IP data" está ligado no PostHog desde 21/11 e o questionário manda `$ip` null; a
+  pendência da costura do questionário (26/11, "ligar 'Discard client IP data'") está desatualizada. Esta entrada
+  corrige; a antiga fica. A frase do IP na política fica. Reconferir no painel do PostHog antes de publicar.
+- R3-9: política em três blocos (aparelho, WhatsApp, nuvem "hoje não disponível"); o aviso "Quem tiver o link consegue
+  ler…" fica uma vez, no bloco do WhatsApp, valendo para todos os links. Termos com "Beta sem cadastro" e "No beta não
+  há cobrança.". Rótulo anual: "2 meses grátis" só quando o anual é exatamente N mensalidades (Personal); senão
+  "economia de R$ X" (Pro, R$ 89,80). O preço não muda (a recomendação ao dono continua: Pro anual R$ 199). Textos da
+  política, dos Termos e da landing feitos na etapa 1 (o texto é o item).
+- R3-2: `NEXT_PUBLIC_BUILD_SHA` (7 caracteres de `VERCEL_GIT_COMMIT_SHA`, ou "local") e `NEXT_PUBLIC_BUILD_AT` pelo
+  `env` do next.config; `GET /api/versao` = `{ sha, at, protocolo, copia }`, no-store, force-dynamic; o formato do sha
+  é conferido de novo em src/lib/versao.ts (arquivo novo: route.ts não exporta funções avulsas e o next.config não
+  importa de src). Troca o teste antigo "nenhum valor de process.env com mais de 8 caracteres" (o `at` é ISO). O
+  rodapé "Versão {sha} · dd/mm · links v{N}" aparece na Conta para todos os perfis, inclusive teste e "Ver como aluno";
+  a página só renderiza no navegador, então o fuso não diverge na hidratação.
+- R3-8: convite de retomar de 7 a 13 dias de calendário (`RETOMAR_APOS_DIAS`); de 14 em diante, o aviso de volta de
+  sempre. "Ficou parcial" só para o último treino, se não for de hoje e tiver menos de 7 dias. Dois treinos no mesmo
+  dia: "2 treinos registrados hoje", sem completude. Sem "Continuar" no card. Com treino registrado hoje, o card
+  "Treino B registrado hoje · 1 de 24 séries" (o título é a própria linha, para não repetir "registrado hoje") toma o
+  lugar do card do próximo treino, que fica recolhido em "Ver o próximo treino" com "Começar o treino C agora"
+  secundário. O "Dispensar" do convite grava `sr:hoje-retomar:{userId}` = id do último treino (fora de `sr:v1` e da
+  cópia; a costura incluiu a chave no "Apagar dados deste aparelho"); treino novo seguido de outra pausa traz o
+  convite de volta.
+- R3-3 no Hoje: falha ao gravar "Já enviei" ou "Dispensar" diz "Não deu para registrar neste aparelho. Tente de novo." e
+  a linha fica; "Dispensar" nunca vira confirmação ("Lembrete dispensado. O treino continua no Histórico.").
+- R3-6: `listStudents` local lê cada coleção uma vez e agrupa por aluno (antes, 3 leituras da coleção inteira por
+  aluno); resultado idêntico (teste de equivalência).
+- Os testes de função pura do R3-8 estão em hooks.r3.test.ts (não em hooks.test.ts).
+
+## 2026-11-27 — Rodada 3, integração: build, links antigos, peso e uma correção de grafo
+
+**Estado.** `npx tsc --noEmit` limpo; `npx vitest run` com 104 arquivos e 2.321 testes verdes (o maior,
+engine.test.ts, leva 25 s; nenhum arquivo perto de 60 s, nada dividido); `npm run build` sem erro, com
+`.env.production.local` só durante o build (token FICTÍCIO do PostHog, para o pacote ficar igual ao de produção) e
+apagado depois. Sem commit nem deploy.
+
+**Emendas conferidas (passo 4 do adendo).**
+- Nenhum TODO nem esqueleto com retorno neutro nos arquivos da rodada: todo `return null/[]/0/false` acrescentado é
+  guarda de entrada.
+- Links e cópias de ANTES da rodada abrem. As fixtures foram geradas com o código da M-A (50b5d58, produção), por um
+  teste rodado numa extração desse commit: ficha com dieta e exercício próprio, treinos, pedido e respostas do
+  questionário, cópia v2 do personal, cópia v2 do aluno e v1. Somam-se os links da interface do 11de1ab (kit da rodada
+  M). Ficam em `src/lib/integracao.r3.fixtures.ts`; o teste é `src/lib/integracao.r3.test.ts` (11 testes).
+  - O teste cobre: link de ficha num aparelho vazio entra como perfil novo e, reaberto, atualiza sem duplicar;
+    retorno de treinos sem `plannedSets` e sem dor registra 2 treinos, sem completude inventada, com o volume
+    recalculado; reabrir o mesmo retorno não duplica; pedido e respostas abrem; cópias v1 e v2 restauram num aparelho
+    limpo; restaurar 2 vezes dá as mesmas contagens.
+  - O schema aceita `plannedSets`, `activeMin` e `pain` malformados, descartando só esses campos. Bem formados,
+    passam.
+  - No build de produção, a 360 px, a mesma lista abre no navegador sem erro nem rolagem horizontal. As cópias
+    restauradas pelo /entrar mostram o plano antes de confirmar.
+- `/api/versao` responde exatamente `{ sha, at, protocolo: 1, copia: 2 }`, com `cache-control: no-store`. O `sha` é
+  "local" sem `VERCEL_GIT_COMMIT_SHA`. O `at` não muda ao reiniciar o `next start`, é o mesmo valor inlinado no pacote
+  do navegador, e o rodapé da Conta mostra "Versão local · 27/11 · links v1", batendo com a API.
+- Analytics: nenhuma chave de dor em evento nenhum (analytics.allowlist.test.ts); `workout_completed` leva só a faixa
+  `minutos_ativos`.
+- spec-m §5:
+  - Nenhum import estático novo de generator, exercises, foods, zod, posthog ou supabase em /abrir, /questionario,
+    /receber, /entrar, app-context.tsx ou pwa.tsx. Os módulos novos que entram ali são puros: link-identity,
+    perfis-de-entrada e completude.
+  - O kit confirma que nenhuma das rotas medidas carrega posthog ou supabase antes do `load`.
+- Roteiros de navegador rodados no build final, porta 3572, com a medição de uso abortada:
+  - `rodada3/e2e/restaurar-dois-contextos.js` (trilha L): 15 de 15 passos. Inclui o R3-6 A.5 (dois contextos: o
+    aparelho B restaura e vê 2 alunos, o NOME do exercício próprio e 1 treino), o "Ver como" + link, "Voltar" sem
+    gravar e "Perfis neste aparelho" nos dois aparelhos.
+  - `rodada3/integ/r3-10-offline.cjs` (R3-10, SW ligado):
+    - o rascunho de 7 h com série feita pergunta com rede;
+    - sem sinal, um toque em "Continuar aquele treino" abre o treino com a série marcada e o aviso "Você ficou 7 h
+      fora", sem a pergunta repetida;
+    - recarregar sem sinal continua no treino.
+  - Âncoras do menu: em 1024×768, "Planos" de /privacidade e de /termos leva a `/#planos` com a seção visível.
+  - A 360 px, /, /privacidade e /termos ficam sem rolagem horizontal.
+
+**Correção da integração: código de tela fora do grafo de toda rota.**
+- O app-context importava duas funções de link-identity.ts. Por isso as telas e os textos do /abrir e do /receber iam
+  para o chunk raiz de TODAS as rotas, porque o Turbopack não poda exportação dentro do módulo.
+- O mesmo acontecia com o relógio do treino (session-time.ts), via repository.ts (`parciaisNaSemana`, da costura).
+- Agora:
+  - `perfisDeEntrada`, `criadoresDeConteudo`, `ehContatoDePersonal` e `ehPerfilDeTesteOuExemplo` moram em
+    `domain/perfis-de-entrada.ts`, puro;
+  - a completude (`sessionCompleteness`, `completude`, `completudeLinha`, `parciaisNaSemana`, `textoParciais`,
+    `LIMIAR_PARCIAL`) mora em `domain/completude.ts`;
+  - link-identity.ts e session-time.ts reexportam tudo, então nenhum importador nem teste muda de import;
+  - app-context.tsx, repository.ts e hooks.ts importam dos módulos pequenos;
+  - o teste de pureza de link-identity aceita o import do irmão puro e confere que perfis-de-entrada.ts só importa
+    tipos.
+- Medido com o mesmo build, antes e depois: o chunk raiz cai 2,2 KB em todas as rotas.
+- As rotas que usam esse código passam a levá-lo nos próprios chunks:
+
+  | Rota | Diferença |
+  |---|---|
+  | / | −2,3 KB |
+  | /testar | −2,2 KB |
+  | /questionario | −1,3 KB |
+  | /abrir | +0,3 KB |
+  | /receber | +0,1 KB |
+  | /hoje | +0,2 KB |
+  | /alunos | +0,5 KB |
+  | /entrar | +1,1 KB |
+  | /sessao | +1,6 KB |
+
+- Somando as 9 rotas, o saldo é −2 KB. Ficou assim porque a landing, o /testar e o link do questionário são primeiro
+  contato, sem service worker aquecido. A /sessao costuma abrir pelo SW aquecido.
+
+**Peso por rota** (kit da rodada M, `ETAPAS=peso`, KB gzip-6 dos scripts citados no HTML, sem noModule). Rótulo
+`r3-integ` contra `ma2` (M-A final):
+
+| Rota | M-A | R3 | Diferença |
+|---|---|---|---|
+| / | 220,3 | 225,4 | +5,1 |
+| /entrar | 260,6 | 271,5 | +10,9 |
+| /abrir | 259,2 | 269,3 | +10,1 |
+| /questionario | 316,9 | 325,8 | +8,9 |
+| /receber | 296,5 | 306,0 | +9,5 |
+| /testar | 214,9 | 219,8 | +4,9 |
+| /hoje | 317,3 | 293,3 | −24,0 |
+| /sessao | 323,6 | 338,2 | +14,6 |
+| /alunos | 316,2 | 326,9 | +10,7 |
+
+O total de cada rota é MEDIDO. A atribuição abaixo é ESTIMATIVA: tamanho isolado de cada módulo (esbuild minificado
++ gzip-6, M-A contra agora) e busca de textos nos chunks.
+
+- **R3-19 (meta de até 1 KB): cumprida.** No caminho do `load` entra só a variável do filtro e a chamada em
+  analytics.ts, com +0,03 KB isolado.
+  - As listas (`analytics-props.ts`, cerca de 1,6 KB isolado) estão só no chunk do SDK, que posthog-init.ts baixa 3 s
+    depois do `load`. Nenhuma rota cita esse chunk no HTML.
+  - O filtro já nasceu na drenagem, a alternativa do adendo, então não houve segunda medição.
+- **Todas as rotas, +4,9 KB no chunk raiz.** Partes:
+  - leitor de alimentos do R3-5 (nutrition.ts, cerca de 1,8 KB). Está na raiz porque data/demo.ts, importado de forma
+    estática pelo app-context desde antes da M-A, usa `buildDietTemplate`;
+  - validação, plano de restauração e R3-13 em export.ts (cerca de 1,1 KB), que entra pela local.ts e pela pwa.tsx;
+  - foto do armazenamento e `listStudents` numa leitura em local.ts (cerca de 0,7 KB);
+  - dor e volume elegível em progression.ts (cerca de 0,3 KB);
+  - entradas cruas em foods.ts (cerca de 0,2 KB);
+  - perfis-de-entrada.ts e completude.ts (cerca de 0,4 KB cada).
+- **/ (+5,1) e /testar (+4,9):** só o chunk raiz, e na / mais o rótulo "parcial" da demo e o rótulo anual (+0,3).
+- **/abrir (+10,1), /receber (+9,5), /entrar (+10,9):** raiz mais 4,6 a 6 KB das rotas de link:
+  - identidade e telas do R3-1 (link-identity, cerca de 1,9 KB);
+  - transfer-client com importação por identidade, foto, declarações do R3-3 e restauração (cerca de +1,7 KB);
+  - relógio e rótulos de duração, que transfer.ts usa no texto do link (session-time, cerca de 1,2 KB);
+  - estados de envio em delivery.ts (+0,75 KB);
+  - as próprias páginas (+0,3 a +0,9 KB).
+- **/questionario (+8,9):** raiz mais cerca de 4 KB:
+  - funções do Hoje em hooks.ts (R3-8, cerca de 0,9 KB), que vêm no chunk de componentes que a rota já carregava;
+  - campos tolerantes do schema no chunk do zod (+0,7);
+  - falha de cópia do CopyButton (+0,3);
+  - resumo do R3-11 (+0,15).
+- **/sessao (+14,6):** raiz mais cerca de 9,7 KB:
+  - tela da sessão com "Senti dor", aviso de pausa e "Corrigir minutos ativos" (+1,5);
+  - relógio do treino (+1,2);
+  - rascunho e fim do treino (+0,9);
+  - envio ao personal e identidade, que chegam pelo lembrete de cópia de segurança e pelo envio (cerca de 4 KB).
+- **/alunos (+10,7):** raiz mais cerca de 5,8 KB: os mesmos módulos de envio e identidade, mais as funções do Hoje.
+- **/hoje (−24,0):** o Hoje passou a importar `SendToCoach` de send-to-coach.tsx (spec-m §5), não mais de
+  transfer-share.tsx. Saem da rota o catálogo e o resumo do questionário, cerca de 35 KB, e entram os cards do
+  R3-8/R3-3.
+
+**Mantido, por enquanto:** os acréscimos acima são o código dos itens P0 e P1 nas rotas que os usam. Caminhos para a
+M-B, se a medição em aparelho mostrar prejuízo:
+- tirar o plano de restauração de export.ts (sai da raiz; muda os imports de dois testes);
+- `seedDemo` sob demanda no app-context, para tirar nutrition.ts e generator.ts da raiz (mexe no app-context; é
+  decisão da M-B).

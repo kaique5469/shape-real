@@ -236,7 +236,8 @@ export function addedLog(pick: Pick<Exercise, "id" | "name" | "compound">, histo
  * Troca o exercício do registro `targetUid` só neste treino (aparelho ocupado). O `uid` continua (o grupo de bi-set e a
  * posição também). Mesma unidade: mantém o número de séries, a faixa e a técnica; outra unidade: prescrição padrão
  * (`defaultPlan`) com a técnica de antes. As séries recomeçam vazias, com a carga sugerida para o novo exercício. A
- * observação do personal para o exercício trocado é descartada (não vale para o substituto). A ficha não muda.
+ * observação do personal para o exercício trocado é descartada (não vale para o substituto), e o "Senti dor" também. A
+ * ficha não muda.
  * Devolve o mesmo rascunho se o registro não existir.
  */
 export function swapInDraft(draft: WorkoutDraft, targetUid: string, pick: Pick<Exercise, "id" | "name" | "compound">, history: Session[]): WorkoutDraft {
@@ -258,9 +259,12 @@ export function swapInDraft(draft: WorkoutDraft, targetUid: string, pick: Pick<E
     suggestions,
     session: {
       ...draft.session,
-      exercises: draft.session.exercises.map((x) =>
-        x.uid === targetUid ? { ...x, exerciseId: pick.id, name: pick.name, unit, planned, sets: Array.from({ length }, () => ({ loadKg: load, reps: null, done: false })) } : x,
-      ),
+      exercises: draft.session.exercises.map((x) => {
+        if (x.uid !== targetUid) return x;
+        // "Senti dor" era do exercício que saiu: não passa para o substituto (R3-7).
+        const { pain: _pain, ...rest } = x;
+        return { ...rest, exerciseId: pick.id, name: pick.name, unit, planned, sets: Array.from({ length }, () => ({ loadKg: load, reps: null, done: false })) };
+      }),
     },
   };
 }

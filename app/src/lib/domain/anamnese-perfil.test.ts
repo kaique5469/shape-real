@@ -22,6 +22,7 @@ const {
   textoLiberacaoAnterior,
   veioDe,
   SELO_TEXTO,
+  TEXTO_COPIAS_ANTIGAS,
   TEXTO_REVOGAR,
   apagarRespostas,
   avisoDieta,
@@ -289,8 +290,13 @@ describe("revogarSaude", () => {
     revogarSaude(cheio);
     expect(JSON.stringify(cheio)).toBe(antes);
   });
-  it("o texto da confirmação é o da spec", () => {
-    expect(TEXTO_REVOGAR).toBe("As respostas de saúde do questionário e as liberações registradas serão apagadas.");
+  it("o texto da confirmação é o da spec, com a frase curta das cópias de segurança (R3-9 item 4)", () => {
+    expect(TEXTO_COPIAS_ANTIGAS).toBe("Cópias de segurança feitas antes continuam com esses dados. Apague os arquivos se não precisar deles.");
+    expect(TEXTO_REVOGAR).toBe(
+      "As respostas de saúde do questionário e as liberações registradas serão apagadas. Cópias de segurança feitas antes continuam com esses dados. Apague os arquivos se não precisar deles.",
+    );
+    // Sem culpa e sem prometer o que o aparelho não alcança: nada de "recuperar", "seguro" ou "protegido".
+    expect(TEXTO_REVOGAR).not.toMatch(/recuper|segur[oa]|protegid|criptograf/i);
   });
   it("temSaudeNoQuestionario: respostas com saúde, ilegíveis ou liberações", () => {
     expect(temSaudeNoQuestionario(cheio)).toBe(true);

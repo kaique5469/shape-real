@@ -7,6 +7,7 @@ import { extraDoEnvioDaFicha } from "@/lib/domain/anamnese-perfil";
 import { coachSignature } from "@/lib/domain/cref";
 import { fichaSendSituation, type FichaDelivery, type PrepVia } from "@/lib/domain/delivery";
 import { firstName, waPhone } from "@/lib/domain/format";
+import { avisoDoLink, oQueVaiNaFicha } from "@/lib/domain/link-aviso";
 import { buildFichaPacket, fichaLinkItems, fichaLinkMessage } from "@/lib/domain/transfer";
 import type { DietPlan, Profile, Program } from "@/lib/domain/types";
 import { packData } from "@/lib/share-link";
@@ -27,6 +28,11 @@ export interface FichaLinkEstado {
   /** O que foi no pacote; null = não foi (sem ficha ativa; dieta sem itens, orientações nem metas). */
   programa: Program | null;
   dieta: DietPlan | null;
+  /**
+   * R3-17: o que o link leva e o aviso de que quem tiver o link consegue ler ("O link leva a ficha e a dieta e o peso,
+   * a altura e as limitações de Marina. Quem tiver o link consegue ler: mande só para Marina."). Montado do pacote.
+   */
+  aviso: string;
 }
 
 export interface FichaLinkToque {
@@ -82,7 +88,8 @@ export function useFichaLink(student: Profile, enabled: boolean, opts: { where?:
       const coachName = user.name.trim() && user.name !== "Personal" ? coachSignature({ name: user.name, cref: user.cref }) : undefined;
       const texto = fichaLinkMessage({ studentFirstName: first, coachSignature: coachName, hasProgram: Boolean(program), hasDiet: Boolean(diet), link });
       const entrega = tracking ? readFichaDelivery(student.id, { programAt: program?.updatedAt ?? null, dietAt: diet?.updatedAt ?? null }) : null;
-      if (alive) setBuilt({ estado: { link, texto, programa: program, dieta: diet }, entrega });
+      const aviso = avisoDoLink({ ...oQueVaiNaFicha(packet), aluno: student.name });
+      if (alive) setBuilt({ estado: { link, texto, programa: program, dieta: diet, aviso }, entrega });
     })().catch((e) => {
       reportError(e, "link:montar-ficha");
       if (alive) setErro("Não foi possível montar o link. Tente de novo.");

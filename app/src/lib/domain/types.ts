@@ -399,4 +399,6 @@ export interface StudentSummary {
   sessionsWeek: number;
   /** Meta de treinos por semana (dias da ficha ativa, senão os do cadastro); null sem meta. */
   weeklyGoal: number | null;
+  /** Treinos parciais da semana corrente (R3-4: abaixo de metade das séries planejadas, só com `plannedSets`). */
+  partialWeek: number;
 }

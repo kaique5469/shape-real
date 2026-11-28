@@ -1,24 +1,45 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { ArrowRight, CalendarClock, CalendarX, Check, ChevronDown, MessageCircle, Play, Plus } from "lucide-react";
+import { ArrowRight, CalendarClock, CalendarX, Check, ChevronDown, CircleCheck, MessageCircle, Play, Plus } from "lucide-react";
 import { BackupReminder } from "@/components/backup-reminder";
 import { ColarLink } from "@/components/colar-link";
 import { FichaDay } from "@/components/ficha";
 import { InstallCard } from "@/components/pwa";
 import { RecordMark } from "@/components/record-mark";
-import { SendToCoach, usePendingWorkouts } from "@/components/transfer-share";
+import { DeliveryLine } from "@/components/delivery-status";
+import { SendToCoach, usePendingWorkouts } from "@/components/send-to-coach";
 import { TargetsList } from "@/components/views/diet-read";
 import { estimateDayMinutes } from "@/lib/domain/generator";
-import { Alert, Empty, LinkButton, Panel, Segmented, Skeleton, cx } from "@/components/ui";
+import { Alert, Button, Empty, LinkButton, Panel, Segmented, Skeleton, cx } from "@/components/ui";
 import { track } from "@/lib/analytics";
 import { useApp } from "@/lib/app-context";
-import { coachContact, fmtDate, fmtNum, nextDayKey, recentRecords, relativeDay, returnNotice, useLoad, weekGoal } from "@/lib/hooks";
+import {
+  avisoDePausa,
+  coachContact,
+  dispensarRetomar,
+  fmtDate,
+  fmtNum,
+  mostraRetomar,
+  nextDayKey,
+  recentRecords,
+  relativeDay,
+  retomarDispensadoPara,
+  TEXTO_RETOMAR,
+  treinoDeHoje,
+  ultimoTreinoId,
+  ultimoTreinoParcial,
+  useLoad,
+  volumeDaSemana,
+  weekGoal,
+} from "@/lib/hooks";
+import { lembreteDeCopia, type DeliveryIcon } from "@/lib/domain/delivery";
 import { weekStart, weekStreak } from "@/lib/domain/progression";
+import { parciaisNaSemana, textoParciais } from "@/lib/domain/session-time";
 import { targetsForProfile } from "@/lib/domain/nutrition";
-import { programValidity } from "@/lib/domain/format";
+import { firstName, programValidity } from "@/lib/domain/format";
 import { useAI } from "@/lib/ai/client";
 import { validityIcon, validityTone } from "@/lib/ui/tone";
 import { draftProgressText, readDraftInfo, type DraftInfo } from "@/lib/workout-draft";
@@ -46,10 +67,16 @@ function Hoje() {
   const [chosen, setChosen] = useState<string | null>(null);
   const [sentTick, setSentTick] = useState(0);
   // sentTick faz reler o que já foi enviado depois de um envio.
-  const { toSend: pending } = usePendingWorkouts(data?.sessions, sentTick);
+  const { toSend: pending, prepared, declareSent, dismiss } = usePendingWorkouts(data?.sessions, sentTick);
   // Depois de um toque, o envio continua montado mesmo sem pendentes: a cópia deixa o diálogo aberto com
   // "Mensagem copiada às …", e a faixa sumir no meio fecharia o diálogo junto (mesma regra do Histórico).
   const [sentNow, setSentNow] = useState(false);
+  // Resultado de "Já enviei" e "Dispensar" na linha dos copiados (R3-3): a linha some, a região de status fica.
+  const [envioStatus, setEnvioStatus] = useState<{ text: string; icon?: DeliveryIcon } | null>(null);
+  const envioRef = useRef<HTMLDivElement>(null);
+  // Convite de retomar (7 a 13 dias) dispensado para a pausa atual (id do último treino), lido deste aparelho.
+  const [retomarDispensado, setRetomarDispensado] = useState<string | null>(() => (user ? retomarDispensadoPara(user.id) : null));
+  const proximoRef = useRef<HTMLElement>(null);
   // Treino começado e ainda não finalizado (fica guardado no aparelho).
   const [ongoing, setOngoing] = useState<DraftInfo | null>(null);
   useEffect(() => {
@@ -65,7 +92,24 @@ function Hoje() {
     const month = data.sessions.filter((s) => now.getTime() - new Date(s.startedAt).getTime() < 30 * 86_400_000).length;
     // Cada recorde com a série que bateu a marca (a mesma do resumo do treino).
     const prs = recentRecords(data.sessions, 5);
-    return { doneDays, streak: weekStreak(data.sessions), month, weekVolume: weekSessions.reduce((a, s) => a + s.volumeKg, 0), prs, back: returnNotice(data.sessions, now) };
+    // R3-8: pausa (7 a 13 dias = convite de retomar; 14 ou mais = aviso de volta de sempre), treino já registrado hoje
+    // e último treino parcial. Tudo no fuso do aparelho.
+    const pausa = avisoDePausa(data.sessions, now);
+    return {
+      doneDays,
+      streak: weekStreak(data.sessions),
+      month,
+      // Volume pela convenção única (volumeDaSessao): o volumeKg gravado é só cache (R3-6 B).
+      weekVolume: volumeDaSemana(data.sessions, now),
+      prs,
+      pausa,
+      back: pausa?.tipo === "volta" ? pausa.texto : null,
+      ultimoId: ultimoTreinoId(data.sessions),
+      hojeReg: treinoDeHoje(data.sessions, data.program, now),
+      parcial: ultimoTreinoParcial(data.sessions, data.program, now),
+      // "2 de 4 · 1 parcial" em "Sua semana" (R3-4 item 2): só com plannedSets e menos da metade das séries.
+      parciaisSemana: textoParciais(parciaisNaSemana(data.sessions, now)),
+    };
   }, [data]);
 
   if (loading) return <LoadingHoje />;
@@ -92,6 +136,47 @@ function Hoje() {
   const contact = coachContact(user!.remoteCoach, data.coachProfile ?? (data.coach ? { id: data.coach.id, name: data.coach.name } : null));
   // Aviso de volta depois de pausa: junto do "Começar treino" quando há treino montado; senão, no card da semana.
   const backInCard = Boolean(program && day && day.exercises.length);
+  // R3-8: convite de retomar (7 a 13 dias), sem culpa e dispensável. Fica no mesmo lugar do aviso de volta.
+  const retomar = mostraRetomar(stats.pausa, stats.ultimoId, retomarDispensado);
+  const hojeReg = stats.hojeReg;
+  // R3-3: linha discreta só para os treinos COPIADOS, sem "Já enviei" e sem dispensa depois da cópia. O envio iniciado
+  // no WhatsApp não cobra aqui (o Histórico mostra o estado de cada treino). Dispensar nunca vira confirmação.
+  const lembrete = lembreteDeCopia(prepared.map((p) => ({ id: p.session.id, via: p.via, at: p.at })));
+  const copiados = lembrete ? prepared.filter((p) => lembrete.ids.includes(p.session.id)).map((p) => p.session) : [];
+  const coachFirstEnvio = user!.remoteCoach ? firstName(user!.remoteCoach.name) : "seu personal";
+
+  function dispensarConvite() {
+    if (stats?.ultimoId) dispensarRetomar(user!.id, stats.ultimoId);
+    setRetomarDispensado(stats?.ultimoId ?? null);
+    // O botão some: o foco vai para o card que mostrava o convite (nunca para o fim da página).
+    proximoRef.current?.focus();
+  }
+
+  /** "Já enviei" (declaração da pessoa, nunca "recebido") e "Dispensar": a linha some e o resultado fica na região de status. */
+  function responderLembrete(acao: "enviei" | "dispensar") {
+    if (!lembrete) return;
+    const n = lembrete.ids.length;
+    const ok = acao === "enviei" ? declareSent(lembrete.ids) : dismiss(lembrete.ids);
+    if (!ok) {
+      setEnvioStatus({ text: "Não deu para registrar neste aparelho. Tente de novo.", icon: "pendente" });
+      return;
+    }
+    setEnvioStatus(
+      acao === "enviei"
+        ? { text: `Você marcou: já enviei. Se ${coachFirstEnvio} não recebeu, envie de novo pelo Histórico.`, icon: "whatsapp" }
+        : { text: `Lembrete dispensado. ${n === 1 ? "O treino continua" : "Os treinos continuam"} no Histórico.` },
+    );
+    envioRef.current?.focus();
+  }
+
+  const convite = retomar ? (
+    <div className="flex items-start justify-between gap-2">
+      <p className="text-sm leading-snug text-pretty text-iron">{TEXTO_RETOMAR}</p>
+      <Button variant="ghost" size="sm" className="-my-1 shrink-0" aria-label="Dispensar o convite para retomar" onClick={dispensarConvite}>
+        Dispensar
+      </Button>
+    </div>
+  ) : null;
 
   return (
     <div className="space-y-6">
@@ -141,9 +226,38 @@ function Hoje() {
         </section>
       ) : null}
 
+      {/* R3-8: treino já registrado hoje. O dia está fechado: o próximo aparece só como secundário (recolhido), sem
+          empurrar outro treino e sem "Continuar" (a sessão já está salva; abrir /sessao de novo criaria outra). */}
+      {hojeReg ? (
+        <section aria-labelledby="treino-hoje" data-hoje="registrado" className="space-y-3 rounded-[8px] border border-rule bg-paper p-4">
+          <div>
+            {/* "Treino B registrado hoje · 1 de 24 séries" (a completude só com plannedSets, R3-4). */}
+            <h2 id="treino-hoje" className="flex items-start gap-2 text-lg font-bold leading-snug">
+              <CircleCheck className="mt-0.5 size-5 shrink-0 text-done-ink" aria-hidden />
+              <span className="min-w-0">{hojeReg.linha}</span>
+            </h2>
+            {hojeReg.proximo ? <p className="mt-1 text-sm text-steel">{hojeReg.proximo}</p> : null}
+          </div>
+          {program && day && day.exercises.length ? (
+            <details className="group rounded-[6px] border border-rule">
+              <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-2 px-3 text-[0.9375rem] font-semibold">
+                Ver o próximo treino
+                <ChevronDown className="size-4 text-steel transition-transform group-open:rotate-180" aria-hidden />
+              </summary>
+              <div className="space-y-3 border-t border-rule p-2">
+                <FichaDay day={day} />
+                <LinkButton href={`/sessao?p=${program.id}&d=${encodeURIComponent(day.key)}`} variant="secondary" className="w-full" icon={<Play className="size-4" />}>
+                  Começar o treino {day.key} agora
+                </LinkButton>
+              </div>
+            </details>
+          ) : null}
+        </section>
+      ) : null}
+
       {/* Próximo treino: a ação principal do app fica no topo, sem rolar */}
-      {program && day ? (
-        <section aria-labelledby="proximo" className="space-y-3 rounded-[8px] border border-rule bg-paper p-4">
+      {hojeReg && program && day ? null : program && day ? (
+        <section ref={backInCard ? proximoRef : undefined} tabIndex={backInCard ? -1 : undefined} aria-labelledby="proximo" className="space-y-3 rounded-[8px] border border-rule bg-paper p-4">
           <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
             <div className="min-w-0">
               <h2 id="proximo" className="text-lg font-bold">
@@ -170,6 +284,8 @@ function Hoje() {
               </div>
             ) : null}
           </div>
+          {/* R3-8: último treino parcial (menos da metade das séries planejadas). "Escolher dia" já permite repetir. */}
+          {stats.parcial ? <p className="text-sm leading-snug text-pretty text-iron">{stats.parcial}</p> : null}
           {day.exercises.length ? (
             <>
               <div className="flex items-center gap-3">
@@ -185,6 +301,7 @@ function Hoje() {
                 Começar treino {day.key}
               </LinkButton>
               {stats.back ? <p className="text-sm leading-snug text-iron">{stats.back}</p> : null}
+              {convite}
               <details className="group rounded-[6px] border border-rule">
                 <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-2 px-3 text-[0.9375rem] font-semibold">
                   Ver os exercícios
@@ -258,11 +375,12 @@ function Hoje() {
       {pending.length || sentNow ? (
         // Sem pendentes (logo depois do envio), a faixa some mas o mesmo nó continua montado ("contents", sem caixa
         // nem nome de região), para o diálogo do envio não fechar sozinho.
+        // R3-3: banner forte só para "para enviar" (nenhum toque). Copiado ou envio iniciado não entra aqui.
         <section aria-label={pending.length ? "Treinos para enviar" : undefined} className={pending.length ? "flex flex-col gap-3 rounded-[8px] border border-rule bg-paper p-4 sm:flex-row sm:items-center sm:justify-between" : "contents"}>
           {pending.length ? (
             <div className="min-w-0">
               <h2 className="text-[0.9375rem] font-bold">{pending.length === 1 ? "1 treino ainda não enviado" : `${pending.length} treinos ainda não enviados`}</h2>
-              <p className="text-sm text-steel">Mande para {user!.remoteCoach ? user!.remoteCoach.name.split(" ")[0] : "seu personal"} acompanhar suas cargas e ajustar a ficha.</p>
+              <p className="text-sm text-steel">Mande para {coachFirstEnvio} acompanhar suas cargas e ajustar a ficha.</p>
             </div>
           ) : null}
           <SendToCoach
@@ -271,11 +389,53 @@ function Hoje() {
             className="shrink-0"
             onSent={() => {
               setSentNow(true);
+              setEnvioStatus(null);
               setSentTick((t) => t + 1);
             }}
           />
         </section>
       ) : null}
+
+      {/* R3-3: copiados sem "Já enviei". Linha discreta, nunca cobrança: a pessoa declara, copia de novo ou dispensa. */}
+      {lembrete ? (
+        <section aria-label="Treinos copiados" className="space-y-2 rounded-[8px] border border-rule bg-paper px-4 py-3">
+          <DeliveryLine icon="copia" className="text-[0.9375rem]">
+            {lembrete.texto}
+          </DeliveryLine>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" size="sm" onClick={() => responderLembrete("enviei")}>
+              Já enviei
+            </Button>
+            <SendToCoach
+              sessions={copiados}
+              where="hoje"
+              label="Copiar de novo"
+              variant="ghost"
+              size="sm"
+              onSent={() => {
+                setEnvioStatus(null);
+                setSentTick((t) => t + 1);
+              }}
+            />
+            <Button variant="ghost" size="sm" aria-label="Dispensar o lembrete" onClick={() => responderLembrete("dispensar")}>
+              Dispensar
+            </Button>
+          </div>
+        </section>
+      ) : null}
+      {/* Sempre montada (o leitor de tela anuncia a mudança); vazia, fora do fluxo (sem abrir espaço entre os cards).
+          Recebe o foco quando a linha some depois de "Já enviei" ou "Dispensar". */}
+      <div ref={envioRef} tabIndex={-1} role="status" className={envioStatus ? "rounded-[6px]" : "sr-only"}>
+        {envioStatus ? (
+          envioStatus.icon ? (
+            <DeliveryLine icon={envioStatus.icon} className="text-sm">
+              {envioStatus.text}
+            </DeliveryLine>
+          ) : (
+            <p className="text-sm text-steel">{envioStatus.text}</p>
+          )
+        ) : null}
+      </div>
 
       {/* Quem acompanha: nome, CREF e o WhatsApp do personal. Fica abaixo do próximo treino, que segue sem rolar. */}
       {contact ? (
@@ -321,7 +481,13 @@ function Hoje() {
       {program && user!.remoteCoach && !returnTo ? <ColarLink className="-mt-3" /> : null}
 
       {/* Semana: com meta, "N de M" no lugar do volume; sem meta, o card de sempre. Nunca vermelho, nunca cobrança. */}
-      <section aria-label={week.goal ? undefined : "Sua semana"} aria-labelledby={week.goal ? "sua-semana" : undefined} className="rounded-[8px] border border-rule bg-paper p-4">
+      <section
+        ref={backInCard ? undefined : proximoRef}
+        tabIndex={backInCard ? undefined : -1}
+        aria-label={week.goal ? undefined : "Sua semana"}
+        aria-labelledby={week.goal ? "sua-semana" : undefined}
+        className="rounded-[8px] border border-rule bg-paper p-4"
+      >
         {week.goal ? (
           <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
             <h2 id="sua-semana" className="text-[0.9375rem] font-bold">
@@ -355,6 +521,7 @@ function Hoje() {
           })}
         </ol>
         {stats.back && !backInCard ? <p className="mt-3 text-sm leading-snug text-iron">{stats.back}</p> : null}
+        {convite && !backInCard ? <div className="mt-3">{convite}</div> : null}
         <dl className="mt-4 grid grid-cols-3 divide-x divide-rule border-t border-rule pt-3 text-center">
           <div>
             <dt className="text-xs text-steel">Semanas seguidas</dt>
@@ -372,6 +539,7 @@ function Hoje() {
                 <span className="text-sm"> de </span>
                 {week.goal}
               </dd>
+              {stats.parciaisSemana ? <dd className="num text-xs text-steel">{stats.parciaisSemana}</dd> : null}
             </div>
           ) : (
             <div>

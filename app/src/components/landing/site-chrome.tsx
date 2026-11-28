@@ -1,7 +1,11 @@
 import Link from "next/link";
 import { Logo } from "@/components/brand";
 
-const BLOG = "https://shapereal.com.br";
+/**
+ * Menu e rodapé da landing e das páginas legais. As âncoras levam a "/#…": em /privacidade e /termos elas abrem a landing
+ * na seção; na própria landing só rolam (rodada 3, R3-9). O link do blog saiu enquanto a main do blog tiver autoria ou
+ * credenciais não comprovadas (DECISIONS); volta em 2 linhas se o dono confirmar que o domínio não mostra esse bloco.
+ */
 
 export function SiteHeader() {
   return (
@@ -11,17 +15,14 @@ export function SiteHeader() {
           <Logo />
         </Link>
         <nav aria-label="Principal" className="hidden items-center gap-6 text-[0.9375rem] font-medium md:flex">
-          <a href="#como-funciona" className="hover:underline">
+          <a href="/#como-funciona" className="hover:underline">
             Como funciona
           </a>
-          <a href="#personal" className="hover:underline">
+          <a href="/#personal" className="hover:underline">
             Para personais
           </a>
-          <a href="#planos" className="hover:underline">
+          <a href="/#planos" className="hover:underline">
             Planos
-          </a>
-          <a href={BLOG} className="hover:underline">
-            Blog
           </a>
         </nav>
         <div className="flex items-center gap-2">
@@ -46,9 +47,6 @@ export function SiteFooter() {
           <p className="mt-2 max-w-sm text-sm text-steel">Ficha de treino montada por regras que você entende e edita, registro de cargas e acompanhamento de personal. Feito no Brasil.</p>
         </div>
         <nav aria-label="Rodapé" className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-          <a href={BLOG} className="hover:underline">
-            Blog
-          </a>
           <Link href="/privacidade" className="hover:underline">
             Privacidade
           </Link>

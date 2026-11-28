@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useId, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Dumbbell, Mail, Users } from "lucide-react";
 import { Logo } from "@/components/brand";
@@ -12,7 +12,9 @@ import { RestoreBackupButton } from "@/components/backup-restore";
 import { useApp } from "@/lib/app-context";
 import { track } from "@/lib/analytics";
 import { gravarConvite } from "@/lib/flags";
+import { rotuloContinuarComo, textoUltimoUso } from "@/lib/domain/link-identity";
 import type { Role } from "@/lib/domain/types";
+import { perfisNesteAparelho, type PerfilDeEntrada } from "@/lib/transfer-client";
 
 export default function EntrarPage() {
   return (
@@ -25,7 +27,7 @@ export default function EntrarPage() {
 function Entrar() {
   const params = useSearchParams();
   const router = useRouter();
-  const { ready, user, cloudAvailable, signInPassword, signUpPassword, sendMagicLink, startLocal } = useApp();
+  const { ready, user, mode: modoDoApp, cloudAvailable, signInPassword, signUpPassword, sendMagicLink, startLocal } = useApp();
   const [mode, setMode] = useState<"entrar" | "criar">(params.get("modo") === "criar" ? "criar" : "entrar");
   const [role, setRole] = useState<Role>(params.get("perfil") === "personal" ? "coach" : "athlete");
   const [name, setName] = useState("");
@@ -34,6 +36,9 @@ function Entrar() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  /** "Perfis neste aparelho" (R3-1, modo local): lidos do aparelho depois de montar; null enquanto não leu. */
+  const [perfis, setPerfis] = useState<PerfilDeEntrada[] | null>(null);
+  const local = !cloudAvailable && modoDoApp === "local";
 
   useEffect(() => {
     if (!ready || !user) return;
@@ -51,6 +56,19 @@ function Entrar() {
 
   // Convite do questionário (`?beta=questionario`): só faz diferença quando a chave não está ligada para todos.
   useEffect(() => gravarConvite(location.search), []);
+
+  // Quem tocou em "Sair" volta aqui: os perfis deste aparelho continuam (só os de entrada, sem dado de saúde).
+  useEffect(() => {
+    if (!ready || user || !local) return;
+    let vivo = true;
+    perfisNesteAparelho()
+      .then((lista) => vivo && setPerfis(lista))
+      .catch(() => vivo && setPerfis([]));
+    return () => {
+      vivo = false;
+    };
+  }, [ready, user, local]);
+  const comPerfis = local && Boolean(perfis?.length);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -103,6 +121,14 @@ function Entrar() {
               <h1 className="plate-type text-[2rem] leading-tight">{mode === "criar" ? "Crie sua conta" : "Entrar"}</h1>
               <p className="mt-2 text-steel">{mode === "criar" ? "Grátis, sem cartão. Leva menos de um minuto." : "Bom te ver de volta. Bora treinar."}</p>
             </>
+          ) : comPerfis && perfis ? (
+            // R3-1: quem já usa o app neste celular continua de onde parou; começar outro perfil fica logo abaixo.
+            <>
+              <h1 className="plate-type text-[2rem] leading-tight">Entrar</h1>
+              <p className="mt-2 text-steel">Seus dados continuam neste celular. Escolha o seu perfil ou comece outro.</p>
+              <PerfisNesteAparelho perfis={perfis} />
+              <h2 className="mt-8 border-t border-rule pt-6 text-lg font-bold">Começar outro perfil</h2>
+            </>
           ) : (
             // Beta sem login: não há conta para criar, como promete a landing.
             <>
@@ -126,7 +152,7 @@ function Entrar() {
             </div>
           ) : null}
 
-          <form onSubmit={submit} className="mt-6 space-y-4" noValidate>
+          <form onSubmit={submit} className={cx("space-y-4", comPerfis ? "mt-4" : "mt-6")} noValidate>
             {mode === "criar" || !cloudAvailable ? (
               <>
                 <fieldset>
@@ -239,5 +265,68 @@ function Entrar() {
         </div>
       </aside>
     </div>
+  );
+}
+
+/**
+ * "Perfis neste aparelho" (R3-1): nome, "Personal" ou "Aluno" e o último uso; nenhum dado de saúde. "Continuar como"
+ * entra pelo `continueAsLocal`, que confere de novo a regra (`perfisDeEntrada`) e nunca abre o contato do personal nem
+ * o registro de um aluno do personal. Depois de entrar, o efeito de /entrar leva para Hoje, Alunos ou o onboarding.
+ */
+function PerfisNesteAparelho({ perfis }: { perfis: PerfilDeEntrada[] }) {
+  const { continueAsLocal } = useApp();
+  const [entrando, setEntrando] = useState<string | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const tituloId = useId();
+  const lista = perfis.map((p) => p.profile);
+
+  async function continuar(id: string) {
+    setErro(null);
+    setEntrando(id);
+    const p = await continueAsLocal(id).catch(() => null);
+    if (p) return;
+    setEntrando(null);
+    setErro("Não deu para abrir este perfil. Tente de novo.");
+  }
+
+  return (
+    <section aria-labelledby={tituloId} className="mt-6">
+      <h2 id={tituloId} className="text-sm font-semibold text-iron">
+        Perfis neste aparelho
+      </h2>
+      <ul className="ruled mt-2 rounded-[var(--radius-ficha)] border border-rule bg-paper">
+        {perfis.map(({ profile, rotulo, ultimoUso }) => {
+          const metaId = `${tituloId}-${profile.id}`;
+          const uso = ultimoUso ? textoUltimoUso(ultimoUso) : "";
+          return (
+            <li key={profile.id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3">
+              <span className="min-w-0 flex-1 basis-40">
+                <span className="block font-bold break-words">{profile.name}</span>
+                <span id={metaId} className="block text-sm text-steel">
+                  {rotulo}
+                  {uso ? ` · ${uso}` : ""}
+                </span>
+              </span>
+              <Button
+                variant="secondary"
+                className="min-h-11 py-2 text-center leading-snug max-sm:w-full"
+                style={{ height: "auto" }}
+                loading={entrando === profile.id}
+                disabled={entrando !== null && entrando !== profile.id}
+                onClick={() => void continuar(profile.id)}
+                aria-describedby={metaId}
+              >
+                {rotuloContinuarComo(profile, lista)}
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
+      {erro ? (
+        <Alert tone="error" className="mt-3">
+          {erro}
+        </Alert>
+      ) : null}
+    </section>
   );
 }

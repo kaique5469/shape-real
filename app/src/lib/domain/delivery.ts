@@ -236,8 +236,10 @@ const DAY_MS = 86_400_000;
  *  T1. toque no log (`:log`) → `iniciado` com canal e hora;
  *  T2. só na lista antiga (toque de uma versão anterior, sem hora nem canal) → `iniciado_antigo`;
  *  T3. nenhum dos dois → `nao_enviado`.
- * "Pendentes" (faixa do Hoje, botão do cabeçalho do Histórico) = `nao_enviado` (T4). Quem chama só pergunta com
- * `user.remoteCoach` no modo local (T5).
+ * "Pendentes" (faixa forte do Hoje, botão do cabeçalho do Histórico) = `nao_enviado` (T4). R3-3: o treino copiado
+ * não some, passa à linha discreta do Hoje ("Você copiou…", `lembreteDeCopia`) até "Já enviei" (`declarado`) ou dispensar
+ * (`DeclaracaoEnvio`); o Histórico mostra o estado de cada um. Quem chama só pergunta com `user.remoteCoach` no modo
+ * local (T5).
  */
 export function sessionDelivery(input: { id: string; legacySent: ReadonlySet<string>; log: Readonly<Record<string, PrepEntry>>; decl?: Readonly<Record<string, DeclaracaoEnvio>> }): SessionDelivery {
   const e = hasOwn(input.log, input.id) ? input.log[input.id] : undefined;
@@ -351,6 +353,26 @@ export function lembreteDeCopia(preparados: readonly { id: string; via: PrepVia 
     .map((p) => p.id);
   if (!ids.length) return null;
   return { ids, texto: `Você copiou ${ids.length === 1 ? "1 treino" : `${ids.length} treinos`}. Já colou na conversa?` };
+}
+
+/**
+ * As duas listas da pendência no aparelho do aluno (R3-3), sobre o que foi lido do aparelho:
+ *  - `toSend`: "para enviar" (nenhum toque nem declaração);
+ *  - `prepared`: "preparado sem confirmação" com canal e hora, sem o lembrete dispensado depois do toque.
+ * Declarado ("Já enviei") e toque antigo (sem canal nem hora) não entram em nenhuma das duas.
+ */
+export function pendenciaDeEnvio<S extends { id: string }>(
+  sessions: readonly S[],
+  input: { legacySent: ReadonlySet<string>; log: Readonly<Record<string, PrepEntry>>; decl: Readonly<Record<string, DeclaracaoEnvio>> },
+): { toSend: S[]; prepared: { session: S; via: PrepVia; at: string }[] } {
+  const toSend: S[] = [];
+  const prepared: { session: S; via: PrepVia; at: string }[] = [];
+  for (const s of sessions) {
+    const d = sessionDelivery({ id: s.id, ...input });
+    if (d.kind === "nao_enviado") toSend.push(s);
+    else if (d.kind === "iniciado" && !dispensado(s.id, input.log, input.decl)) prepared.push({ session: s, via: d.via, at: d.at });
+  }
+  return { toSend, prepared };
 }
 
 /** Dispensado depois do último toque: o lembrete do Hoje some (o estado do treino continua "preparado"). */
@@ -580,11 +602,12 @@ function canonical(v: unknown): Json | undefined {
 
 /**
  * O treino que chegou é igual ao que já está no painel? Independe da ordem das chaves e ignora `userId` (no painel o
- * treino é gravado com o id do aluno do personal) e campos `undefined`/`null`. Ordem das séries e dos exercícios
- * conta. Qualquer outra diferença (anotação, carga, repetição) → false.
+ * treino é gravado com o id do aluno do personal), `volumeKg` (só cache, recalculado na chegada pelo link pela
+ * convenção única; rodada 3, R3-6 B) e campos `undefined`/`null`. Ordem das séries e dos exercícios conta. Qualquer
+ * outra diferença (anotação, carga, repetição) → false.
  */
 export function sameSession(a: Session, b: Session): boolean {
-  const strip = (s: Session) => canonical({ ...s, userId: undefined });
+  const strip = (s: Session) => canonical({ ...s, userId: undefined, volumeKg: undefined });
   return JSON.stringify(strip(a)) === JSON.stringify(strip(b));
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ChevronDown, Download, Trash2 } from "lucide-react";
+import { ChevronDown, Download, Info, Trash2 } from "lucide-react";
 import { DeliveryLine, StatusRegion } from "@/components/delivery-status";
 import { RecordMark } from "@/components/record-mark";
 import { SendToCoach } from "@/components/transfer-share";
@@ -9,7 +9,7 @@ import { Alert, Button, Dialog, Empty, LinkButton, Skeleton, cx } from "@/compon
 import { useApp } from "@/lib/app-context";
 import { fmtNum, useLoad } from "@/lib/hooks";
 import { completedSets, volumeDaSessao, weekStart } from "@/lib/domain/progression";
-import { activeMinutes } from "@/lib/domain/session-time";
+import { completudeLinha, duracaoDoTreino, duracaoTexto } from "@/lib/domain/session-time";
 import { sessionDeliveryText, type SessionDelivery } from "@/lib/domain/delivery";
 import { downloadText, sessionsToCsv } from "@/lib/domain/export";
 import { track } from "@/lib/analytics";
@@ -93,8 +93,11 @@ export function HistoryView({
           <ul className="space-y-2">
             {sessions.map((s) => {
               const isOpen = open === s.id;
-              // Minutos e volume pelas regras únicas (R3-4, R3-6 B), nunca fim − início nem o `volumeKg` gravado.
-              const minutes = activeMinutes(s);
+              // Minutos, completude e volume pelas regras únicas (R3-4, R3-6 B), nunca fim − início, `sets.length` nem o
+              // `volumeKg` gravado: "42 min ativos", "55 min (início ao fim)" (sessão antiga) e "1 de 24 séries (parcial)".
+              const minutes = duracaoTexto(duracaoDoTreino(s));
+              const series = completudeLinha(s);
+              const pains = s.exercises.filter((e) => e.pain === true).length;
               const state = delivery?.stateOf(s.id) ?? null;
               const text = state && delivery ? sessionDeliveryText(state, delivery.coachFirst) : null;
               return (
@@ -105,9 +108,18 @@ export function HistoryView({
                       <span className="block truncate font-bold">{s.dayTitle?.trim() || (s.dayKey ? `Treino ${s.dayKey}` : "Treino livre")}</span>
                       <span className="num block text-xs text-steel">
                         {new Date(s.startedAt).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "short" })}
-                        {minutes ? ` · ${minutes} min` : ""} · {fmtNum(volumeDaSessao(s), 0)} kg
+                        {minutes ? ` · ${minutes}` : ""}
+                        {series ? ` · ${series}` : ""} · {fmtNum(volumeDaSessao(s), 0)} kg
                         {s.feeling ? ` · ${FEELING[s.feeling]}` : ""}
                       </span>
+                      {/* Dor marcada (R3-7): texto com ícone, dentro do botão (entra no nome acessível da linha). */}
+                      {pains ? (
+                        <span className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-iron">
+                          <span className="sr-only">, </span>
+                          <Info className="size-3.5 shrink-0 text-info-ink" aria-hidden />
+                          {pains === 1 ? "Dor marcada em 1 exercício" : `Dor marcada em ${pains} exercícios`}
+                        </span>
+                      ) : null}
                       {/* Linha curta do envio: dentro do botão, entra no nome acessível ("…, Envio iniciado · 23/11"). */}
                       {text?.short ? (
                         <DeliveryLine icon={text.icon} className="mt-0.5 text-xs">
@@ -128,13 +140,26 @@ export function HistoryView({
                               <td className="px-4 py-2 font-semibold">
                                 {e.name}
                                 {s.prs.includes(e.exerciseId) ? <RecordMark variant="icon" className="ml-1.5 align-[-0.125em]" /> : null}
+                                {e.pain === true ? (
+                                  <span className="mt-0.5 flex items-center gap-1 text-xs text-iron">
+                                    <Info className="size-3.5 shrink-0 text-info-ink" aria-hidden />
+                                    Dor marcada
+                                  </span>
+                                ) : null}
                                 {e.notes ? <span className="block text-xs font-normal text-steel">{e.notes}</span> : null}
                               </td>
                               <td className="px-4 py-2 text-right text-steel">
-                                {completedSets(e)
-                                  .map((x) => (x.loadKg ? `${fmtNum(x.loadKg)}×${x.reps}` : `${x.reps}`))
-                                  .join(" · ")}
-                                {e.unit === "seg" ? " seg" : e.unit === "min" ? " min" : ""}
+                                {/* Exercício que ficou só pela dor (parou antes da 1ª série): diz isso, nunca uma célula vazia. */}
+                                {completedSets(e).length ? (
+                                  <>
+                                    {completedSets(e)
+                                      .map((x) => (x.loadKg ? `${fmtNum(x.loadKg)}×${x.reps}` : `${x.reps}`))
+                                      .join(" · ")}
+                                    {e.unit === "seg" ? " seg" : e.unit === "min" ? " min" : ""}
+                                  </>
+                                ) : (
+                                  "Sem série feita"
+                                )}
                               </td>
                             </tr>
                           ))}

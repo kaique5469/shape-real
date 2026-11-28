@@ -1,16 +1,26 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { parseDietText, sumItems } from "@/lib/domain/nutrition";
+import { itensAConferir, parseDietText, sumItems } from "@/lib/domain/nutrition";
 import { Textarea } from "@/components/ui";
 
 const SAMPLE = "Café da manhã: 2 ovos, 1 pão francês, café\nAlmoço: 150g de arroz, 1 concha de feijão, 130g de frango, salada\nLanche: iogurte natural, 1 banana\nJantar: 200g de batata-doce e 120g de patinho";
 
+const conta = (n: number, um: string, varios: string) => `${n} ${n === 1 ? um : varios}`;
+
+/** "Total parcial: 1 item não reconhecido e 1 item para conferir." ou "" quando tudo foi lido. */
+export function rotuloParcial(naoLidos: number, conferir: number): string {
+  const p = [naoLidos ? conta(naoLidos, "item não reconhecido", "itens não reconhecidos") : null, conferir ? conta(conferir, "item para conferir", "itens para conferir") : null].filter(Boolean);
+  return p.length ? `Total parcial: ${p.join(" e ")}.` : "";
+}
+
 /** Demonstração real do leitor de dieta (roda no navegador, com a mesma base de alimentos do app). */
 export function DietDemo() {
   const [text, setText] = useState(SAMPLE);
-  const { meals, unknown } = useMemo(() => parseDietText(text), [text]);
+  const lido = useMemo(() => parseDietText(text), [text]);
+  const { meals, unknown } = lido;
   const t = sumItems(meals.flatMap((m) => m.items));
+  const parcial = rotuloParcial(unknown.length, itensAConferir(lido).length);
   const target = { kcal: 2300, proteinG: 160 };
   return (
     <div className="grid gap-4 lg:grid-cols-[1.1fr_1fr]">
@@ -35,6 +45,10 @@ export function DietDemo() {
             </div>
           ))}
         </div>
+        {/* R3-5: com trecho não lido ou item a conferir, o total é só o que foi lido. */}
+        <p role="status" className={parcial ? "border-b border-rule px-3 py-2 text-sm font-semibold" : "sr-only"}>
+          {parcial}
+        </p>
         <ul className="ruled max-h-48 overflow-y-auto text-sm">
           {meals.flatMap((m) =>
             m.items.map((i) => (

@@ -13,7 +13,7 @@ import { coachSignature, signerFor } from "@/lib/domain/program-share";
 import { firstName, waLink, waPhone } from "@/lib/domain/format";
 import { todayISO } from "@/lib/domain/ids";
 import { comparisonDates } from "@/lib/domain/evolution";
-import { buildReport, fmtDuration, markText, nameList, reportBase, reportGoal, reportLabels, reportSessionsValue, reportToText, strengthChange, strengthNotes, type EvolutionReport, type ReportDays } from "@/lib/domain/report";
+import { buildReport, fmtDuration, markText, nameList, reportBase, reportGoal, reportGoalNote, reportLabels, reportSessionsValue, reportToText, strengthChange, strengthNotes, type EvolutionReport, type ReportDays } from "@/lib/domain/report";
 import { fmtDate, fmtNum, useLoad } from "@/lib/hooks";
 import type { PhotoPose, Profile, ProgressPhoto } from "@/lib/domain/types";
 
@@ -175,7 +175,10 @@ export function ReportView({ subject, byCoach }: { subject: Profile; byCoach: bo
         <Empty
           title="Ainda não há o que relatar"
           body={
-            byCoach
+            // Personal no modo local (R3-15): só tem os treinos que o aluno mandou; nada de "não treinou".
+            base === "recebidos"
+              ? `Nenhum treino recebido nem avaliação de ${first} nos últimos ${days} dias. O relatório se monta sozinho conforme os treinos chegam e as medidas são registradas.`
+              : byCoach
               ? `Nenhum treino nem avaliação de ${first} nos últimos ${days} dias. O relatório se monta sozinho conforme os treinos e as medidas são registrados.`
               : `Nenhum treino nem medida registrados nos últimos ${days} dias. O resumo se monta sozinho conforme você treina.`
           }
@@ -224,6 +227,7 @@ function Sheet({
   if (r.minutes) summary.push(["Tempo treinado", fmtDuration(r.minutes)]);
   if (r.sets) summary.push(["Séries feitas", String(r.sets)]);
   if (r.volumeKg) summary.push(["Carga total levantada", `${fmtNum(r.volumeKg / 1000, 1)} t`]);
+  const goalNote = reportGoalNote(r);
 
   return (
     <article className="overflow-hidden rounded-[var(--radius-ficha)] border border-rule bg-paper print:rounded-none print:border-0" aria-label="Relatório de evolução">
@@ -275,14 +279,20 @@ function Sheet({
               ))}
             </tbody>
           </table>
-          <dl className="ruled min-w-0 self-start text-[0.9375rem]">
-            {summary.map(([k, v]) => (
-              <div key={k} className="flex items-baseline justify-between gap-3 py-2">
-                <dt className="text-steel">{k}</dt>
-                <dd className="num text-right font-bold">{v}</dd>
-              </div>
-            ))}
-          </dl>
+          <div className="min-w-0 self-start">
+            {/* A 360 px, "Frequência pelos treinos recebidos" e "4 (1 parcial) de 13 combinados" quebram dentro da
+                própria coluna (min-w-0 nas duas), nunca empurram a folha para os lados. */}
+            <dl className="ruled text-[0.9375rem]">
+              {summary.map(([k, v]) => (
+                <div key={k} className="flex items-baseline justify-between gap-3 py-2">
+                  <dt className="min-w-0 text-steel">{k}</dt>
+                  <dd className="num min-w-0 text-right font-bold">{v}</dd>
+                </div>
+              ))}
+            </dl>
+            {/* De onde vem o "combinados" (E2-meta-snapshot): a frequência de hoje, não a de cada semana passada. */}
+            {goalNote ? <p className="mt-1 text-sm text-steel">{goalNote}</p> : null}
+          </div>
         </div>
       </section>
 

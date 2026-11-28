@@ -3,7 +3,7 @@ import { isIsoDate } from "./delivery";
 import { dietForLink } from "./diet-plan";
 import type { Food } from "./foods";
 import { completedSets, volumeDaSessao } from "./progression";
-import { completude, duracaoDoTreino, duracaoTexto } from "./session-time";
+import { completudeLinha, duracaoDoTreino, duracaoTexto } from "./session-time";
 import type { BodyMetric, ConsentSource, DietPlan, Exercise, Profile, Program, Session } from "./types";
 
 /**
@@ -478,14 +478,8 @@ const kg = (v: number) => v.toLocaleString("pt-BR", { maximumFractionDigits: 2 }
 const br = (iso: string) => new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 const FEELING = ["", "Péssimo", "Ruim", "Ok", "Bom", "Ótimo"];
 
-/**
- * O "1 de 24 séries" da tela, com "(parcial)" abaixo do limiar; null com o treino inteiro ou sem `plannedSets`.
- * O mesmo texto no link de treinos, no Histórico e na página do aluno.
- */
-export function completudeLinha(s: Pick<Session, "exercises" | "plannedSets">): string | null {
-  const c = completude(s);
-  return c.texto ? `${c.texto}${c.parcial ? " (parcial)" : ""}` : null;
-}
+/** O "1 de 24 séries (parcial)" mora em session-time.ts (a tela importa de lá, sem o zod deste arquivo). */
+export { completudeLinha };
 
 /**
  * Uma linha por exercício: "Supino reto com barra: 40×10 · 40×10 · 42,5×8". No título, os minutos pela regra única

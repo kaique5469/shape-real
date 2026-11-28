@@ -3,7 +3,7 @@ import type { Anamnese, AnamneseAnswers, Resumo } from "./anamnese-types";
 import { stripHealth } from "./anamnese";
 import { alunoBase, anamneseBase, anoParaIdade, HOJE, RESPONDIDO_EM } from "./anamnese-fixtures";
 import { readAnamnese } from "./questionario-link";
-import { numerosDoTexto, numerosPermitidos, PROBLEMA_RESUMO, semAlertasFrase, summarize } from "./resumo";
+import { casoSemAlertas, cuidadosFrase, numerosDoTexto, numerosPermitidos, PROBLEMA_RESUMO, semAlertasFrase, summarize } from "./resumo";
 import { SINAIS_PARAR } from "./triagem";
 import type { Profile } from "./types";
 
@@ -50,14 +50,14 @@ describe("summarize", () => {
     expect(resumo(anamneseBase({ ano: undefined, minutos: undefined })).perfil).toBe("Ganhar massa muscular · treina há 3 a 12 meses · 3 dias por semana · academia completa · F");
   });
 
-  it("semAlertasTexto exato sem vermelho, laranja nem amarelo (só azul, nada, ou sedentário sem outro sinal)", () => {
+  it("semAlertasTexto exato sem vermelho, laranja nem amarelo: nada ou sedentário sem outro sinal (caso a); só azul dá a frase do cuidado (caso b, R3-11)", () => {
     const frase = "Nenhum sinal de alerta nas respostas de 20/11. Isso não substitui a avaliação presencial.";
     expect(semAlertasFrase(RESPONDIDO_EM)).toBe(frase);
     expect(resumo(anamneseBase()).semAlertasTexto).toBe(frase);
     expect(resumo(anamneseBase({ regular: "nao" })).semAlertasTexto).toBe(frase);
     const soAzul = resumo(anamneseBase({ parq: parq(4), cirurgia: 1 }));
     expect(soAzul.alertas.map((x) => x.nivel)).toEqual(["azul", "azul"]);
-    expect(soAzul.semAlertasTexto).toBe(frase);
+    expect(soAzul.semAlertasTexto).toBe("Há cuidados para revisar nas respostas de 20/11 (veja abaixo). Nenhum deles trava ou limita a ficha. Isso não substitui a avaliação presencial.");
     expect(resumo(anamneseBase({ condicoes: ["pressao"], pressaoControle: "naoSei" })).semAlertasTexto).toBeNull();
     expect(resumo(stripHealth(anamneseBase())).semAlertasTexto).toBeNull();
   });
@@ -102,6 +102,107 @@ describe("summarize", () => {
   it("é estável: mesma entrada, mesma saída", () => {
     const p = alunoBase({ anamnese: anamneseBase({ parq: parq(4, 6), condicoes: ["coracao"], regular: "nao", dor: 1, dorOnde: [{ r: "lombar" }], dorNota: 8, dorQuando: ["noite"], dorDesde: "ate6s", dorTrauma: 1, dorAlerta: ["neuro"], tratamento: "nao" }) });
     expect(summarize({ profile: p, hoje: HOJE })).toEqual(summarize({ profile: p, hoje: HOJE }));
+  });
+});
+
+describe("R3-11: o resumo nunca diz \"Nenhum sinal de alerta\" quando há cuidado (azul)", () => {
+  const CASOS_AZUIS: [string, Anamnese, string][] = [
+    ["PAR-Q [0,0,0,0,1,0,0]", anamneseBase({ parq: [0, 0, 0, 0, 1, 0, 0] }), "A-PARQ-SIM"],
+    ["transtorno alimentar", anamneseBase({ condicoes: ["alimentar"], orientacao: "nao" }), "A-ALIMENTAR"],
+    ["câncer", anamneseBase({ condicoes: ["cancer"], orientacao: "livre" }), "A-CANCER"],
+    ["cirurgia", anamneseBase({ cirurgia: 1, cirurgiaQual: "vesícula" }), "A-CIRURGIA"],
+    ["gestante liberada", anamneseBase({ gestacao: "gravida", obstetra: "sim" }), "A-GESTANTE-OK"],
+  ];
+
+  for (const [nome, an, id] of CASOS_AZUIS) {
+    it(`${nome}: a frase abre pelo cuidado, aponta os cartões e o alerta azul continua na lista`, () => {
+      const r = resumo(an);
+      expect(r.alertas.map((x) => [x.id, x.nivel])).toContainEqual([id, "azul"]);
+      expect(r.semAlertasTexto).not.toBeNull();
+      expect(r.semAlertasTexto!.startsWith("Nenhum")).toBe(false);
+      expect(r.semAlertasTexto).toContain("cuidados para revisar");
+      expect(r.semAlertasTexto).toContain("veja abaixo");
+      expect(r.semAlertasTexto).not.toMatch(/Nenhum sinal de alerta/);
+      expect(r.semAlertasTexto).toContain("20/11");
+      expect(r.semAlertasTexto).toContain("Isso não substitui a avaliação presencial.");
+    });
+  }
+
+  it("gestante liberada: o token \"gestante\" ajusta a ficha, então a frase não diz que nada limita a ficha", () => {
+    const r = resumo(anamneseBase({ gestacao: "gravida", obstetra: "sim" }));
+    expect(r.semAlertasTexto).toBe("Há cuidados para revisar nas respostas de 20/11 (veja abaixo). Nenhum deles trava a ficha. Isso não substitui a avaliação presencial.");
+    expect(r.semAlertasTexto).not.toMatch(/limita/);
+    expect(cuidadosFrase(RESPONDIDO_EM, true)).toBe(r.semAlertasTexto);
+  });
+
+  it("azul com lembrete (70+ com cirurgia): continua a frase do cuidado, nunca a de \"nenhum sinal\"", () => {
+    const r = resumo(anamneseBase({ ano: anoParaIdade(72), gestacao: undefined, quedas: 0, instavel: 0, medoCair: 0, cirurgia: 1 }));
+    expect(r.alertas.map((x) => x.nivel)).toEqual(["azul", "lembrete"]);
+    expect(r.semAlertasTexto).toBe(cuidadosFrase(RESPONDIDO_EM));
+  });
+
+  it("só lembrete (A-70, A-MENOR) ou nada: frase atual (caso a)", () => {
+    const frase = semAlertasFrase(RESPONDIDO_EM);
+    expect(resumo(anamneseBase()).semAlertasTexto).toBe(frase);
+    const setenta = resumo(anamneseBase({ ano: anoParaIdade(72), gestacao: undefined, quedas: 0, instavel: 0, medoCair: 0 }));
+    expect(setenta.alertas.map((x) => x.id)).toEqual(["A-70"]);
+    expect(setenta.semAlertasTexto).toBe(frase);
+    const menor = resumo(anamneseBase({ ano: anoParaIdade(16), responsavel: "Maria Souza" }));
+    expect(menor.alertas.map((x) => x.id)).toEqual(["A-MENOR"]);
+    expect(menor.semAlertasTexto).toBe(frase);
+  });
+
+  it("vermelho, laranja ou amarelo, com ou sem azul junto: null, como antes (caso c)", () => {
+    expect(resumo(anamneseBase({ condicoes: ["pressao"], pressaoControle: "alta" })).semAlertasTexto).toBeNull();
+    expect(resumo(anamneseBase({ condicoes: ["pressao", "cancer"], pressaoControle: "alta" })).semAlertasTexto).toBeNull();
+    expect(resumo(anamneseBase({ parq: parq(1) })).semAlertasTexto).toBeNull();
+    expect(resumo(anamneseBase({ parq: parq(6) })).semAlertasTexto).toBeNull();
+  });
+
+  it("pacote pelo link com o PAR-Q pela metade: A-PARQ-INCOMPLETO no resumo e nenhuma frase de ausência", () => {
+    const metade = [0, 0, 0, undefined, 0, 0, 0] as unknown as AnamneseAnswers["parq"];
+    const r = resumo(anamneseBase({ parq: metade }));
+    expect(r.alertas.map((x) => x.id)).toContain("A-PARQ-INCOMPLETO");
+    expect(r.semAlertasTexto).toBeNull();
+    const semParq = resumo(anamneseBase({ parq: undefined }));
+    expect(semParq.alertas.map((x) => x.id)).toContain("A-PARQ-INCOMPLETO");
+    expect(semParq.semAlertasTexto).toBeNull();
+  });
+
+  it("casoSemAlertas: a tela escolhe o ícone pelo mesmo caso (cuidado nunca leva o ícone de tudo certo)", () => {
+    expect(casoSemAlertas([])).toBe("nenhum");
+    expect(casoSemAlertas([{ nivel: "lembrete" }])).toBe("nenhum");
+    expect(casoSemAlertas([{ nivel: "azul" }, { nivel: "lembrete" }])).toBe("cuidado");
+    for (const forte of ["vermelho", "laranja", "amarelo"] as const) expect(casoSemAlertas([{ nivel: "azul" }, { nivel: forte }])).toBeNull();
+  });
+
+  it("negativo: nenhuma frase do resumo diz \"liberado\", \"apto\" ou \"pode treinar\"", () => {
+    const fixtures = [anamneseBase(), ...CASOS_AZUIS.map(([, an]) => an), anamneseBase({ ano: anoParaIdade(72), gestacao: undefined, quedas: 0, instavel: 0, medoCair: 0 })];
+    for (const an of fixtures) {
+      const t = resumo(an).semAlertasTexto ?? "";
+      expect(t).not.toMatch(/liberad|apto|apta|pode treinar/i);
+    }
+    expect(cuidadosFrase(RESPONDIDO_EM)).not.toMatch(/liberad|apto|apta|pode treinar/i);
+    expect(cuidadosFrase(RESPONDIDO_EM, true)).not.toMatch(/liberad|apto|apta|pode treinar/i);
+  });
+
+  it("fuso: a data da frase do cuidado vem do mesmo relógio da frase de 'nenhum sinal' (o do aparelho, como a origem)", () => {
+    for (const answeredAt of ["2026-11-20T23:30:00-03:00", "2026-11-21T00:10:00-03:00", "2026-11-20T02:00:00Z"]) {
+      const r = resumo(anamneseBase({ condicoes: ["cancer"], orientacao: "livre" }, { answeredAt }));
+      expect(r.semAlertasTexto).toBe(cuidadosFrase(answeredAt));
+      const data = (t: string) => t.match(/\d{2}\/\d{2}/)?.[0];
+      expect(data(cuidadosFrase(answeredAt))).toBe(data(semAlertasFrase(answeredAt)));
+      expect(data(cuidadosFrase(answeredAt))).toBeTruthy();
+    }
+  });
+
+  it("guarda de números: a frase do cuidado só tem a data", () => {
+    for (const [, an] of CASOS_AZUIS) {
+      const ok = numerosPermitidos(an, HOJE);
+      const t = resumo(an).semAlertasTexto ?? "";
+      expect(numerosDoTexto(t)).toEqual(["20", "11"]);
+      expect(numerosDoTexto(t).filter((n) => !ok.has(n))).toEqual([]);
+    }
   });
 });
 

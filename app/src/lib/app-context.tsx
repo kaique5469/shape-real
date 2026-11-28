@@ -9,6 +9,7 @@ import { DataError, type Repository } from "@/lib/data/repository";
 import { agendarNovaTentativa } from "@/lib/nova-tentativa";
 import { registerCustomExercises } from "@/lib/domain/exercises";
 import { SOLO_TESTER_ID } from "@/lib/domain/ficha-context";
+import { criadoresDeConteudo, perfisDeEntrada } from "@/lib/domain/perfis-de-entrada";
 import { registerCustomFoods } from "@/lib/domain/foods";
 import type { PlanId, Profile, Role } from "@/lib/domain/types";
 import { uid } from "@/lib/domain/ids";
@@ -55,6 +56,13 @@ interface AppContextValue {
   startSolo: () => Promise<Profile>;
   /** Abre no aparelho um perfil local já gravado (ex.: aluno que recebeu a ficha por link). */
   enterLocalProfile: (p: Profile) => void;
+  /**
+   * R3-1, "Continuar como {nome}" em "Perfis neste aparelho" (/entrar, modo local; a lista vem de
+   * `perfisNesteAparelho` em transfer-client.ts): entra num perfil de entrada deste aparelho, sem "Ver como aluno"
+   * pendurado e fora do modo teste. Recusa (null) qualquer id que não seja perfil de entrada (`perfisDeEntrada`): nunca
+   * entra no contato do personal nem no registro de um aluno do personal.
+   */
+  continueAsLocal: (profileId: string) => Promise<Profile | null>;
   /** Personal passa a ver o app como um aluno seu (e registra o treino por ele, na aula presencial). */
   actAs: (profileId: string) => Promise<void>;
   returnToOwner: () => Promise<Profile | null>;
@@ -347,6 +355,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setUserState(p);
   }, []);
 
+  const continueAsLocal = useCallback(
+    async (profileId: string) => {
+      // Conta na nuvem aberta: a lista não existe (os dados são os da conta).
+      if (mode === "supabase") return null;
+      const todos = localRepo.listLocalProfiles();
+      // Quem criou fichas e dietas de alunos sem `managedBy` (o personal anterior, depois de trocar) também é contato
+      // (a mesma leitura de `criadoresNesteAparelho`, sem importar transfer-client aqui).
+      const conteudo: { ownerId: string; createdBy: string }[] = [];
+      for (const a of todos) {
+        if (a.role !== "athlete" || a.managedBy) continue;
+        conteudo.push(...(await localRepo.listPrograms(a.id).catch(() => [])));
+        const d = await localRepo.getDiet(a.id).catch(() => null);
+        if (d) conteudo.push(d);
+      }
+      const p = perfisDeEntrada(todos, criadoresDeConteudo(todos, conteudo)).find((x) => x.id === profileId) ?? null;
+      if (!p) return null;
+      ls.del(RETURN_KEY);
+      ls.del(TESTER_KEY);
+      setIsTester(false);
+      setReturnTo(null);
+      enterLocal(p);
+      return p;
+    },
+    [enterLocal, mode],
+  );
+
   const signOut = useCallback(async () => {
     ls.del(LOCAL_SESSION_KEY);
     ls.del(RETURN_KEY);
@@ -545,6 +579,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       startTester,
       startSolo,
       enterLocalProfile: enterLocal,
+      continueAsLocal,
       actAs,
       returnToOwner,
       refreshCustom,
@@ -553,7 +588,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       sendMagicLink,
       accessToken,
     }),
-    [ready, repo, mode, user, isTester, plan, returnTo, customVersion, setUser, updateProfile, signOut, startLocal, startDemo, startTester, startSolo, enterLocal, actAs, returnToOwner, refreshCustom, signInPassword, signUpPassword, sendMagicLink, accessToken],
+    [ready, repo, mode, user, isTester, plan, returnTo, customVersion, setUser, updateProfile, signOut, startLocal, startDemo, startTester, startSolo, enterLocal, continueAsLocal, actAs, returnToOwner, refreshCustom, signInPassword, signUpPassword, sendMagicLink, accessToken],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

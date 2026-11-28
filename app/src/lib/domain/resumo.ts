@@ -4,7 +4,7 @@
  * (`respostasPorParte`, em anamnese.ts); `atencao`, `conferir.itens`, `disse`, `extras`, `falta` e `mudou` ficam
  * vazios até a Entrega 2 (blocos 4 a 9).
  */
-import type { Anamnese, Resumo, WorkStyle } from "./anamnese-types";
+import type { Alerta, Anamnese, Resumo, WorkStyle } from "./anamnese-types";
 import { fmtData, fmtDiaMes, idadeDe, PERGUNTAS, primeiroNome, respostaDe, rotuloOpcao } from "./anamnese";
 import { readAnamnese } from "./questionario-link";
 import { ALERTA_DEF, alertas, SINAIS_PARAR } from "./triagem";
@@ -18,8 +18,37 @@ export const PROBLEMA_RESUMO: Record<NonNullable<Resumo["problema"]>, string> = 
 /** Faixa do bloco 0 quando `velho` (os alertas continuam visíveis). */
 export const VELHO_TEXTO = "Respostas de saúde com mais de 1 ano. Peça para atualizar.";
 
+/** Caso (a) do bloco 1 (R3-11): nenhum alerta além de lembrete. */
 export function semAlertasFrase(answeredAt: string): string {
   return `Nenhum sinal de alerta nas respostas de ${fmtDiaMes(answeredAt)}. Isso não substitui a avaliação presencial.`;
+}
+
+/**
+ * Caso (b) do bloco 1 (R3-11): algum azul ("Cuidado") e nada vermelho, laranja ou amarelo. A frase abre pelo cuidado:
+ * começar por "Nenhum…" repetiria, numa leitura rápida, a falsa ausência de alerta. Só a data como número (guarda).
+ * `ajustaFicha`: algum azul muda a ficha gerada (A-GESTANTE-OK põe o token "gestante"); aí a frase não diz que nenhum
+ * deles limita a ficha, porque não seria verdade.
+ */
+export function cuidadosFrase(answeredAt: string, ajustaFicha = false): string {
+  const efeito = ajustaFicha ? "Nenhum deles trava a ficha." : "Nenhum deles trava ou limita a ficha.";
+  return `Há cuidados para revisar nas respostas de ${fmtDiaMes(answeredAt)} (veja abaixo). ${efeito} Isso não substitui a avaliação presencial.`;
+}
+
+/**
+ * Qual frase o bloco 1 mostra no lugar dos cartões fortes: "nenhum" (só lembrete ou nada), "cuidado" (algum azul, nada
+ * mais forte) ou null (vermelho, laranja ou amarelo: os cartões falam por si). Alerta coberto conta (continua visível).
+ * A tela usa o mesmo caso para o ícone: "cuidado" leva o ícone de informação, nunca o de "tudo certo".
+ */
+export function casoSemAlertas(lista: readonly Pick<Alerta, "nivel">[]): "nenhum" | "cuidado" | null {
+  if (lista.some((x) => x.nivel === "vermelho" || x.nivel === "laranja" || x.nivel === "amarelo")) return null;
+  return lista.some((x) => x.nivel === "azul") ? "cuidado" : "nenhum";
+}
+
+function semAlertasTextoDe(lista: readonly Alerta[], answeredAt: string): string | null {
+  const caso = casoSemAlertas(lista);
+  if (caso === "nenhum") return semAlertasFrase(answeredAt);
+  if (caso === "cuidado") return cuidadosFrase(answeredAt, lista.some((x) => x.nivel === "azul" && x.efeito === "token"));
+  return null;
 }
 
 const EXPERIENCIA_PERFIL: Record<string, string> = {
@@ -93,12 +122,11 @@ export function summarize(i: { profile: Profile; ws?: WorkStyle; hoje: Date }): 
   if (r === "versao_nova" || r === "invalida") return soProblema(r, i.ws);
   const an = r;
   const lista = alertas(an, { hoje: i.hoje, liberacoes: i.profile.liberacoes ?? [] });
-  const temSinal = lista.some((x) => x.nivel === "vermelho" || x.nivel === "laranja" || x.nivel === "amarelo");
   return {
     origem: origemTexto(an, i.profile),
     velho: velho(an.answeredAt, i.hoje),
     alertas: lista,
-    semAlertasTexto: temSinal ? null : semAlertasFrase(an.answeredAt),
+    semAlertasTexto: semAlertasTextoDe(lista, an.answeredAt),
     perfil: perfilTexto(an, i.hoje),
     atencao: [],
     conferir: { titulo: tituloConferir(i.ws), itens: [] },

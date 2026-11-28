@@ -1,6 +1,5 @@
 import type { FaixaMinutosAtivos } from "@/lib/analytics";
 import { unitOf } from "./exercises";
-import { completedSets } from "./progression";
 import type { Session } from "./types";
 
 /**
@@ -44,12 +43,13 @@ export function duracaoDoTreino(s: Pick<Session, "startedAt" | "finishedAt" | "a
 }
 
 /**
- * Texto curto dos minutos: "42 min ativos", "40 min ativos (ajustado)" ou, na sessão antiga, "55 min (início ao fim)"
- * (a duração registrada, nunca chamada de ativa). null sem minutos.
+ * Texto dos minutos: "42 min ativos", "40 min ativos (ajustado)" ou, na sessão antiga, a duração registrada, nunca
+ * chamada de ativa: "55 min (início ao fim)" na linha curta (Histórico, link) e "Duração registrada (início ao fim):
+ * 55 min" onde cabe a frase (`longo`). null sem minutos.
  */
-export function duracaoTexto(d: { min: number; tipo: TipoDuracao } | null): string | null {
+export function duracaoTexto(d: { min: number; tipo: TipoDuracao } | null, opts: { longo?: boolean } = {}): string | null {
   if (!d) return null;
-  if (d.tipo === "registrada") return `${d.min} min (início ao fim)`;
+  if (d.tipo === "registrada") return opts.longo ? `Duração registrada (início ao fim): ${d.min} min` : `${d.min} min (início ao fim)`;
   return d.tipo === "ajustado" ? `${d.min} min ativos (ajustado)` : `${d.min} min ativos`;
 }
 
@@ -67,38 +67,9 @@ export function ajustarMinutosAtivos<S extends Pick<Session, "activeMin" | "acti
 }
 
 // ───────────────────────── Completude ─────────────────────────
-
-/**
- * Séries feitas e planejadas. `planejadas` só existe com `plannedSets` gravado no fim do treino (rodada 3); sem ele,
- * null e nunca "parcial" (não derivar de `sets.length` da sessão salva: os exercícios sem série feita já saíram).
- */
-export function sessionCompleteness(s: Pick<Session, "exercises" | "plannedSets">): { feitas: number; planejadas: number | null } {
-  let feitas = 0;
-  for (const ex of s.exercises) feitas += completedSets(ex).length;
-  const p = s.plannedSets;
-  return { feitas, planejadas: typeof p === "number" && Number.isInteger(p) && p > 0 ? p : null };
-}
-
-/**
- * Limiar do rótulo "parcial" (DECISIONS, rodada 3): menos de metade das séries planejadas. O "{feitas} de {planejadas}"
- * aparece sempre que for menor; só o rótulo espera o limiar (23 de 24 não é "parcial").
- */
-export const LIMIAR_PARCIAL = 0.5;
-
-export interface Completude {
-  feitas: number;
-  planejadas: number | null;
-  /** "1 de 24 séries" quando feitas < planejadas; null sem `plannedSets` ou com o treino inteiro. */
-  texto: string | null;
-  /** Abaixo de LIMIAR_PARCIAL das planejadas. Sempre false sem `plannedSets`. */
-  parcial: boolean;
-}
-
-export function completude(s: Pick<Session, "exercises" | "plannedSets">): Completude {
-  const { feitas, planejadas } = sessionCompleteness(s);
-  if (planejadas === null || feitas >= planejadas) return { feitas, planejadas, texto: null, parcial: false };
-  return { feitas, planejadas, texto: `${feitas} de ${planejadas} ${planejadas === 1 ? "série" : "séries"}`, parcial: feitas < planejadas * LIMIAR_PARCIAL };
-}
+// Mora em completude.ts (fora do grafo de toda rota); reexportada aqui para os importadores de sempre.
+export { completude, completudeLinha, LIMIAR_PARCIAL, parciaisNaSemana, sessionCompleteness, textoParciais } from "./completude";
+export type { Completude } from "./completude";
 
 /**
  * Faixa de minutos ATIVOS do `workout_completed.minutos_ativos` (nunca o bruto). null = sem minutos para mostrar.
@@ -164,6 +135,23 @@ export function registrarAtividade(t: TempoAtivo, nowMs: number, justificadoMs =
   const resto = gap - coberto;
   if (resto <= PAUSA_LONGA_MS) return { tempo: { lastActivityAt: now, activeMs: t.activeMs + gap, pausedMs: t.pausedMs }, pausaMs: 0 };
   return { tempo: { lastActivityAt: now, activeMs: t.activeMs + coberto, pausedMs: t.pausedMs + resto }, pausaMs: resto };
+}
+
+/**
+ * Relógio do cabeçalho da sessão, em segundos: o tempo ativo acumulado mais o intervalo desde a última atividade, que
+ * para de crescer em PAUSA_LONGA_MS (parado na tela por mais que isso, o relógio espera; na próxima atividade a pausa
+ * sai inteira, com o aviso). Rascunho antigo, sem relógio: a duração desde o início, só até MAX_MINUTOS_BRUTOS (um
+ * rascunho de ontem não mostra horas de treino). null = não mostrar o relógio.
+ */
+export function segundosNaTela(t: TempoAtivo | undefined, startedAt: string, nowMs: number): number | null {
+  if (!Number.isFinite(nowMs)) return null;
+  if (!t) {
+    const bruto = (nowMs - Date.parse(startedAt)) / 1000;
+    return Number.isFinite(bruto) && bruto <= MAX_MINUTOS_BRUTOS * 60 ? Math.max(0, Math.floor(bruto)) : null;
+  }
+  const gap = nowMs - Date.parse(t.lastActivityAt);
+  const extra = Number.isFinite(gap) && gap > 0 ? Math.min(gap, PAUSA_LONGA_MS) : 0;
+  return Math.floor((t.activeMs + extra) / 1000);
 }
 
 /** Minutos ativos no toque em "Finalizar" (o intervalo desde a última atividade segue a mesma regra). */

@@ -220,8 +220,10 @@ function detectar(an: Anamnese, hoje: Date): Partial<Record<AlertId, Texto>> {
   }
   // Junto salvo pela metade: PAR-Q, Saúde ou Dores com obrigatória sem resposta é dado que falta, não liberação
   // (spec §4.2 e A-SEM-TRIAGEM). Reaproveita A-PARQ-INCOMPLETO (porta, sem pedir liberação médica).
-  const partesSaude = (an.incompleto ?? []).filter((s) => s === "saude" || s === "dor");
-  if (an.via === "junto" && (!parqCompleto(a) || partesSaude.length)) {
+  // Pelo link (R3-11), o formulário exige o PAR-Q; chegar pela metade (pacote alterado, versão antiga ou bug) também é
+  // dado que falta. O pacote continua aceito: recusar perderia as outras respostas.
+  const partesSaude = an.via === "junto" ? (an.incompleto ?? []).filter((s) => s === "saude" || s === "dor") : [];
+  if (!parqCompleto(a) || partesSaude.length) {
     const soParq = partesSaude.length === 0;
     out["A-PARQ-INCOMPLETO"] = {
       titulo: soParq ? "PAR-Q incompleto" : TITULO_SAUDE_INCOMPLETA,

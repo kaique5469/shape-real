@@ -40,7 +40,7 @@ export function assumedReps(current: Pick<SetLog, "loadKg">, previous: Pick<SetL
   return heavier && repsMin ? Math.min(previous.reps, repsMin) : previous.reps;
 }
 
-export function completedSets(log: ExerciseLog): SetLog[] {
+export function completedSets(log: Pick<ExerciseLog, "sets">): SetLog[] {
   return log.sets.filter((s) => s.done && (s.reps ?? 0) > 0);
 }
 

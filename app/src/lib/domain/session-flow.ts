@@ -9,7 +9,8 @@
  *  - U2a e U5a (fim do treino): `summaryHeadline` (linha "salvo neste …" do resumo) e `programWithFinishedLoads`
  *    (carga feita copiada para a ficha sem virar edição);
  *  - rodada 3 (R3-4, R3-7): `sessaoParaSalvar` (o que vai para o histórico no "Finalizar": séries planejadas antes do
- *    filtro, minutos ativos, volume pela convenção única) e `marcarDor` ("Senti dor" num exercício).
+ *    filtro, minutos ativos, volume pela convenção única), `ficaNoTreino` e `resumoParaGuardar` (o que fica no treino
+ *    salvo), `marcarDor` ("Senti dor" num exercício) e os textos `PAIN_MARKED_NOTE` e `painSummaryNote`.
  */
 
 import { completedSets, volumeDaSessao } from "./progression";
@@ -336,7 +337,7 @@ export function programWithFinishedLoads(program: Program, exercises: readonly E
  */
 export function sessaoParaSalvar(src: Session, opts: { agora: Date; tempo?: TempoAtivo }): Session | null {
   const plannedSets = src.exercises.reduce((n, e) => n + e.sets.length, 0);
-  const exercises = src.exercises.filter((e) => completedSets(e).length > 0 || e.pain === true);
+  const exercises = src.exercises.filter(ficaNoTreino);
   if (!exercises.some((e) => completedSets(e).length > 0)) return null;
   const nowMs = opts.agora.getTime();
   const s: Session = { ...src, exercises, finishedAt: opts.agora.toISOString() };
@@ -347,6 +348,35 @@ export function sessaoParaSalvar(src: Session, opts: { agora: Date; tempo?: Temp
   if (opts.tempo && Number.isFinite(nowMs)) s.activeMin = minutosAtivosAoFinalizar(opts.tempo, nowMs);
   s.volumeKg = volumeDaSessao(s);
   return s;
+}
+
+/** Fica no treino salvo: exercício com série feita ou com "Senti dor" marcado (no "Finalizar" e no resumo final). */
+export function ficaNoTreino(e: Pick<ExerciseLog, "sets" | "pain">): boolean {
+  return completedSets(e).length > 0 || e.pain === true;
+}
+
+/**
+ * A sessão do resumo final como vai para o histórico e para o envio: sem o exercício que ficou só pela dor e teve a dor
+ * desmarcada no resumo (sem série feita e sem dor, ele não tem o que mostrar). A tela continua com ele para a pessoa
+ * poder marcar de novo.
+ */
+export function resumoParaGuardar<S extends Pick<Session, "exercises">>(s: S): S {
+  return s.exercises.every(ficaNoTreino) ? s : { ...s, exercises: s.exercises.filter(ficaNoTreino) };
+}
+
+/** Depois de tocar "Senti dor" na sessão: o que muda (só a próxima sugestão), sem culpa nem orientação nova. */
+export const PAIN_MARKED_NOTE = "Dor marcada neste exercício. Na próxima vez, ele começa sem sugestão de carga.";
+
+/**
+ * O mesmo no resumo final, para os exercícios marcados e, com personal, a linha "Dor marcada" que vai na mensagem de
+ * envio (nada escondido no link). `coachFirst` null = sem personal (ou "Ver como aluno").
+ */
+export function painSummaryNote(names: readonly string[], coachFirst: string | null): string {
+  const head =
+    names.length === 1
+      ? `Dor marcada em ${names[0]}. Na próxima vez, ele começa sem sugestão de carga.`
+      : `Dor marcada em ${names.length} exercícios. Na próxima vez, eles começam sem sugestão de carga.`;
+  return coachFirst ? `${head} A marca aparece na mensagem para ${coachFirst}.` : head;
 }
 
 /**

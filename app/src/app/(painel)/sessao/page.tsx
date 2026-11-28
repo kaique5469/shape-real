@@ -2,11 +2,11 @@
 
 import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { CalendarCheck, Check, ChevronDown, Minus, MoreHorizontal, Play, Plus, Square, Timer, Trash2, TrendingUp, TriangleAlert, Trophy, Volume2, VolumeX, X } from "lucide-react";
+import { CalendarCheck, Check, ChevronDown, Info, Minus, MoreHorizontal, Play, Plus, Square, Timer, Trash2, TrendingUp, TriangleAlert, Trophy, Volume2, VolumeX, X } from "lucide-react";
 import { BarbellView } from "@/components/brand";
 import { ExercisePicker } from "@/components/exercise-picker";
 import { isStandaloneDisplay } from "@/components/pwa";
-import { ActionSheet, Alert, Button, Dialog, IconButton, Skeleton, Textarea, cx } from "@/components/ui";
+import { ActionSheet, Alert, Button, Dialog, Field, IconButton, Input, Skeleton, Textarea, cx } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
 import { UNIT_LABEL, getExercise, unitOf } from "@/lib/domain/exercises";
 import { firstName, fmtRest, fmtScheme } from "@/lib/domain/format";
@@ -20,6 +20,7 @@ import {
   firstOfWeek,
   firstRecordSet,
   fmtMark,
+  isPainSuggestion,
   lastPerformance,
   priorSets,
   recordFlags,
@@ -28,7 +29,21 @@ import {
   weekStreak,
   type LoadSuggestion,
 } from "@/lib/domain/progression";
-import { activeMinutes, cardioNovoMs, faixaMinutosAtivos, registrarAtividade, type TempoAtivo } from "@/lib/domain/session-time";
+import {
+  MAX_AJUSTE,
+  MIN_AJUSTE,
+  activeMinutes,
+  ajustarMinutosAtivos,
+  cardioNovoMs,
+  completude,
+  duracaoDoTreino,
+  duracaoTexto,
+  faixaMinutosAtivos,
+  registrarAtividade,
+  segundosNaTela,
+  textoPausa,
+  type TempoAtivo,
+} from "@/lib/domain/session-time";
 import { fmtClock, fmtOvertime, nextSetOf, restAfterRemove, restAfterUnmark, restEndedAgoText, restFromDraft, restPhase, shiftRest, startRest, type RestTimer, type SetRef } from "@/lib/domain/rest";
 import { filledUnmarkedTitle, finishGate, markFilledDone, setCounts, setRowDescription, setRowState } from "@/lib/domain/session-checks";
 import {
@@ -43,11 +58,15 @@ import {
   lastSetHint,
   linkGroups,
   linkLabel,
+  marcarDor,
   nextPendingIndex,
+  PAIN_MARKED_NOTE,
+  painSummaryNote,
   programWithFinishedLoads,
   removeExerciseConfirm,
   removeExerciseHint,
   removeSetConfirm,
+  resumoParaGuardar,
   scrollDeltaToReveal,
   sessaoParaSalvar,
   summaryHeadline,
@@ -179,8 +198,8 @@ function Sessao() {
   const tempo = useRef<TempoAtivo | undefined>(undefined);
   // Última sessão vista pelo relógio (para saber que cardio acabou de ser marcado) e a última pausa longa (aviso).
   const tempoSeen = useRef<Session | null>(null);
-  // Etapa 2 (R3-4) mostra `textoPausa(pausaMs)` na retomada; aqui só o registro.
-  const [, setPausaMs] = useState(0);
+  // Pausa longa percebida na última atividade: aviso "Você ficou {X} fora" no rodapé até a pessoa fechar.
+  const [pausaMs, setPausaMs] = useState(0);
 
   // Carrega ficha + histórico; retoma rascunho salvo se for do mesmo treino.
   useEffect(() => {
@@ -720,7 +739,9 @@ function Sessao() {
         setFinishing(false);
         return;
       }
-      const exercises = s.exercises;
+      // Os com série feita (como antes): a carga da ficha, as contagens do evento e a sugestão editada. O exercício só
+      // com dor não entra em nenhuma conta do analytics (nada derivado de dor sai do aparelho).
+      const exercises = s.exercises.filter((e) => completedSets(e).length > 0);
       s.prs = detectPRs(s, [...history, s]);
       const saved = await repo.saveSession(s);
       // A ficha passa a mostrar a carga atual de cada exercício. Copiar a carga não é edição: a data de edição da
@@ -842,11 +863,13 @@ function Sessao() {
   if (!draft) return <SessionSkeleton />;
   if (summary) return <Summary session={summary} history={history} onDone={() => router.push("/hoje")} />;
 
-  const elapsed = Math.max(0, Math.floor((now - new Date(draft.session.startedAt).getTime()) / 1000));
+  // Relógio do cabeçalho pelo tempo ativo (R3-4): o treino de ontem retomado não mostra horas de treino.
+  const elapsed = segundosNaTela(tempo.current, draft.session.startedAt, now);
   const phase = restPhase(rest, now);
   const endInfo = rest && restEnd?.until === rest.until ? restEnd : null;
   // Antes do efeito registrar o fim, decide pelo próprio restPhase (mesma conta), para a barra não piscar.
   const late = phase.phase === "ended" ? (endInfo ? endInfo.late : !phase.justEnded) : false;
+  const pausaTexto = textoPausa(pausaMs);
 
   return (
     <div className={cx("min-h-dvh", !footH && "pb-40")} style={footH ? { paddingBottom: footH + 16 } : undefined}>
@@ -872,9 +895,11 @@ function Sessao() {
               ) : null}
             </p>
           </div>
-          <span className="num plate-type text-lg" aria-label="Tempo de treino">
-            {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}
-          </span>
+          {elapsed !== null ? (
+            <span className="num plate-type text-lg" aria-label="Tempo ativo de treino">
+              {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}
+            </span>
+          ) : null}
           <button
             onClick={() => {
               const on = !sound;
@@ -928,6 +953,7 @@ function Sessao() {
             onDone={(i) => toggleDone(log, i)}
             onAddSet={() => update(log.uid, (l) => ({ ...l, sets: [...l.sets, { loadKg: l.sets[l.sets.length - 1]?.loadKg ?? null, reps: null, done: false }] }))}
             onNotes={(notes) => update(log.uid, (l) => ({ ...l, notes }))}
+            onPain={(on) => setDraft((d) => (d ? { ...d, session: marcarDor(d.session, log.uid, on) } : d))}
           />
         ))}
 
@@ -1037,6 +1063,19 @@ function Sessao() {
           </div>
         ) : null}
         <div className="mx-auto max-w-2xl px-4 py-3">
+          {/* Pausa longa (R3-4): aviso no rodapé, que fica na tela em qualquer rolagem. O texto mora numa região viva
+              sempre montada (anunciado ao aparecer); o "OK" fica fora dela. */}
+          <div className={cx(pausaTexto && "mb-2 flex items-center gap-2 rounded-[6px] border border-plate-blue/30 bg-info-surface py-1 pl-3 pr-1")}>
+            {pausaTexto ? <Info className="size-4 shrink-0 text-info-ink" aria-hidden /> : null}
+            <div role="status" className="min-w-0 flex-1">
+              {pausaTexto ? <p className="py-1.5 text-sm leading-snug text-iron">{pausaTexto}</p> : null}
+            </div>
+            {pausaTexto ? (
+              <Button variant="ghost" className="shrink-0 px-3" aria-label="OK, fechar aviso da pausa" onClick={() => setPausaMs(0)}>
+                OK
+              </Button>
+            ) : null}
+          </div>
           {error ? (
             <Alert tone="error" className="mb-2">
               {error}
@@ -1227,15 +1266,18 @@ interface BlockProps {
   onDone: (i: number) => void;
   onAddSet: () => void;
   onNotes: (n: string) => void;
+  /** "Senti dor" (R3-7): explícito e opcional; desmarcar tira a marca. Nunca vai para o analytics. */
+  onPain: (on: boolean) => void;
 }
 
 const clock = (sec: number) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
 
-function ExerciseBlock({ index, log, open, onToggle, suggestion, last, recordAt, link, dissolved, hold, onHoldStart, onHoldStop, swapLabel, swappable, onSwap, onSwapBlocked, onMore, onSet, onDone, onAddSet, onNotes }: BlockProps) {
+function ExerciseBlock({ index, log, open, onToggle, suggestion, last, recordAt, link, dissolved, hold, onHoldStart, onHoldStop, swapLabel, swappable, onSwap, onSwapBlocked, onMore, onSet, onDone, onAddSet, onNotes, onPain }: BlockProps) {
   const ex = getExercise(log.exerciseId);
   const unit: Unit = log.unit ?? unitOf(log.exerciseId);
   const doneCount = log.sets.filter((s) => s.done).length;
   const complete = doneCount === log.sets.length && log.sets.length > 0;
+  const pain = log.pain === true;
   const p = log.planned;
   const barbell = ex?.implement === "barra";
   const optionalLoad = unit !== "reps" || ex?.implement === "peso_corporal" || ex?.implement === "elastico";
@@ -1277,6 +1319,7 @@ function ExerciseBlock({ index, log, open, onToggle, suggestion, last, recordAt,
           <span className="num block truncate text-xs text-steel">
             {p ? fmtScheme({ ...p, exerciseId: log.exerciseId, unit }) : `${log.sets.length} séries`}
             {technique ? ` · ${technique}` : ""} · {doneCount}/{log.sets.length} feitas
+            {pain ? " · dor marcada" : ""}
           </span>
         </span>
         <ChevronDown className={cx("size-5 shrink-0 text-steel transition-transform", open && "rotate-180")} aria-hidden />
@@ -1301,8 +1344,14 @@ function ExerciseBlock({ index, log, open, onToggle, suggestion, last, recordAt,
           {/* Acima das séries, só o que decide a carga: "Última vez" e a sugestão. Dica e descanso ficam embaixo. */}
           <div className="space-y-1 text-sm">
             <p className="num text-steel">Última vez: {last && completedSets(last).length ? completedSets(last).map(fmtSet).join(" · ") : "primeiro registro"}</p>
-            {/* Sugestão de aumento em preto com a seta de alta: o troféu fica só para o recorde, depois que acontece. */}
-            {suggestion && unit === "reps" ? (
+            {/* Sugestão de aumento em preto com a seta de alta: o troféu fica só para o recorde, depois que acontece. Dor
+                marcada da última vez (R3-7): o aviso sem sugestão de carga aparece em qualquer unidade, com o ícone. */}
+            {suggestion && isPainSuggestion(suggestion) ? (
+              <p className="flex items-start gap-1.5 font-semibold text-iron">
+                <Info className="mt-0.5 size-4 shrink-0 text-info-ink" aria-hidden />
+                {suggestion.text}
+              </p>
+            ) : suggestion && unit === "reps" ? (
               <p className="flex items-start gap-1.5 font-semibold text-iron">
                 {suggestion.kind === "aumentar" ? <TrendingUp className="mt-0.5 size-4 shrink-0" aria-hidden /> : null}
                 {suggestion.text}
@@ -1448,10 +1497,26 @@ function ExerciseBlock({ index, log, open, onToggle, suggestion, last, recordAt,
             ) : null}
             <details className="open:basis-full">
               <summary className="flex min-h-11 cursor-pointer items-center text-sm font-semibold text-steel">Anotação</summary>
-              <Textarea value={log.notes ?? ""} onChange={(e) => onNotes(e.target.value)} rows={2} className="mt-1 min-h-16" placeholder="Ex.: pegada mais aberta, dor no ombro na 3ª série" />
+              {/* A dor tem botão próprio ("Senti dor"): a anotação não sugere escrever dor no texto, que o app não lê. */}
+              <Textarea value={log.notes ?? ""} onChange={(e) => onNotes(e.target.value)} rows={2} className="mt-1 min-h-16" placeholder="Ex.: pegada mais aberta, banco na posição 4" />
             </details>
+            {/* "Senti dor" (R3-7): opcional, nunca inferido da anotação. Caixa de marcar como a da série: marcada = ✓ e
+                texto escuro (nunca só cor) e a frase abaixo, anunciada pela região viva. */}
+            <button
+              type="button"
+              role="checkbox"
+              aria-checked={pain}
+              onClick={() => onPain(!pain)}
+              className={cx("-mx-1 flex min-h-11 items-center gap-1.5 rounded px-1 text-sm font-semibold", pain ? "text-iron" : "text-steel hover:text-iron")}
+            >
+              <span className={cx("grid size-5 place-items-center rounded-[4px] border-2", pain ? "border-iron bg-iron text-chalk" : "border-field")} aria-hidden>
+                {pain ? <Check className="size-3.5" strokeWidth={3} /> : null}
+              </span>
+              Senti dor
+            </button>
             {p?.restSec && unit !== "min" ? <p className="num ml-auto text-sm text-steel">Descanso: {fmtRest(p.restSec)}</p> : null}
           </div>
+          <div role="status">{pain ? <p className="text-sm text-steel">{PAIN_MARKED_NOTE}</p> : null}</div>
         </div>
       ) : null}
     </section>
@@ -1590,19 +1655,32 @@ function Summary({ session, history, onDone }: { session: Session; history: Sess
   const { repo, user, returnTo, mode } = useApp();
   const [feeling, setFeeling] = useState<Session["feeling"]>(session.feeling);
   const [note, setNote] = useState(session.note ?? "");
+  // A sessão como está na tela: minutos corrigidos (R3-4) e "Senti dor" marcados aqui (R3-7). O treino já está salvo;
+  // cada mudança grava de novo, como o sentimento e a anotação.
+  const [cur, setCur] = useState<Session>(session);
   const [saving, setSaving] = useState(false);
   /** O último toque de envio nesta tela (canal e a hora gravada). O app só sabe do toque, nunca que a mensagem saiu. */
   const [sent, setSent] = useState<{ via: PrepVia; at: string } | null>(null);
+  // Correção dos minutos: o texto digitado e o erro ficam guardados enquanto o diálogo fecha (sem piscar vazio).
+  const [minAsk, setMinAsk] = useState({ open: false, text: "", error: "" });
+  // "Senti dor" no resumo: começa aberto se a dor já foi marcada durante o treino.
+  const [painOpen] = useState(() => session.exercises.some((e) => e.pain === true));
   const compareId = useId();
+  const painId = useId();
+  const minNoteId = useId();
   // O que está na tela agora (lido na hora de gravar) e a fila de gravações (uma nunca atropela a seguinte).
-  const latest = useRef({ feeling: session.feeling, note: session.note ?? "" });
+  const latest = useRef({ feeling: session.feeling, note: session.note ?? "", session });
   const chain = useRef<Promise<unknown>>(Promise.resolve());
   const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const feelingTracked = useRef(false);
-  // Etapa 2 (R3-4) troca o bloco por "{feitas} de {planejadas} séries · {min} min ativos" com a correção dos minutos.
-  const minutes = activeMinutes(session) ?? 0;
-  const volume = volumeDaSessao(session);
-  const sets = session.exercises.reduce((a, e) => a + completedSets(e).length, 0);
+  // "{feitas} de {planejadas} séries · {min} min ativos" (R3-4): minutos e completude pelas regras únicas, nunca fim −
+  // início nem `sets.length`; sem `plannedSets` (rascunho antigo), só as feitas.
+  const dur = duracaoDoTreino(cur);
+  const comp = completude(cur);
+  const volume = volumeDaSessao(cur);
+  const painNames = cur.exercises.filter((e) => e.pain === true).map((e) => e.name);
+  // Exercício que ficou só pela dor (sem série feita) não conta como feito.
+  const exDone = cur.exercises.filter((e) => completedSets(e).length > 0).length;
   const cmp = useMemo(() => compareWithLastSameDay(session, history), [session, history]);
   // "Semana N seguida" só no 1º treino da semana, e só a partir da 2ª semana (sem contador absoluto de treinos).
   const streak = useMemo(() => (firstOfWeek(session, history) ? weekStreak([...history.filter((h) => h.id !== session.id), session]) : 0), [session, history]);
@@ -1615,10 +1693,10 @@ function Summary({ session, history, onDone }: { session: Session; history: Sess
       clearTimeout(noteTimer.current);
       noteTimer.current = null;
     }
-    const s: Session = { ...session, feeling: latest.current.feeling, note: latest.current.note || undefined };
+    const s: Session = { ...resumoParaGuardar(latest.current.session), feeling: latest.current.feeling, note: latest.current.note || undefined };
     chain.current = chain.current.then(() => repo.saveSession(s)).catch((e) => reportError(e, "treino:salvar-resumo"));
     return chain.current;
-  }, [repo, session]);
+  }, [repo]);
 
   // Anotação ainda no debounce: grava ao sair do app (iOS pode matar a PWA em segundo plano) ou ao sair da tela.
   useEffect(() => {
@@ -1657,6 +1735,29 @@ function Summary({ session, history, onDone }: { session: Session; history: Sess
     }, 600);
   };
 
+  /** "Senti dor" no resumo (R3-7): opcional, grava na hora. Nada disso vai para o analytics. */
+  const togglePain = (logUid: string, on: boolean) => {
+    const next = marcarDor(latest.current.session, logUid, on);
+    latest.current.session = next;
+    setCur(next);
+    void persist();
+  };
+
+  const openMinAsk = () => setMinAsk({ open: true, text: dur ? String(dur.min) : "", error: "" });
+
+  /** Correção dos minutos (R3-4): inteiro de MIN_AJUSTE a MAX_AJUSTE, gravado como "ajustado". O mesmo número fecha sem mudar. */
+  const saveMinutes = () => {
+    const raw = minAsk.text.trim();
+    const n = /^\d{1,3}$/.test(raw) ? Number(raw) : NaN;
+    if (dur && n === dur.min && dur.tipo !== "registrada") return setMinAsk((a) => ({ ...a, open: false }));
+    const next = ajustarMinutosAtivos(latest.current.session, n);
+    if (!next) return setMinAsk((a) => ({ ...a, error: `Use um número inteiro de ${MIN_AJUSTE} a ${MAX_AJUSTE}.` }));
+    latest.current.session = next;
+    setCur(next);
+    setMinAsk((a) => ({ ...a, open: false }));
+    void persist();
+  };
+
   const conclude = async () => {
     setSaving(true);
     if (noteTimer.current) void persist();
@@ -1671,13 +1772,26 @@ function Summary({ session, history, onDone }: { session: Session; history: Sess
         <p className="text-sm font-semibold text-chalk/70">{summaryHeadline({ mode, hasCoach: Boolean(coach), viewingAsStudent: Boolean(returnTo) })}</p>
         <h1 className="plate-type mt-1 text-[2rem] leading-tight">{session.prs.length ? "Dia de recorde." : "Treino na conta."}</h1>
         <dl className="mt-5 grid grid-cols-3 divide-x divide-white/15 border-y border-white/15 py-3 text-center">
-          <div>
-            <dd className="num plate-type text-2xl">{minutes}</dd>
-            <dt className="text-xs text-chalk/70">{minutes === 1 ? "minuto" : "minutos"}</dt>
+          <div className="px-1">
+            {/* Sem minutos para mostrar (treino de segundos, rascunho antigo longo): traço, nunca um número inventado. */}
+            <dd className="num plate-type text-2xl">
+              {dur ? (
+                dur.min
+              ) : (
+                <>
+                  <span aria-hidden>—</span>
+                  <span className="sr-only">Sem registro de</span>
+                </>
+              )}
+            </dd>
+            <dt className="text-xs text-chalk/70">
+              {!dur ? "minutos" : dur.tipo === "registrada" ? "min (início ao fim)" : "min ativos"}
+              {dur?.tipo === "ajustado" ? <span className="block">(ajustado)</span> : null}
+            </dt>
           </div>
-          <div>
-            <dd className="num plate-type text-2xl">{sets}</dd>
-            <dt className="text-xs text-chalk/70">séries</dt>
+          <div className="px-1">
+            <dd className="num plate-type text-2xl">{comp.feitas}</dd>
+            <dt className="text-xs text-chalk/70">{comp.texto ? `de ${comp.planejadas} séries` : comp.feitas === 1 ? "série" : "séries"}</dt>
           </div>
           <div>
             {volume > 0 ? (
@@ -1687,12 +1801,15 @@ function Summary({ session, history, onDone }: { session: Session; history: Sess
               </>
             ) : (
               <>
-                <dd className="num plate-type text-2xl">{session.exercises.length}</dd>
-                <dt className="text-xs text-chalk/70">{session.exercises.length === 1 ? "exercício" : "exercícios"}</dt>
+                <dd className="num plate-type text-2xl">{exDone}</dd>
+                <dt className="text-xs text-chalk/70">{exDone === 1 ? "exercício" : "exercícios"}</dt>
               </>
             )}
           </div>
         </dl>
+        <button type="button" onClick={openMinAsk} className="-ml-2 mt-1 flex min-h-11 items-center px-2 text-sm font-semibold text-chalk/85 underline underline-offset-4 hover:text-chalk">
+          {dur ? "Corrigir minutos" : "Informar minutos"}
+        </button>
 
         {session.prs.length ? (
           <ul className="mt-5 space-y-2">
@@ -1762,6 +1879,36 @@ function Summary({ session, history, onDone }: { session: Session; history: Sess
           />
         </div>
 
+        {/* "Senti dor" (R3-7): opcional e recolhido; aberto se a dor já foi marcada no treino. Caixas de marcar com ✓
+            (nunca só cor); a frase do que muda sai numa região viva sempre montada. */}
+        <details className="group mt-4" open={painOpen}>
+          <summary id={painId} className="flex min-h-11 cursor-pointer list-none items-center gap-2 text-sm font-semibold [&::-webkit-details-marker]:hidden">
+            Senti dor em algum exercício
+            <ChevronDown className="size-4 shrink-0 text-chalk/70 transition-transform group-open:rotate-180" aria-hidden />
+          </summary>
+          <div role="group" aria-labelledby={painId} className="mt-1 flex flex-wrap gap-2">
+            {cur.exercises.map((e) => {
+              const on = e.pain === true;
+              return (
+                <button
+                  key={e.uid}
+                  type="button"
+                  role="checkbox"
+                  aria-checked={on}
+                  onClick={() => togglePain(e.uid, !on)}
+                  className={cx("flex min-h-11 max-w-full items-center gap-2 rounded-[6px] border px-3 py-1.5 text-left text-[0.8125rem] font-semibold", on ? "border-chalk bg-chalk text-iron" : "border-white/25 hover:border-white/60")}
+                >
+                  <span className={cx("grid size-4 shrink-0 place-items-center rounded-[3px] border-2", on ? "border-iron bg-iron text-chalk" : "border-white/60")} aria-hidden>
+                    {on ? <Check className="size-3" strokeWidth={3} /> : null}
+                  </span>
+                  <span className="min-w-0 [overflow-wrap:anywhere]">{e.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        </details>
+        <div role="status">{painNames.length ? <p className="mt-2 text-sm text-chalk/80">{painSummaryNote(painNames, coach ? coachFirst : null)}</p> : null}</div>
+
         {/* Um só botão principal, sempre visível: com personal, "Enviar para …"; sozinho, "Concluir". */}
         <div className="sticky bottom-0 -mx-5 mt-5 border-t border-white/10 bg-iron px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3">
           {coach ? (
@@ -1777,7 +1924,7 @@ function Summary({ session, history, onDone }: { session: Session; history: Sess
               {/* Fica sempre no mesmo lugar da árvore: o diálogo de envio não fecha quando o botão vira "Enviar de novo". */}
               <SendToCoach
                 where="resumo"
-                sessions={[{ ...session, feeling, note: note || undefined }]}
+                sessions={[{ ...resumoParaGuardar(cur), feeling, note: note || undefined }]}
                 size={sent ? "md" : "lg"}
                 variant={sent ? "ghost" : "inverse"}
                 label={sent ? `Enviar de novo para ${coachFirst}` : `Enviar para ${coachFirst}`}
@@ -1805,6 +1952,39 @@ function Summary({ session, history, onDone }: { session: Session; history: Sess
           )}
         </div>
       </div>
+
+      <Dialog open={minAsk.open} onClose={() => setMinAsk((a) => ({ ...a, open: false }))} title="Corrigir minutos ativos">
+        <form
+          noValidate
+          onSubmit={(e) => {
+            e.preventDefault();
+            saveMinutes();
+          }}
+        >
+          {/* Treino de um rascunho antigo (sem relógio): mostra a duração registrada, nunca chamada de ativa. */}
+          <p className="text-[0.9375rem] text-steel">
+            {dur?.tipo === "registrada" ? `${duracaoTexto(dur, { longo: true })}. ` : ""}Conte só o tempo em que você treinou, sem as pausas. O treino fica marcado como ajustado.
+          </p>
+          <Field label="Minutos ativos" hint={`De ${MIN_AJUSTE} a ${MAX_AJUSTE}.`} error={minAsk.error || undefined} noteId={minNoteId} className="mt-4">
+            <Input
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={3}
+              value={minAsk.text}
+              aria-invalid={minAsk.error ? true : undefined}
+              aria-describedby={minNoteId}
+              onChange={(e) => setMinAsk((a) => ({ ...a, text: e.target.value.replace(/\D/g, "").slice(0, 3), error: "" }))}
+              className="num w-28"
+            />
+          </Field>
+          <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button type="button" variant="secondary" onClick={() => setMinAsk((a) => ({ ...a, open: false }))}>
+              Cancelar
+            </Button>
+            <Button type="submit">Salvar minutos</Button>
+          </div>
+        </form>
+      </Dialog>
     </div>
   );
 }

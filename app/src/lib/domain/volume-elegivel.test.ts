@@ -21,8 +21,9 @@ describe("volumeElegivel / volumeDaSessao (R3-6 B)", () => {
   it("série por tempo não conta, mesmo sem unit gravada (vale a unidade do exercício, como na tela)", () => {
     const pranchaSemUnit = log("prancha", [feita(10, 60)]);
     expect(volumeElegivel(pranchaSemUnit, pranchaSemUnit.sets[0]!)).toBe(0);
-    // A função antiga lia `ex.unit ?? "reps"` e contava 600: é a divergência que a trilha S corrige nos leitores.
-    expect(sessionVolume({ exercises: [pranchaSemUnit] })).toBe(600);
+    // A função antiga lia `ex.unit ?? "reps"` e contava 600. Agora `sessionVolume` delega a `volumeDaSessao` (convenção
+    // única, trilha S): a mesma unidade da tela, 0.
+    expect(sessionVolume({ exercises: [pranchaSemUnit] })).toBe(0);
   });
 
   it("máquina assistida: a carga é ajuda, volume 0", () => {

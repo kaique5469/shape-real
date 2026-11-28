@@ -143,6 +143,8 @@ export function SendToStudent({
                     {/* Montada junto com os botões, antes de qualquer toque; só o texto muda. */}
                     <StatusRegion className="mt-2" text={toque ? prepStatusText(toque.via, toque.at, first, "personal") : null} icon={toque?.via === "copy" ? "copia" : "whatsapp"} />
                   </div>
+                  {/* R3-17: o que vai no link e quem consegue ler. */}
+                  <p className="text-sm text-steel">{estado.aviso}</p>
                   <p className="text-sm text-steel">Mudou a ficha ou a dieta? Envie de novo: o celular de {first} atualiza, e os treinos já registrados continuam lá.</p>
                 </>
               )}

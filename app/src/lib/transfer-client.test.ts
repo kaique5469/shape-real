@@ -170,7 +170,9 @@ describe("cópia de segurança", () => {
     storage.clear();
     const parsed = parseBackup(JSON.stringify(backup))!;
     const r = await restoreBackup(parsed);
-    expect(r).toEqual({ profile: coach, students: 1 });
+    expect(r).toMatchObject({ profile: coach, students: 1, rodadasOmitidas: [] });
+    // Aparelho limpo: tudo entra, nada fica (R3-6 A.4).
+    expect(r.plano).toMatchObject({ mantidos: 0, deOutroPerfil: 0, iguais: 0 });
     const custom = new Set((await localRepo.listCustomExercises("c1")).map((e) => e.id));
     const used = (await localRepo.listPrograms("s1")).flatMap((p) => p.days.flatMap((d) => d.exercises.map((e) => e.exerciseId))).filter((id) => id.startsWith("custom_"));
     expect(used).toEqual(["custom_remada"]);
@@ -519,7 +521,8 @@ describe("eco da versão da ficha (U2c)", async () => {
     it("ficha de outro personal zera o que não veio", async () => {
       const aluna = await importFicha(fichaPk(program, diet), null);
       const outro = buildFichaPacket({ coach: { ...coach, id: "c9", name: "Camila Souza" }, student, program: { ...program, id: "p9", updatedAt: "2026-11-15T10:00:00.000Z" }, diet: null, customExercises: [remada], customFoods: [] });
-      const depois = await importFicha(outro, aluna);
+      // R3-1: trocar de personal no mesmo perfil só com a escolha explícita ("Trocar de personal neste perfil").
+      const depois = await importFicha(outro, aluna, { target: "update", allowRelink: true });
       expect(depois.remoteCoach).toMatchObject({ id: "c9", recebido: { programAt: "2026-11-15T10:00:00.000Z" } });
       expect(depois.remoteCoach?.recebido).not.toHaveProperty("dietAt");
     });
@@ -534,11 +537,11 @@ describe("eco da versão da ficha (U2c)", async () => {
       await seedCoachDevice();
       await importTreinos(pk(), "s1"); // sem coachId: não grava
       expect(delivery.fichaAckOf("s1")).toBeNull();
-      await importTreinos(pk(), "s1", { coachId: "c2" }); // outro personal
+      await importTreinos(pk(), "s1", { coachId: "c2", confirmedOther: true }); // outro personal (confirmado na tela, R3-1)
       expect(delivery.fichaAckOf("s1")).toBeNull();
       await importTreinos(pk({ ficha: undefined }), "s1", { coachId: "c1" }); // link antigo, sem eco
       expect(delivery.fichaAckOf("s1")).toBeNull();
-      await importTreinos(pk({ studentRef: "outro-aluno" }), "s1", { coachId: "c1" }); // aluno escolhido à mão
+      await importTreinos(pk({ studentRef: "outro-aluno" }), "s1", { coachId: "c1", confirmedOther: true }); // aluno escolhido à mão (confirmado)
       expect(delivery.fichaAckOf("s1")).toBeNull();
       await importTreinos(pk(), "s1", { coachId: "c1" });
       expect(delivery.fichaAckOf("s1")).toMatchObject({ programAt: program.updatedAt, treinosSentAt: "2026-11-22T10:00:00.000Z" });

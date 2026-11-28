@@ -11,7 +11,7 @@ import { ColarLink } from "@/components/colar-link";
 import { BackupReminder } from "@/components/backup-reminder";
 import { Alert, Badge, Button, Dialog, Empty, Input, LinkButton, PageHeader, Skeleton } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
-import { fmtNum, relativeDay, useLoad } from "@/lib/hooks";
+import { fmtNum, relativeDay, textosDoPainel, useLoad } from "@/lib/hooks";
 import { programValidity, waLink, type Validity } from "@/lib/domain/format";
 import {
   LIST_TOOLS_MIN,
@@ -35,6 +35,7 @@ import {
 } from "@/lib/domain/attention";
 import { CARTAO_JEITO_KEY, CARTAO_JEITO_TEXTO, diasDePedidoPendente, mostrarCartaoJeito, seloDoAluno, type Selo } from "@/lib/domain/anamnese-perfil";
 import { todayISO } from "@/lib/domain/ids";
+import { textoParciais } from "@/lib/domain/session-time";
 import { GOAL_LABEL } from "@/lib/domain/generator";
 import { PLANS, studentQuota } from "@/lib/domain/plans";
 import { welcomeRequested } from "@/lib/entry-points";
@@ -170,6 +171,8 @@ function Alunos() {
 
   const canManage = repo.capabilities.managedStudents;
   const local = repo.mode === "local";
+  // R3-15: no modo local o personal só tem os treinos que o aluno mandou ("mandou treino", nunca "treinou").
+  const textos = textosDoPainel(local);
   const rows = useMemo(() => {
     const now = new Date();
     return (data ?? [])
@@ -337,7 +340,7 @@ function Alunos() {
 
   return (
     <>
-      <PageHeader title="Alunos" sub="Quem treinou, quem está com a ficha vencendo e quem precisa de um empurrão." actions={addAction} />
+      <PageHeader title="Alunos" sub={textos.sub} actions={addAction} />
 
       <div className="mb-4 space-y-2 empty:hidden">
         <ColarLink />
@@ -459,7 +462,7 @@ function Alunos() {
               </dd>
             </div>
             <div className="px-1">
-              <dt className="text-xs text-steel">Treinaram na semana</dt>
+              <dt className="text-xs text-steel">{textos.semana}</dt>
               <dd className="num plate-type text-2xl">{activeWeek}</dd>
             </div>
             <div className="px-1">
@@ -592,7 +595,9 @@ function Alunos() {
 function StudentRow({ row, mode }: { row: Row; mode: "local" | "supabase" }) {
   const { s, week, goal, top, validity } = row;
   const last = s.lastSessionAt ? relativeDay(s.lastSessionAt) : mode === "local" ? "nada recebido ainda" : "nenhum treino ainda";
-  const summary = [week === null ? null : `${week}${goal ? ` de ${goal}` : ""} na semana`, top === "sem_noticias" ? null : last].filter(Boolean).join(" · ");
+  // "2 de 4 na semana · 1 parcial" (R3-4 item 2): parcial = menos da metade das séries planejadas; só aparece com 1 ou mais.
+  const parciais = week === null ? null : textoParciais(s.partialWeek);
+  const summary = [week === null ? null : `${week}${goal ? ` de ${goal}` : ""} na semana`, parciais, top === "sem_noticias" ? null : last].filter(Boolean).join(" · ");
   const ficha = programLine({ programName: s.activeProgram?.name ?? null, goalLabel: s.profile.goal ? GOAL_LABEL[s.profile.goal] : null, validity, top });
   const Icon = top ? REASON_ICON[top] : null;
   const selo = row.selo ? { ...row.selo, ...SELO_ICON[row.selo.selo] } : null;

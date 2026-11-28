@@ -253,6 +253,24 @@ interface Owned<T> {
   item: T;
 }
 
+// Ordem das listas: a mesma em listSessions/listPrograms/listMetrics e no painel (listStudents), que lê cada coleção uma vez.
+const porInicioDesc = (a: Session, b: Session) => b.startedAt.localeCompare(a.startedAt);
+const porAtivaEEdicao = (a: Program, b: Program) => Number(b.active) - Number(a.active) || b.updatedAt.localeCompare(a.updatedAt);
+const porDataAsc = (a: BodyMetric, b: BodyMetric) => a.date.localeCompare(b.date);
+
+/** Linhas de uma coleção agrupadas por dono, só dos ids pedidos, na ordem em que estão gravadas. */
+function agruparPor<T>(rows: readonly T[], dono: (r: T) => string, ids: ReadonlySet<string>): Map<string, T[]> {
+  const out = new Map<string, T[]>();
+  for (const r of rows) {
+    const id = dono(r);
+    if (!ids.has(id)) continue;
+    const lista = out.get(id);
+    if (lista) lista.push(r);
+    else out.set(id, [r]);
+  }
+  return out;
+}
+
 export class LocalRepository implements Repository {
   readonly mode = "local" as const;
   // Tudo fica num aparelho só: convite por código não alcança outro celular,
@@ -274,7 +292,7 @@ export class LocalRepository implements Repository {
   async listPrograms(ownerId: string) {
     return read<Program>("programs")
       .filter((p) => p.ownerId === ownerId)
-      .sort((a, b) => Number(b.active) - Number(a.active) || b.updatedAt.localeCompare(a.updatedAt));
+      .sort(porAtivaEEdicao);
   }
   async getProgram(id: string) {
     return read<Program>("programs").find((p) => p.id === id) ?? null;
@@ -302,7 +320,7 @@ export class LocalRepository implements Repository {
   async listSessions(userId: string, opts?: { limit?: number }) {
     const rows = read<Session>("sessions")
       .filter((s) => s.userId === userId)
-      .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+      .sort(porInicioDesc);
     return opts?.limit ? rows.slice(0, opts.limit) : rows;
   }
   async saveSession(session: Session) {
@@ -325,7 +343,7 @@ export class LocalRepository implements Repository {
   async listMetrics(userId: string) {
     return read<BodyMetric>("metrics")
       .filter((m) => m.userId === userId)
-      .sort((a, b) => a.date.localeCompare(b.date));
+      .sort(porDataAsc);
   }
   async saveMetric(metric: BodyMetric) {
     return upsert("metrics", metric);
@@ -369,15 +387,33 @@ export class LocalRepository implements Repository {
   }
 
   // personal -----------------------------------------------------------------
+  /**
+   * Painel do personal. Lê cada coleção UMA vez (rodada 3, R3-6) e agrupa por aluno: com 100 alunos, antes eram 300
+   * JSON.parse das coleções inteiras. O resultado é o mesmo de chamar listSessions/listPrograms/listMetrics por aluno
+   * (mesmos filtros e mesma ordem; há teste de equivalência). Nada muda no formato gravado.
+   */
   async listStudents(coachId: string) {
     const links = read<Link>("links").filter((l) => l.coachId === coachId);
-    const profiles = read<Profile>("profiles");
+    if (!links.length) return [];
+    const perfis = new Map<string, Profile>();
+    // O primeiro perfil com o id vale (como o `find` de antes).
+    for (const p of read<Profile>("profiles")) if (!perfis.has(p.id)) perfis.set(p.id, p);
+    const ids = new Set(links.map((l) => l.studentId).filter((id) => perfis.has(id)));
+    const sessoes = agruparPor(read<Session>("sessions"), (s) => s.userId, ids);
+    const fichas = agruparPor(read<Program>("programs"), (p) => p.ownerId, ids);
+    const medidas = agruparPor(read<BodyMetric>("metrics"), (m) => m.userId, ids);
     const out = [];
     for (const l of links) {
-      const p = profiles.find((x) => x.id === l.studentId);
+      const p = perfis.get(l.studentId);
       if (!p) continue;
       out.push(
-        summarizeStudent(p, l.since, await this.listSessions(p.id), await this.listPrograms(p.id), await this.listMetrics(p.id)),
+        summarizeStudent(
+          p,
+          l.since,
+          [...(sessoes.get(p.id) ?? [])].sort(porInicioDesc),
+          [...(fichas.get(p.id) ?? [])].sort(porAtivaEEdicao),
+          [...(medidas.get(p.id) ?? [])].sort(porDataAsc),
+        ),
       );
     }
     return out;

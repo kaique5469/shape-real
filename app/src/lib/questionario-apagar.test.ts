@@ -1,3 +1,7 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 /**
@@ -25,7 +29,40 @@ class MemStorage {
 }
 vi.stubGlobal("localStorage", new MemStorage());
 
+// O diálogo de "Apagar respostas" renderizado de verdade (rodada 3, R3-9 item 4); só o contexto do app e a medição são trocados.
+vi.mock("@/lib/app-context", () => ({ useApp: () => ({ repo: { saveProfile: async (p: unknown) => p } }) }));
+vi.mock("@/lib/analytics", () => ({ track: () => undefined, reportError: () => undefined }));
+
 const qc = await import("./questionario-client");
+
+describe("frase curta das cópias de segurança (R3-9 item 4)", () => {
+  const FRASE = "Cópias de segurança feitas antes continuam com esses dados. Apague os arquivos se não precisar deles.";
+  const fonte = (rel: string) => readFileSync(path.resolve(__dirname, "..", rel), "utf8");
+
+  it("aparece no diálogo de Apagar respostas, depois do que sai do aparelho", async () => {
+    const { ApagarRespostasDialog } = await import("@/components/anamnese/apagar-respostas-dialog");
+    const aluno = { id: "aluno-1", name: "Ana Lima", role: "athlete", createdAt: "2026-11-01T12:00:00.000Z", onboarded: true, plan: "free" };
+    const html = renderToStaticMarkup(createElement(ApagarRespostasDialog, { open: true, onClose: () => undefined, student: aluno as never, onSaved: () => undefined }));
+    const texto = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    expect(texto).toContain(`Não dá para desfazer. ${FRASE}`);
+  });
+
+  it("a revogação (TEXTO_REVOGAR no Editar dados) e o Remover aluno usam a mesma frase", async () => {
+    const { TEXTO_COPIAS_ANTIGAS, TEXTO_REVOGAR } = await import("@/lib/domain/anamnese-perfil");
+    expect(TEXTO_COPIAS_ANTIGAS).toBe(FRASE);
+    expect(TEXTO_REVOGAR.endsWith(FRASE)).toBe(true);
+    expect(fonte("components/student-form.tsx")).toMatch(/\{TEXTO_REVOGAR\}/);
+    // "Remover {nome}?" (aluno do painel, modo local): a frase entra só no ramo de remover, nunca no "Desvincular".
+    const aluno = fonte("app/(painel)/alunos/[id]/page.tsx");
+    expect(aluno).toMatch(/Não dá para desfazer\. \$\{TEXTO_COPIAS_ANTIGAS\}/);
+  });
+
+  it("negativo: o diálogo de restaurar não tem a frase (depois do R3-13, restaurar aqui não traz a saúde de volta)", () => {
+    const restaurar = fonte("components/backup-restore.tsx");
+    expect(restaurar).not.toContain("TEXTO_COPIAS_ANTIGAS");
+    expect(restaurar).not.toMatch(/feitas antes continuam/);
+  });
+});
 
 describe("esquecerQuestionarioDoAluno (Apagar respostas e revogação)", () => {
   it("o rascunho do junto sai e cada rodada ganha a marca de apagada", () => {

@@ -21,6 +21,10 @@ export interface Food {
 export const FOODS: Food[] = [
   // Cereais, massas, tubérculos e leguminosas
   { id: "arroz_branco", name: "Arroz branco cozido", aliases: ["arroz branco", "arroz cozido", "arroz"], kcal: 128, p: 2.5, c: 28.1, f: 0.2, unit: { label: "colher de servir", g: 45 }, category: "carbo" },
+  // Crus (R3-5): "100 g de arroz cru" não pode virar arroz cozido calado. TACO 4ª ed., peso seco.
+  { id: "arroz_cru", name: "Arroz branco cru", aliases: ["arroz branco cru", "arroz cru", "arroz seco"], kcal: 358, p: 7.2, c: 78.8, f: 0.3, unit: { label: "xícara", g: 185 }, category: "carbo" },
+  { id: "macarrao_cru", name: "Macarrão cru (peso seco)", aliases: ["macarrao cru", "macarrao seco", "massa crua", "espaguete cru"], kcal: 371, p: 10.0, c: 77.9, f: 1.3, unit: { label: "porção", g: 80 }, category: "carbo" },
+  { id: "feijao_cru", name: "Feijão carioca cru", aliases: ["feijao carioca cru", "feijao cru"], kcal: 329, p: 20.0, c: 61.2, f: 1.3, unit: { label: "xícara", g: 170 }, category: "carbo" },
   { id: "arroz_integral", name: "Arroz integral cozido", aliases: ["arroz integral"], kcal: 124, p: 2.6, c: 25.8, f: 1.0, unit: { label: "colher de servir", g: 45 }, category: "carbo" },
   { id: "feijao_carioca", name: "Feijão carioca cozido", aliases: ["feijao carioca", "feijao cozido", "feijao", "caldo de feijao", "feijao fradinho", "feijao de corda", "feijao vermelho", "feijao branco"], kcal: 76, p: 4.8, c: 13.6, f: 0.5, unit: { label: "concha", g: 86 }, category: "carbo" },
   { id: "feijao_preto", name: "Feijão preto cozido", aliases: ["feijao preto"], kcal: 77, p: 4.5, c: 14.0, f: 0.5, unit: { label: "concha", g: 86 }, category: "carbo" },
@@ -279,6 +283,17 @@ export const FOODS: Food[] = [
   { id: "adocante", name: "Adoçante", aliases: ["adocante", "stevia", "sucralose"], kcal: 0, p: 0, c: 0, f: 0, unit: { label: "porção", g: 1 }, category: "outros" },
   { id: "temperos", name: "Temperos, limão e ervas", aliases: ["tempero", "sal", "pimenta", "oregano", "cheiro verde", "salsinha", "cebolinha", "coentro", "alho", "canela", "vinagre", "limao", "mostarda", "molho shoyu", "shoyu", "molho de pimenta", "molho ingles", "curcuma", "acafrao", "gengibre", "paprica"], kcal: 0, p: 0, c: 0, f: 0, unit: { label: "porção", g: 5 }, category: "outros" },
 ];
+
+/**
+ * Líquidos em que 1 ml pesa cerca de 1 g (água, sucos, leites, refrigerantes, bebidas à base de água). Só para estes a
+ * medida em ml vira gramas direto, e a conversão fica à vista na revisão (R3-5). Fora da lista (azeite, mel, destilado,
+ * alimento do usuário), ml pede confirmação: o app não sabe o peso.
+ */
+export const ML_IGUAL_G: ReadonlySet<string> = new Set([
+  "agua", "cafe", "cha", "suco_laranja", "suco_uva", "suco_caixinha", "agua_coco", "caldo_cana", "refrigerante", "refrigerante_zero", "energetico",
+  "isotonico", "cerveja", "vinho", "caipirinha", "leite_integral", "leite_semi", "leite_desnatado", "leite_achocolatado", "cafe_com_leite", "cappuccino",
+  "vitamina", "bebida_vegetal", "leite_fermentado", "iogurte_natural", "iogurte_desnatado", "iogurte_fruta", "milkshake", "sopa_legumes", "acai", "acai_polpa",
+]);
 
 /** Bebidas alcoólicas: as calorias vêm do álcool, que não entra nos macros. */
 export const ALCOHOL_IDS: ReadonlySet<string> = new Set(["cerveja", "vinho", "destilado", "caipirinha"]);

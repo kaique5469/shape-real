@@ -178,10 +178,7 @@ describe("listas (ALLOWED_PROPS)", () => {
  * está na lista do evento. Chave nova sem lista: este teste falha apontando arquivo e linha (trilhas: mande a chave em
  * "Para a costura"). `DESCARTADAS` = chaves que uma tela ainda passa e o filtro descarta de propósito.
  */
-const DESCARTADAS: Record<string, readonly string[]> = {
-  // A trilha S troca por `minutos_ativos` (faixa de minutos ativos, R3-4). Depois disso esta linha pode sair.
-  workout_completed: ["minutes"],
-};
+const DESCARTADAS: Record<string, readonly string[]> = {};
 
 describe("inventário das chamadas a track()", () => {
   it("nenhuma chave fora da ALLOWED_PROPS", () => {

@@ -148,7 +148,8 @@ describe("envio por link", () => {
 
   it("texto do treino para o WhatsApp", () => {
     const t = sessionToText(session("a", 20));
-    expect(t.split("\n")[0]).toBe("*Treino A — Peito e tríceps · 20/11 · 52 min*");
+    // Sessão sem minutos ativos gravados (anterior à rodada 3): a duração registrada, rotulada assim (R3-4).
+    expect(t.split("\n")[0]).toBe("*Treino A — Peito e tríceps · 20/11 · 52 min (início ao fim)*");
     expect(t).toContain("• Supino reto com barra: 40×10 · 42,5×8");
     expect(t).toContain("• Prancha: 45 s");
     expect(t).toContain("Recorde: Supino reto com barra");

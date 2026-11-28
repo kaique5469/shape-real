@@ -223,7 +223,12 @@ export interface Resumo {
   origem: string;
   velho: boolean;
   alertas: Alerta[];
-  semAlertasTexto: string | null; // "Nenhum sinal de alerta nas respostas de DD/MM. Isso não substitui a avaliação presencial."
+  /**
+   * Três casos (rodada 3, R3-11; `casoSemAlertas` em resumo.ts): só lembrete ou nada → "Nenhum sinal de alerta nas
+   * respostas de DD/MM. Isso não substitui a avaliação presencial."; algum azul e nada mais forte → "Há cuidados para
+   * revisar nas respostas de DD/MM (veja abaixo)…"; vermelho, laranja ou amarelo → null.
+   */
+  semAlertasTexto: string | null;
   perfil: string;
   atencao: ItemResumo[]; // [E2] bloco 4
   conferir: { titulo: "Na primeira aula, conferir" | "Na primeira conversa, perguntar"; itens: ItemResumo[] }; // [E2] bloco 5

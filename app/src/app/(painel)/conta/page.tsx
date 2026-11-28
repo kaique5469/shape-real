@@ -26,13 +26,18 @@ import type { WorkStyle } from "@/lib/domain/anamnese-types";
 import { AVISO_CREF, comDefinido, oQueMuda, resolveDefaults } from "@/lib/domain/work-style";
 import { estadoChave, questionarioLigado } from "@/lib/flags";
 import type { ActivityLevel, Equipment, Goal, Level, PlanId, Profile, Sex, SystemId } from "@/lib/domain/types";
+import { rodapeVersao, versaoDoBuild } from "@/lib/versao";
+
+/** Descrição do "Sair" no modo local (R3-1). */
+const SAIR_ID = "sair-local-explica";
 
 /** Apaga tudo o que o app guarda neste aparelho (dados, registro de envio, rascunho do treino, sessão local). */
 async function wipeDevice() {
   await localRepo.wipe();
   try {
     Object.keys(localStorage)
-      .filter((k) => k === "sr:return" || k === "sr:session")
+      // sr:hoje-retomar:* = o "Dispensar" do convite de retomar no Hoje (R3-8): só um id, mas é deste aparelho.
+      .filter((k) => k === "sr:return" || k === "sr:session" || k.startsWith("sr:hoje-retomar:"))
       .forEach((k) => localStorage.removeItem(k));
   } catch {}
 }
@@ -302,7 +307,11 @@ export default function ContaPage() {
                       onChange={(e) => set(consentFromCheckbox(user, e.target.checked, "aluno", new Date().toISOString()))}
                       className="mt-0.5 size-5 shrink-0 accent-[var(--color-iron)]"
                     />
-                    <span>Autorizo guardar meus dados de saúde (peso, medidas, fotos e dieta) para acompanhar meu treino. Só eu e o personal que eu aceitar temos acesso.</span>
+                    {/* R3-9 item 5: no modo local nada sai do aparelho sem um envio da pessoa (o "acesso" da conta na nuvem não existe aqui). */}
+                    <span>
+                      Autorizo guardar meus dados de saúde (peso, medidas, fotos e dieta) para acompanhar meu treino.{" "}
+                      {mode === "local" ? "Fica neste celular; só vai para o personal o que você enviar." : "Só eu e o personal que eu aceitar temos acesso."}
+                    </span>
                   </label>
                 </fieldset>
               </>
@@ -517,17 +526,33 @@ export default function ContaPage() {
         </Panel>
 
         {isTester || viewingAsStudent ? null : (
-          <Button
-            variant="ghost"
-            icon={<LogOut className="size-4" />}
-            onClick={async () => {
-              await signOut();
-              router.push("/");
-            }}
-          >
-            Sair
-          </Button>
+          // R3-1: no modo local, sair não apaga nada; a pessoa volta pelo nome em "Perfis neste aparelho" (/entrar).
+          <div>
+            <Button
+              variant="ghost"
+              icon={<LogOut className="size-4" />}
+              aria-describedby={mode === "local" ? SAIR_ID : undefined}
+              onClick={async () => {
+                await signOut();
+                router.push(mode === "local" ? "/entrar" : "/");
+              }}
+            >
+              Sair
+            </Button>
+            {mode === "local" ? (
+              <p id={SAIR_ID} className="mt-1 text-sm text-steel">
+                Seus dados continuam neste aparelho; para voltar, toque no seu nome na entrada.
+              </p>
+            ) : null}
+          </div>
         )}
+
+        {/* R3-2: qual build está aberto neste aparelho ("Versão a1b2c3d · 26/11 · links v1"), o mesmo de /api/versao.
+            Só o SHA público, a data do build e a versão dos links. A página só renderiza no navegador (com o perfil
+            carregado), então a data no fuso do aparelho não diverge da renderização do servidor. */}
+        <p data-versao className="num border-t border-rule pt-4 text-xs text-steel">
+          {rodapeVersao(versaoDoBuild({ sha: process.env.NEXT_PUBLIC_BUILD_SHA, at: process.env.NEXT_PUBLIC_BUILD_AT }))}
+        </p>
       </div>
 
       <Dialog open={wipe} onClose={() => setWipe(false)} title="Apagar tudo e recomeçar?">

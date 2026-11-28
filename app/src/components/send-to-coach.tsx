@@ -7,12 +7,13 @@ import { StatusRegion } from "@/components/delivery-status";
 import { Alert, Button, Dialog, Skeleton } from "@/components/ui";
 import { reportError, track, type TreinosLinkWhere } from "@/lib/analytics";
 import { useApp } from "@/lib/app-context";
-import { prepStatusText, resendCounts, resendEntry, resendNote, sessionDelivery, type PrepEntry, type PrepVia, type SessionDelivery } from "@/lib/domain/delivery";
+import { pendenciaDeEnvio, prepStatusText, resendCounts, resendEntry, resendNote, rotuloDoEnvio, sessionDelivery, textoDoLote, TEXTO_REGISTRO_FALHOU, type PrepEntry, type PrepVia, type SessionDelivery } from "@/lib/domain/delivery";
 import { firstName, waLink } from "@/lib/domain/format";
+import { avisoDoLink, oQueVaiNosTreinos } from "@/lib/domain/link-aviso";
 import { buildTreinosPacket, echoFor, MAX_SESSIONS_PER_LINK, treinosMessage } from "@/lib/domain/transfer";
 import type { Session } from "@/lib/domain/types";
 import { packData } from "@/lib/share-link";
-import { markSessionsPrepared, markSessionsSent, prepLog, sentSessionIds } from "@/lib/transfer-client";
+import { declaracoesDeEnvio, declareSessionsSent, dismissSessionsReminder, markSessionsPrepared, prepLog, sentSessionIds } from "@/lib/transfer-client";
 
 /**
  * Aluno → personal: os treinos para enviar e o envio pelo WhatsApp (aparelho do aluno que recebeu a ficha por link).
@@ -22,10 +23,10 @@ import { markSessionsPrepared, markSessionsSent, prepLog, sentSessionIds } from 
 
 const origin = () => (typeof window !== "undefined" ? window.location.origin : "");
 
-/** Canal do toque de envio. "share" (menu de compartilhar do aparelho) fica reservado para a R3-3. */
+/** Canal do toque de envio. "share" (menu de compartilhar do aparelho) fica reservado (nenhum toque grava "share" hoje). */
 export type EnvioVia = PrepVia | "share";
 
-/** Treino com toque de envio (copiado ou envio iniciado) e sem "Já enviei". */
+/** Treino com toque de envio (copiado ou envio iniciado), sem "Já enviei" e sem o lembrete dispensado depois do toque. */
 export interface TreinoPreparado {
   session: Session;
   via: EnvioVia;
@@ -33,52 +34,69 @@ export interface TreinoPreparado {
 }
 
 /**
- * Pendência de envio no aparelho do aluno (contrato da rodada 3, R3-3; Hoje e Histórico consomem):
- *  - `toSend`: "para enviar" (o banner forte do Hoje e o botão do Histórico);
- *  - `prepared`: "preparado sem confirmação" (copiado ou envio iniciado);
- *  - `declareSent(ids)`: "Já enviei", declaração da pessoa (nunca "recebido");
- *  - `dismiss(ids)`: dispensar o lembrete; nunca vira confirmação.
+ * Pendência de envio no aparelho do aluno (rodada 3, R3-3; Hoje e Histórico consomem):
+ *  - `toSend`: "para enviar" (nenhum toque nem declaração): o banner forte do Hoje e o botão do Histórico;
+ *  - `prepared`: "preparado sem confirmação" (copiado ou envio iniciado, com canal e hora), sem "Já enviei" e sem o
+ *    lembrete dispensado depois do toque. O Hoje só cobra os copiados (`lembreteDeCopia` em domain/delivery.ts); o
+ *    envio iniciado no WhatsApp não cobra no Hoje (o Histórico mostra o estado de cada treino);
+ *  - `declareSent(ids)`: "Já enviei", declaração da pessoa (nunca "recebido"). false = não gravou;
+ *  - `dismiss(ids)`: dispensar o lembrete; nunca vira confirmação (o treino continua "preparado" no Histórico).
+ * Toque antigo (de uma versão anterior, sem canal nem hora) não entra em nenhuma das duas listas.
  */
 export interface PendingWorkouts {
   toSend: Session[];
   prepared: TreinoPreparado[];
-  declareSent(ids: string[]): void;
-  dismiss(ids: string[]): void;
+  declareSent(ids: string[]): boolean;
+  dismiss(ids: string[]): boolean;
 }
 
-const NENHUM_PREPARADO: TreinoPreparado[] = [];
-
-/**
- * Treinos ainda não enviados ao personal. Comportamento de antes da R3-3 (a trilha L muda): `toSend` = treinos fora da
- * lista antiga `sr:sent:{id}`, que o primeiro toque em copiar ou WhatsApp já preenche; `prepared` sempre vazio;
- * `declareSent` grava na lista antiga e relê; `dismiss` não faz nada.
- */
-export function usePendingWorkouts(sessions: Session[] | undefined, version = 0): PendingWorkouts {
-  const { user } = useApp();
-  const [sent, setSent] = useState<Set<string>>(new Set());
-  const [own, setOwn] = useState(0);
-  useEffect(() => {
-    if (user) setSent(sentSessionIds(user.id));
-  }, [user, sessions, version, own]);
-  const toSend = useMemo(() => (!user?.remoteCoach || !sessions ? [] : sessions.filter((s) => !sent.has(s.id))), [user, sessions, sent]);
-  const userId = user?.id;
-  const declareSent = useCallback(
-    (ids: string[]) => {
-      if (!userId || !ids.length) return;
-      markSessionsSent(userId, ids);
-      setOwn((n) => n + 1);
-    },
-    [userId],
-  );
-  const dismiss = useCallback((ids: string[]) => void ids, []);
-  return { toSend, prepared: NENHUM_PREPARADO, declareSent, dismiss };
-}
-
-/** Lê do aparelho o estado de envio de cada treino (lista antiga + log de toques), na hora em que é chamada. */
+/** Lê do aparelho o estado de envio de cada treino (lista antiga, log de toques e declarações), na hora em que é chamada. */
 function readDelivery(userId: string): (id: string) => SessionDelivery {
   const legacySent = sentSessionIds(userId);
   const log = prepLog(userId);
-  return (id) => sessionDelivery({ id, legacySent, log });
+  const decl = declaracoesDeEnvio(userId);
+  return (id) => sessionDelivery({ id, legacySent, log, decl });
+}
+
+/** As duas listas da pendência, lidas agora do aparelho (`pendenciaDeEnvio`, puro, em domain/delivery.ts). */
+function readPending(userId: string, sessions: readonly Session[]): { toSend: Session[]; prepared: TreinoPreparado[] } {
+  return pendenciaDeEnvio(sessions, { legacySent: sentSessionIds(userId), log: prepLog(userId), decl: declaracoesDeEnvio(userId) });
+}
+
+const NADA: { toSend: Session[]; prepared: TreinoPreparado[] } = { toSend: [], prepared: [] };
+
+/**
+ * Pendência de envio (R3-3). Só existe com personal remoto e com `sessions` (undefined desliga, ex.: "Ver como aluno").
+ * `version` relê o aparelho depois de um toque feito em outro componente; "Já enviei" e dispensar releem sozinhos.
+ */
+export function usePendingWorkouts(sessions: Session[] | undefined, version = 0): PendingWorkouts {
+  const { user } = useApp();
+  const [own, setOwn] = useState(0);
+  const [lists, setLists] = useState(NADA);
+  const userId = user?.id;
+  const on = Boolean(user?.remoteCoach && sessions);
+  useEffect(() => {
+    setLists(on && userId && sessions ? readPending(userId, sessions) : NADA);
+  }, [on, userId, sessions, version, own]);
+  const declareSent = useCallback(
+    (ids: string[]) => {
+      if (!userId || !ids.length) return false;
+      const ok = declareSessionsSent(userId, ids);
+      setOwn((n) => n + 1);
+      return ok;
+    },
+    [userId],
+  );
+  const dismiss = useCallback(
+    (ids: string[]) => {
+      if (!userId || !ids.length) return false;
+      const ok = dismissSessionsReminder(userId, ids);
+      setOwn((n) => n + 1);
+      return ok;
+    },
+    [userId],
+  );
+  return useMemo(() => ({ toSend: lists.toSend, prepared: lists.prepared, declareSent, dismiss }), [lists, declareSent, dismiss]);
 }
 
 /**
@@ -131,6 +149,12 @@ export function SendToCoach({
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [status, setStatus] = useState<{ via: PrepVia; at: string } | null>(null);
+  /** R3-3: o toque não ficou registrado neste aparelho (o treino continua "para enviar"). */
+  const [falhou, setFalhou] = useState(false);
+  /** R3-17: o que vai no link (montado junto com a mensagem). */
+  const [aviso, setAviso] = useState<string | null>(null);
+  /** Quantos estavam para enviar quando o diálogo abriu (o lote mostra "20 de 23"). */
+  const [total, setTotal] = useState(0);
   const coach = user?.remoteCoach;
   const coachFirst = coach ? firstName(coach.name) : "seu personal";
 
@@ -140,6 +164,8 @@ export function SendToCoach({
     setMsg(null);
     setErr(null);
     setStatus(null);
+    setFalhou(false);
+    setAviso(null);
     // Nota de reenvio: o toque mais recente entre os treinos desta mensagem (lida ao abrir).
     const stateOf = readDelivery(user.id);
     setNote(
@@ -160,7 +186,10 @@ export function SendToCoach({
       const ficha = echoFor(coach.recebido, coach.id, programs.find((p) => p.active), diet);
       const packet = buildTreinosPacket({ student: user, coachId: coach.id, studentRef: coach.studentRef, sessions: shown, metrics: metrics.slice(-12), ficha });
       const link = `${origin()}/receber#d=${await packData(packet)}`;
-      if (alive) setMsg(treinosMessage(shown, link, coachFirst));
+      if (alive) {
+        setMsg(treinosMessage(shown, link, coachFirst));
+        setAviso(avisoDoLink({ ...oQueVaiNosTreinos(packet), aluno: null, para: coachFirst }));
+      }
     })().catch((e) => {
       reportError(e, "link:montar-treinos");
       if (alive) setErr("Não foi possível montar a mensagem. Tente de novo.");
@@ -174,6 +203,7 @@ export function SendToCoach({
   if (!coach || (!sessions.length && !open)) return null;
 
   function start() {
+    setTotal(sessions.length);
     setShown([...sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, MAX_SESSIONS_PER_LINK));
     setOpen(true);
   }
@@ -183,22 +213,25 @@ export function SendToCoach({
     const at = new Date().toISOString();
     const stateOf = readDelivery(user.id);
     const { resend, novos } = resendCounts(shown.map((s) => stateOf(s.id)));
-    markSessionsPrepared(
+    // R3-3: só os treinos desta mensagem (os que não couberam no link continuam "para enviar").
+    const ok = markSessionsPrepared(
       user.id,
       shown.map((s) => s.id),
       via,
       at,
     );
     track("treinos_link_sent", { via, sessions: shown.length, where, resend, novos });
-    setStatus({ via, at });
+    setFalhou(!ok);
+    setStatus(ok ? { via, at } : null);
     onSent?.(via, at);
   }
+  const lote = textoDoLote(total, MAX_SESSIONS_PER_LINK);
 
   return (
     <>
       {sessions.length ? (
         <Button variant={variant} size={size} className={className} icon={<Send className="size-4" />} onClick={start}>
-          {label ?? (sessions.length === 1 ? `Enviar treino para ${coachFirst}` : `Enviar ${sessions.length} treinos para ${coachFirst}`)}
+          {label ?? rotuloDoEnvio(sessions.length, MAX_SESSIONS_PER_LINK, coachFirst)}
         </Button>
       ) : null}
       <Dialog open={open} onClose={() => setOpen(false)} title={`Enviar para ${coachFirst}`}>
@@ -206,6 +239,7 @@ export function SendToCoach({
           <p className="text-[0.9375rem] text-steel">
             A mensagem mostra o que você fez. O link dentro dela registra {shown.length === 1 ? "o treino" : `os ${shown.length} treinos`} no painel de {coachFirst}, com cargas e repetições.
           </p>
+          {lote ? <p className="text-[0.9375rem] font-semibold">{lote}</p> : null}
           {err ? <Alert tone="error">{err}</Alert> : null}
           {!msg && !err ? <Skeleton className="h-28" /> : null}
           {msg ? (
@@ -226,11 +260,16 @@ export function SendToCoach({
                 </a>
                 <CopyButton text={msg} onCopied={() => sent("copy")} />
               </div>
+              {aviso ? <p className="text-sm text-steel">{aviso}</p> : null}
             </>
           ) : null}
         </div>
         {/* Sempre montada (mesmo antes da mensagem existir) e fora do space-y: vazia, não abre espaço. Só o texto muda. */}
-        <StatusRegion className="mt-3" text={status ? prepStatusText(status.via, status.at, coachFirst, "aluno") : null} icon={status?.via === "copy" ? "copia" : "whatsapp"} />
+        <StatusRegion
+          className="mt-3"
+          text={falhou ? TEXTO_REGISTRO_FALHOU : status ? prepStatusText(status.via, status.at, coachFirst, "aluno") : null}
+          icon={falhou ? "pendente" : status?.via === "copy" ? "copia" : "whatsapp"}
+        />
         {msg && note ? <p className="mt-3 text-sm text-steel">{note}</p> : null}
       </Dialog>
     </>

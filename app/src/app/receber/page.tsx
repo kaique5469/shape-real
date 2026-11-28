@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, CheckCheck, TriangleAlert } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { Check, CheckCheck, Info, TriangleAlert } from "lucide-react";
 import { ConferirDiferencas } from "@/components/anamnese/conferir-diferencas";
 import { Logo } from "@/components/brand";
 import { ColarNoAppCard } from "@/components/colar-link";
@@ -17,6 +17,7 @@ import { applyAnamnese, conflicts, diffLimitacoes, limitacoesPedemConferencia } 
 import { ehExemplo, type Escolhas } from "@/lib/domain/anamnese-types";
 import { receivePreview, receiveResult, seriesText } from "@/lib/domain/delivery";
 import { firstName } from "@/lib/domain/format";
+import { alvoInicialDoRetorno, retornoPedeConfirmacao, TEXTO_RETORNO_SEM_ALUNO, textoConfirmarOutroAluno, textoOutroPersonal } from "@/lib/domain/link-identity";
 import { completedSets } from "@/lib/domain/progression";
 import { packetProblem, parseRespostas, PROBLEMA_TEXTO } from "@/lib/domain/questionario-link";
 import { parsePacket, type TreinosPacket } from "@/lib/domain/transfer";
@@ -620,6 +621,7 @@ function ReceberTreinos({
   /** null enquanto não conferiu. */
   const [noProfile, setNoProfile] = useState<boolean | null>(null);
   const deadEnd = useRef(false);
+  const confirmacaoId = useId();
 
   // Nenhum perfil neste navegador: no iPhone, quase sempre é o personal que usa o app da tela de início.
   useEffect(() => {
@@ -648,14 +650,14 @@ function ReceberTreinos({
     track("link_dead_end_shown", { tela: "receber", motivo, via_paste: viaPaste });
   }, [ready, state, done, noProfile, mode, returnTo, showAppCard, user, students, viaPaste]);
 
-  // Acha o aluno no painel: pelo cadastro de onde a ficha saiu ou, se não achar, pela escolha do personal.
+  // Acha o aluno no painel pelo cadastro de onde a ficha saiu (`studentRef`). Sem ele, nada é pré-escolhido: nome não é
+  // identidade (R3-1; dois alunos podem ter o mesmo nome) e o personal escolhe e confirma.
   useEffect(() => {
     if (!packet || !user || user.role !== "coach" || returnTo) return;
     (async () => {
       const list = await repo.listStudents(user.id).catch(() => [] as StudentSummary[]);
       setStudents(list);
-      const own = list.find((s) => s.profile.id === packet.studentRef);
-      setTarget(own ? own.profile.id : (list.find((s) => s.profile.name.trim().toLowerCase() === packet.studentName.trim().toLowerCase())?.profile.id ?? ""));
+      setTarget(alvoInicialDoRetorno(packet, list) ?? "");
     })();
   }, [packet, user, repo, returnTo]);
 
@@ -681,8 +683,9 @@ function ReceberTreinos({
     setBusy(true);
     setErr(null);
     try {
-      // O eco da versão da ficha (U2c) só é gravado com o personal deste aparelho.
-      const r = await importTreinos(packet, target, { coachId: user?.id });
+      // O eco da versão da ficha (U2c) só é gravado com o personal deste aparelho. Aluno escolhido à mão ou link de outro
+      // personal: só com a confirmação explícita mostrada acima do botão (R3-1).
+      const r = await importTreinos(packet, target, { coachId: user?.id, confirmedOther: pedeConfirmacao });
       const fichaVersao = await receivedFichaVersao(packet, target, user?.id).catch(() => "sem_info" as const);
       track("treinos_link_received", {
         sessions: packet.sessions.length,
@@ -706,8 +709,14 @@ function ReceberTreinos({
   const sessions = packet ? [...packet.sessions].sort((a, b) => a.startedAt.localeCompare(b.startedAt)) : [];
   const first = packet ? firstName(packet.studentName) : "";
   const known = students?.some((s) => s.profile.id === packet?.studentRef);
+  const pede = packet && target ? retornoPedeConfirmacao(packet, target, user?.id) : { outroAluno: false, outroPersonal: false };
+  const pedeConfirmacao = pede.outroAluno || pede.outroPersonal;
+  /** Link de outro personal: o aviso aparece antes de escolher (o pacote já diz isso), sem esperar o aluno. */
+  const deOutroPersonal = Boolean(packet?.coachId && user?.id && packet.coachId !== user.id);
   // Nome do aluno como está no painel deste personal (o do link pode estar escrito de outro jeito).
   const nameOf = (id: string) => firstName(students?.find((s) => s.profile.id === id)?.profile.name ?? packet?.studentName ?? "");
+  /** Nome inteiro do aluno escolhido (na confirmação, dois alunos podem ter o mesmo primeiro nome). */
+  const nomeEscolhido = (students?.find((s) => s.profile.id === target)?.profile.name ?? "").trim().replace(/\s+/g, " ");
   const inPanel = present && present.studentId === target ? present.ids : null;
   const preview = receivePreview(sessions.length, inPanel ? sessions.filter((s) => inPanel.has(s.id)).length : null, nameOf(target));
   const result = done ? receiveResult(done, nameOf(done.studentId)) : null;
@@ -767,6 +776,19 @@ function ReceberTreinos({
                   </span>
                 ) : null}
               </span>
+              {/* Dor marcada pelo aluno (R3-7): o nome de cada exercício, como na página do aluno e na mensagem. */}
+              {s.exercises.some((e) => e.pain === true) ? (
+                <span data-dor className="mt-0.5 flex items-start gap-1.5 text-sm font-semibold text-iron">
+                  <Info className="mt-0.5 size-4 shrink-0 text-info-ink" aria-hidden />
+                  <span className="min-w-0">
+                    Dor marcada:{" "}
+                    {s.exercises
+                      .filter((e) => e.pain === true)
+                      .map((e) => e.name)
+                      .join(", ")}
+                  </span>
+                </span>
+              ) : null}
             </span>
             {s.prs.length ? <RecordMark variant="icon" /> : null}
           </li>
@@ -791,10 +813,13 @@ function ReceberTreinos({
         <Alert tone="warn">Você ainda não tem alunos cadastrados neste aparelho. Cadastre {first} em Alunos e abra o link de novo.</Alert>
       ) : (
         <div className="space-y-3">
+          {/* R3-1: sem o aluno do link no painel, nada é escolhido pelo nome; o personal escolhe e confirma. */}
+          {!known ? <p className="text-[0.9375rem] text-iron">{TEXTO_RETORNO_SEM_ALUNO}</p> : null}
+          {deOutroPersonal ? <Alert tone="warn">{textoOutroPersonal(packet.studentName)}</Alert> : null}
           {!known ? (
             <label className="block">
               <span className="mb-1.5 block text-sm font-semibold">De qual aluno são estes treinos?</span>
-              <Select value={target} onChange={(e) => setTarget(e.target.value)}>
+              <Select value={target} disabled={busy} onChange={(e) => setTarget(e.target.value)}>
                 <option value="">Escolha o aluno</option>
                 {students.map((s) => (
                   <option key={s.profile.id} value={s.profile.id}>
@@ -804,10 +829,28 @@ function ReceberTreinos({
               </Select>
             </label>
           ) : null}
+          {/* A pergunta muda com a escolha: região viva (o leitor de tela ouve a confirmação nova). */}
+          <p id={confirmacaoId} aria-live="polite" className={cx("text-[0.9375rem] font-semibold break-words", !(target && pedeConfirmacao) && "sr-only")}>
+            {target && pedeConfirmacao ? textoConfirmarOutroAluno(packet.studentName, nomeEscolhido) : ""}
+          </p>
           {err ? <Alert tone="error">{err}</Alert> : null}
-          <Button size="lg" className="w-full" loading={busy} disabled={!target} onClick={register}>
-            {preview.allPresent ? "Registrar de novo" : `Registrar no painel${known ? ` de ${first}` : ""}`}
-          </Button>
+          <div className="grid gap-2">
+            <Button
+              size="lg"
+              className="min-h-14 w-full py-3 text-center leading-snug"
+              style={ALTURA_LIVRE}
+              loading={busy}
+              disabled={!target}
+              onClick={register}
+              aria-describedby={target && pedeConfirmacao ? confirmacaoId : undefined}
+            >
+              {target && pedeConfirmacao ? `Sim, registrar em ${nomeEscolhido}` : preview.allPresent ? "Registrar de novo" : `Registrar no painel${known ? ` de ${first}` : ""}`}
+            </Button>
+            {/* Voltar sem registrar: nenhuma gravação. */}
+            <LinkButton href="/alunos" variant="ghost" className="w-full">
+              Agora não
+            </LinkButton>
+          </div>
           <p className="text-sm text-steel">Treinos que já estavam registrados são atualizados, não duplicados.</p>
         </div>
       )}
