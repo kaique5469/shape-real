@@ -13,7 +13,7 @@ import { avisoDoLink, oQueVaiNosTreinos } from "@/lib/domain/link-aviso";
 import { buildTreinosPacket, echoFor, MAX_SESSIONS_PER_LINK, treinosMessage } from "@/lib/domain/transfer";
 import type { Session } from "@/lib/domain/types";
 import { packData } from "@/lib/share-link";
-import { declaracoesDeEnvio, declareSessionsSent, dismissSessionsReminder, markSessionsPrepared, prepLog, sentSessionIds } from "@/lib/transfer-client";
+import { declaracoesDeEnvio, declareSessionsSent, dismissSessionsReminder, markSessionsPrepared, prepLog, sentSessionIds } from "@/lib/link-client";
 
 /**
  * Aluno → personal: os treinos para enviar e o envio pelo WhatsApp (aparelho do aluno que recebeu a ficha por link).

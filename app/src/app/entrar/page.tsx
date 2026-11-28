@@ -12,9 +12,9 @@ import { RestoreBackupButton } from "@/components/backup-restore";
 import { useApp } from "@/lib/app-context";
 import { track } from "@/lib/analytics";
 import { gravarConvite } from "@/lib/flags";
-import { rotuloContinuarComo, textoUltimoUso } from "@/lib/domain/link-identity";
+import { linhaDoPerfil, rotuloContinuarComo, textoUltimoUso } from "@/lib/domain/link-identity";
 import type { Role } from "@/lib/domain/types";
-import { perfisNesteAparelho, type PerfilDeEntrada } from "@/lib/transfer-client";
+import { perfisNesteAparelho, type PerfilDeEntrada } from "@/lib/link-client";
 
 export default function EntrarPage() {
   return (
@@ -115,7 +115,8 @@ function Entrar() {
         <Link href="/" aria-label="Voltar ao início">
           <Logo />
         </Link>
-        <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center py-10">
+        {/* R3-20 (correção da revisão): marco principal para o leitor de tela; o logo fica fora, como cabeçalho. */}
+        <main className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center py-10">
           {cloudAvailable ? (
             <>
               <h1 className="plate-type text-[2rem] leading-tight">{mode === "criar" ? "Crie sua conta" : "Entrar"}</h1>
@@ -242,7 +243,7 @@ function Entrar() {
               </DemoButton>
             </div>
           </div>
-        </div>
+        </main>
       </div>
 
       <aside className="relative hidden overflow-hidden bg-iron text-chalk lg:block" aria-hidden>
@@ -295,7 +296,7 @@ function PerfisNesteAparelho({ perfis }: { perfis: PerfilDeEntrada[] }) {
         Perfis neste aparelho
       </h2>
       <ul className="ruled mt-2 rounded-[var(--radius-ficha)] border border-rule bg-paper">
-        {perfis.map(({ profile, rotulo, ultimoUso }) => {
+        {perfis.map(({ profile, ultimoUso }) => {
           const metaId = `${tituloId}-${profile.id}`;
           const uso = ultimoUso ? textoUltimoUso(ultimoUso) : "";
           return (
@@ -303,7 +304,7 @@ function PerfisNesteAparelho({ perfis }: { perfis: PerfilDeEntrada[] }) {
               <span className="min-w-0 flex-1 basis-40">
                 <span className="block font-bold break-words">{profile.name}</span>
                 <span id={metaId} className="block text-sm text-steel">
-                  {rotulo}
+                  {linhaDoPerfil(profile, lista)}
                   {uso ? ` · ${uso}` : ""}
                 </span>
               </span>

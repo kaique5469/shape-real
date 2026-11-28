@@ -4,7 +4,7 @@ import { ANAMNESE_V, CONSENT_TEXT_ID, PARQ_TEXT_ID, type Anamnese, type Anamnese
 import { getExercise } from "@/lib/domain/exercises";
 import { generateProgram } from "@/lib/domain/generator";
 import { uid, todayISO } from "@/lib/domain/ids";
-import { buildDietTemplate, targetsForProfile } from "@/lib/domain/nutrition";
+import { buildDietTemplate, targetsForProfile } from "@/lib/domain/nutrition-base";
 import { detectPRs, loadIncrement, sessionVolume } from "@/lib/domain/progression";
 import type { BodyMetric, Goal, Implement, Level, MuscleGroup, Profile, Program, Session, SystemId } from "@/lib/domain/types";
 import type { LocalRepository } from "./local";
@@ -78,7 +78,9 @@ export function simulateSessions(userId: string, program: Program, weeks: number
       const monday = (date.getDay() + 6) % 7;
       date.setDate(date.getDate() - monday - w * 7 + off);
       date.setHours(7 + Math.floor(r() * 12), Math.floor(r() * 60), 0, 0);
-      if (date > now) continue;
+      // Nunca no dia de hoje (correção da revisão): com o R3-8, um treino de hoje fecha o dia e esconde o "Começar
+      // treino"; o "Ver como aluno" dos exemplos sempre abre o Hoje com a ação central do app.
+      if (date > now || date.toDateString() === now.toDateString()) continue;
       if (r() < skipRate) continue;
       const day = program.days[dayIdx % program.days.length]!;
       dayIdx++;

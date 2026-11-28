@@ -255,6 +255,11 @@ export type StepId =
   | "dieta"
   | "reavaliar" // [E2]
   | "atualizar_saude"; // [E2]
+/**
+ * Passos ligados às respostas de saúde: saem com "Apagar respostas", com a revogação (anamnese-perfil.ts) e com as
+ * rodadas que não voltam numa restauração (R3-13, restauracao.ts).
+ */
+export const PASSOS_CLINICOS: readonly StepId[] = ["liberacao", "triagem_presencial", "termo", "nutricionista_clinico", "atualizar_saude"];
 export type AcaoPasso =
   | { tipo: "href"; rotulo: string; href: string }
   | { tipo: "pedir"; rotulo: string; reavaliacao?: "saude" | "tudo"; lembrete?: boolean }

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Check, CircleAlert, Copy, IdCard, MessageCircle, MoreHorizontal, Plus, Printer, Replace, Search, Sparkles, Trash2, Wand2, X } from "lucide-react";
 import { shareNames } from "@/components/program/program-share";
-import { TEXTO_COPIA_FALHOU } from "@/components/copy-button";
+import { CopyButton } from "@/components/copy-button";
 import { DeliveryLine, StatusRegion } from "@/components/delivery-status";
 import { ActionSheet, Alert, Button, Dialog, Empty, Field, IconButton, Input, Panel, Select, Skeleton, Textarea, cx, type SheetAction } from "@/components/ui";
 import { DietRead, NotesRead, PlanVsTargets } from "@/components/views/diet-read";
@@ -961,9 +961,6 @@ function SendDietPanel({
 }) {
   const first = firstName(student.name);
   const [tick, setTick] = useState(0);
-  const [msgCopied, setMsgCopied] = useState(false);
-  // Cópia que falhou (sem permissão, navegador sem suporte): nada é registrado e a linha diz o que fazer (R3-3).
-  const [copyFailed, setCopyFailed] = useState(false);
   // Com alterações não salvas, o link levaria a versão antiga: só monta depois de salvar.
   const { estado, erro, toque, aoEnviar } = useFichaLink(student, !dirty, { where: "dieta", version });
   // `version` (salvamentos) e `tick` (toques aqui) só sobem: a soma muda sempre que um dos dois muda.
@@ -1014,40 +1011,10 @@ function SendDietPanel({
         >
           <MessageCircle className="size-4" aria-hidden /> Enviar link no WhatsApp
         </a>
-        <Button
-          variant="secondary"
-          className="flex-1 whitespace-nowrap"
-          disabled={off}
-          icon={msgCopied ? <Check className="size-4" /> : <Copy className="size-4" />}
-          onClick={async () => {
-            if (!estado) return;
-            try {
-              if (!navigator.clipboard?.writeText) throw new Error("sem área de transferência");
-              await navigator.clipboard.writeText(estado.texto);
-            } catch {
-              // Sem área de transferência: nada é registrado; o botão do WhatsApp continua.
-              setMsgCopied(false);
-              setCopyFailed(true);
-              return;
-            }
-            setCopyFailed(false);
-            setMsgCopied(true);
-            sent("copy");
-            setTimeout(() => setMsgCopied(false), 2000);
-          }}
-        >
-          {msgCopied ? "Copiado" : "Copiar mensagem"}
-        </Button>
+        {/* O mesmo botão do envio da ficha (correção da revisão): a cópia que falha não registra o toque, diz o que fazer
+            e mostra a mensagem inteira, com o link, para segurar e copiar. */}
+        <CopyButton text={estado?.texto ?? ""} disabled={off} onCopied={() => sent("copy")} />
       </div>
-      {/* Sempre montada (região viva): vazia, fica fora do fluxo. Ícone e frase: a falha não depende só da cor. */}
-      <p role="status" className={cx("mt-1.5 flex items-start gap-1.5 text-sm text-danger", !copyFailed && "sr-only")}>
-        {copyFailed ? (
-          <>
-            <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-            <span className="min-w-0">{TEXTO_COPIA_FALHOU}</span>
-          </>
-        ) : null}
-      </p>
       {/* Montada junto com os botões, antes de qualquer toque; só o texto muda. */}
       <StatusRegion className="mt-2" text={toque ? prepStatusText(toque.via, toque.at, first, "personal") : null} icon={toque?.via === "copy" ? "copia" : "whatsapp"} />
       {/* R3-17: o que vai no link e quem consegue ler (o mesmo aviso do envio da ficha). */}

@@ -11,7 +11,7 @@ import { avisoDoLink, oQueVaiNaFicha } from "@/lib/domain/link-aviso";
 import { buildFichaPacket, fichaLinkItems, fichaLinkMessage } from "@/lib/domain/transfer";
 import type { DietPlan, Profile, Program } from "@/lib/domain/types";
 import { packData } from "@/lib/share-link";
-import { fichaSendRecord, markFichaPrepared, readFichaDelivery } from "@/lib/transfer-client";
+import { fichaSendRecord, markFichaPrepared, readFichaDelivery } from "@/lib/link-client";
 
 /**
  * Envio da ficha e da dieta por link (`/abrir#d=`) — a peça da anamnese §8.6 na forma mínima que a U2b usa, com o

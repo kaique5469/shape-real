@@ -24,6 +24,7 @@ import {
   rotuloDoPerfil,
   SemPerfilParaAtualizar,
   perfilDoLinkNoAparelho,
+  linhaDoPerfil,
   rotuloContinuarComo,
   telaDoLink,
   telaDoLinkDeOutroPerfil,
@@ -384,5 +385,37 @@ describe("pureza e redação", () => {
         .replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
       expect(fonte.match(new RegExp(LINK_SEGURO.source, "gi")) ?? [], t).toEqual([]);
     }
+  });
+});
+
+describe("correção da revisão: dois perfis com o mesmo nome inteiro ficam distinguíveis", () => {
+  const solo = { id: "s1", name: "Rafael Souza", role: "athlete" as const, createdAt: "2026-11-02T12:00:00Z" };
+  const doPaulo = { id: "s2", name: "Rafael  Souza", role: "athlete" as const, createdAt: "2026-11-27T12:00:00Z", remoteCoach: { id: "c1", name: "Paulo Mendes", studentRef: "x" } };
+
+  it("um solo e um com personal: linhas e botões diferentes, sem dado de saúde", () => {
+    const lista = [solo, doPaulo];
+    expect(linhaDoPerfil(solo, lista)).toBe("Aluno sem personal");
+    expect(linhaDoPerfil(doPaulo, lista)).toBe("Aluno de Paulo Mendes");
+    expect(rotuloContinuarComo(solo, lista)).toBe("Continuar como Rafael Souza (sem personal)");
+    expect(rotuloContinuarComo(doPaulo, lista)).toBe("Continuar como Rafael Souza (de Paulo)");
+  });
+
+  it("mesmo nome e mesmo vínculo: entra a data de criação", () => {
+    const outro = { ...doPaulo, id: "s3", createdAt: "2026-11-20T12:00:00Z" };
+    const lista = [doPaulo, outro];
+    const linhas = lista.map((p) => linhaDoPerfil(p, lista));
+    const botoes = lista.map((p) => rotuloContinuarComo(p, lista));
+    expect(new Set(linhas).size).toBe(2);
+    expect(new Set(botoes).size).toBe(2);
+    expect(linhas[1]).toMatch(/^Aluno de Paulo Mendes · criado em \d{2}\/11$/);
+    expect(botoes[1]).toMatch(/^Continuar como Rafael Souza \(de Paulo, criado em \d{2}\/11\)$/);
+  });
+
+  it("teste negativo: nomes diferentes continuam como antes; personal é 'Personal'", () => {
+    const coach = { id: "c1", name: "Paulo Mendes", role: "coach" as const };
+    const lista = [solo, coach];
+    expect(rotuloContinuarComo(solo, lista)).toBe("Continuar como Rafael");
+    expect(linhaDoPerfil(coach, lista)).toBe("Personal");
+    expect(linhaDoPerfil(solo, lista)).toBe("Aluno sem personal");
   });
 });

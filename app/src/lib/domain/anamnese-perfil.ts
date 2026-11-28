@@ -8,7 +8,7 @@
 import type { FichaLinkExtra, StrictEventProps } from "@/lib/analytics";
 import { evFichaLinkExtra, evNextStep } from "@/lib/anamnese-events";
 import type { AcaoPasso, AlertId, Alerta, Anamnese, Origem, Passo, StepId } from "./anamnese-types";
-import { ehExemplo } from "./anamnese-types";
+import { ehExemplo, PASSOS_CLINICOS } from "./anamnese-types";
 import { algumSimParq, fmtData, fmtDiaMes, gatilhoNutricionista, precisaResponsavel, primeiroNome, stripHealth } from "./anamnese";
 import { mergeLimitations } from "./anamnese-ficha";
 import { calendarDaysSince } from "./attention";
@@ -34,7 +34,6 @@ export function textoPendente(dias: number): string {
 }
 
 /** Passos que só existem por causa da saúde (spec §11.3): a marca de "feito" deles é derivado de saúde. */
-const PASSOS_CLINICOS: readonly StepId[] = ["liberacao", "triagem_presencial", "termo", "nutricionista_clinico", "atualizar_saude"];
 
 type Leitura = { an: Anamnese | null; problema: boolean };
 function ler(p: Profile, campo: "anamnese" | "anamnesePrev" = "anamnese"): Leitura {

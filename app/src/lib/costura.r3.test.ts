@@ -183,13 +183,15 @@ describe("Conta no modo local (R3-1, R3-9 item 5)", () => {
 describe("pontas de tela lidas no fonte (componentes que dependem do navegador)", () => {
   it("R3-17: o aviso do link aparece no SendDietPanel e no SendFichaLink, só com o envio liberado", () => {
     expect(fonte("components/views/diet-view.tsx")).toMatch(/\{!off && estado \? <p className="mt-2 text-sm text-steel">\{estado\.aviso\}<\/p> : null\}/);
-    expect(fonte("components/program/save-summary.tsx")).toMatch(/\{!compact && ready && estado \? <p className="mt-2 text-sm text-steel">\{estado\.aviso\}<\/p> : null\}/);
+    // Correção da revisão: o aviso também na barra compacta (caminho principal do envio depois de salvar).
+    expect(fonte("components/program/save-summary.tsx")).toMatch(/\{ready && estado \? <p className=\{cx\("text-steel", compact \? "mt-1\.5 text-xs" : "mt-2 text-sm"\)\}>\{estado\.aviso\}<\/p> : null\}/);
   });
 
   it("R3-3: a cópia que falha no SendDietPanel diz o que fazer (o mesmo texto do CopyButton), sem registrar o toque", () => {
+    // Correção da revisão: o painel usa o próprio CopyButton (o toque só é registrado em `onCopied`, depois da cópia).
     const f = fonte("components/views/diet-view.tsx");
-    expect(f).toMatch(/import \{ TEXTO_COPIA_FALHOU \} from "@\/components\/copy-button"/);
-    expect(f).toMatch(/setCopyFailed\(true\);\s*return;/);
+    expect(f).toMatch(/import \{ CopyButton \} from "@\/components\/copy-button"/);
+    expect(f).toMatch(/<CopyButton text=\{estado\?\.texto \?\? ""\} disabled=\{off\} onCopied=\{\(\) => sent\("copy"\)\} \/>/);
   });
 
   it("R3-7: a prévia do /receber mostra 'Dor marcada: {exercícios}' em cada treino com dor", () => {

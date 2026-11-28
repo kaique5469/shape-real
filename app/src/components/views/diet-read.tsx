@@ -20,7 +20,7 @@ import {
 } from "@/lib/domain/diet-plan";
 import { dietItemText, macroLine } from "@/lib/domain/diet-share";
 import { fmtDayMonth } from "@/lib/domain/format";
-import { dietTotals, sumItems } from "@/lib/domain/nutrition";
+import { dietTotals, sumItems } from "@/lib/domain/nutrition-base";
 import type { DietPlan, MacroTargets, Meal } from "@/lib/domain/types";
 
 /**

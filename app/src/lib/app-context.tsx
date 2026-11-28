@@ -9,7 +9,7 @@ import { DataError, type Repository } from "@/lib/data/repository";
 import { agendarNovaTentativa } from "@/lib/nova-tentativa";
 import { registerCustomExercises } from "@/lib/domain/exercises";
 import { SOLO_TESTER_ID } from "@/lib/domain/ficha-context";
-import { criadoresDeConteudo, perfisDeEntrada } from "@/lib/domain/perfis-de-entrada";
+import { CONTATOS_KEY, criadoresEContatos, perfisDeEntrada } from "@/lib/domain/perfis-de-entrada";
 import { registerCustomFoods } from "@/lib/domain/foods";
 import type { PlanId, Profile, Role } from "@/lib/domain/types";
 import { uid } from "@/lib/domain/ids";
@@ -369,7 +369,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const d = await localRepo.getDiet(a.id).catch(() => null);
         if (d) conteudo.push(d);
       }
-      const p = perfisDeEntrada(todos, criadoresDeConteudo(todos, conteudo)).find((x) => x.id === profileId) ?? null;
+      // Mais os contatos gravados pelo link ou pela cópia (`sr:v1:contatos`): o personal anterior continua contato mesmo
+      // sem ficha nem dieta dele no perfil.
+      const p = perfisDeEntrada(todos, criadoresEContatos(todos, conteudo, ls.get(CONTATOS_KEY))).find((x) => x.id === profileId) ?? null;
       if (!p) return null;
       ls.del(RETURN_KEY);
       ls.del(TESTER_KEY);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { alunoBase, anamneseBase, HOJE } from "./anamnese-fixtures";
 import type { Anamnese, Liberacao } from "./anamnese-types";
-import { mesclarRestauracao } from "./export";
+import { mesclarRestauracao } from "./restauracao";
 import { readAnamnese } from "./questionario-link";
 import { travaEPorta } from "./triagem";
 import type { Profile } from "./types";

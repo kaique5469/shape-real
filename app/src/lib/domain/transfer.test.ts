@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { cameFromPaste, packData, packedFromHash, packedFromText, pastedLinkHref, unpackData } from "../share-link";
 import { getExercise } from "./exercises";
-import { backupAgeBucket, backupFileName, backupReminderDue, backupStatusShort, backupStatusText, buildBackup, parseBackup, programsToCsv, promptShowsAgain } from "./export";
+import { backupAgeBucket, backupFileName, backupReminderDue, backupStatusShort, backupStatusText, buildBackup, programsToCsv, promptShowsAgain } from "./export";
+import { parseBackup } from "./restauracao";
 import { buildFichaPacket, buildTreinosPacket, consentConfirmed, fichaLinkMessage, consentFromCheckbox, consentMetric, hasHealthData, MAX_SESSIONS_PER_LINK, mergeMetric, mirrorLoads, parsePacket, sessionToText, studentFieldsOf, topLoads, TRANSFER_VERSION, treinosMessage, type FichaPacket, type TreinosPacket } from "./transfer";
 import type { Anamnese } from "./anamnese-types";
 import type { BodyMetric, DietPlan, Exercise, Profile, Program, Session } from "./types";

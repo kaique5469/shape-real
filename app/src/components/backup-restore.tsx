@@ -1,12 +1,13 @@
 "use client";
 
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Upload } from "lucide-react";
 import { Alert, Button, Dialog, cx } from "@/components/ui";
 import { reportError, track } from "@/lib/analytics";
 import { useApp } from "@/lib/app-context";
-import { backupSummary, TEXTO_PROBLEMA_DA_COPIA, textoDoPlano, textoRodadasOmitidas, type Backup, type PlanoRestauracao } from "@/lib/domain/export";
+import { backupSummary, type Backup } from "@/lib/domain/export";
+import { TEXTO_PROBLEMA_DA_COPIA, textoDoPlano, textoRodadasOmitidas, type PlanoRestauracao } from "@/lib/domain/restauracao";
 import type { Profile } from "@/lib/domain/types";
 import { lerCopia, planejarRestauracao, restoreBackup } from "@/lib/transfer-client";
 
@@ -40,6 +41,12 @@ export function RestoreBackupButton({ origin, className }: { origin: "entrar" | 
   const [falha, setFalha] = useState<string | null>(null);
   const hintId = useId();
   const planoId = useId();
+  const erroRef = useRef<HTMLDivElement>(null);
+  // O erro do arquivo aparece onde a pessoa está olhando ao voltar do seletor (correção da revisão: em /entrar a 360 px
+  // ele ficava abaixo da dobra, e só o leitor de tela anunciava). Sem animação: o salto respeita reduced-motion.
+  useEffect(() => {
+    if (err) erroRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [err]);
 
   // Restaurar grava no aparelho: com conta na nuvem os dados já estão lá.
   if (mode === "supabase") return null;
@@ -101,6 +108,11 @@ export function RestoreBackupButton({ origin, className }: { origin: "entrar" | 
 
   const input = <input type="file" accept="application/json,.json" className="sr-only" onChange={pick} aria-describedby={origin === "entrar" ? hintId : undefined} />;
   const summary = pending ? backupSummary(pending) : null;
+  const erro = err ? (
+    <div ref={erroRef} className={cx("w-full basis-full", origin === "entrar" ? "mt-2" : "mt-3")}>
+      <Alert tone="error">{err}</Alert>
+    </div>
+  ) : null;
 
   return (
     <>
@@ -116,16 +128,14 @@ export function RestoreBackupButton({ origin, className }: { origin: "entrar" | 
             <span className="font-semibold text-plate-blue-ink underline underline-offset-2">Restaurar cópia</span>
             {input}
           </label>
+          {/* Em /entrar, logo abaixo do "Restaurar cópia" (antes do texto de apoio): fica na primeira tela. */}
+          {erro}
           <p id={hintId} className="text-[0.8125rem] text-steel">
             Salve o arquivo no celular (no iPhone, em Arquivos) e toque em Restaurar. Fotos não entram na cópia.
           </p>
         </div>
       )}
-      {err ? (
-        <Alert tone="error" className="mt-3 w-full basis-full">
-          {err}
-        </Alert>
-      ) : null}
+      {origin === "conta" ? erro : null}
 
       <Dialog open={Boolean(pending)} onClose={() => (busy ? undefined : fechar())} title="Restaurar esta cópia?">
         {pending && summary ? (

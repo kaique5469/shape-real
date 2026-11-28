@@ -557,6 +557,10 @@ describe("posthog-init.ts", () => {
       person_profiles: "identified_only",
       persistence: "memory",
       disable_session_recording: true,
+      // Correção da revisão: web vitals, mapa de calor e clique morto desligados no código (não dependem do painel).
+      capture_performance: false,
+      capture_heatmaps: false,
+      capture_dead_clicks: false,
       mask_all_text: true,
       mask_all_element_attributes: true,
       autocapture: { element_attribute_ignorelist: ["href", "aria-label", "title", "placeholder", "alt", "value", "name"] },
@@ -579,5 +583,19 @@ describe("posthog-init.ts", () => {
       $ip: null,
       $geoip_disable: true,
     });
+
+    // Correção da revisão: URLs aninhadas (web vitals) também saem sem ?k= e sem #; mapa de calor e clique morto nunca saem.
+    const vitals = (before_send as (e: unknown) => { properties: Record<string, unknown> })({
+      event: "$web_vitals",
+      properties: {
+        $current_url: "https://app.test/testar",
+        $web_vitals_FCP_event: { name: "FCP", value: 812, navigationURL: "https://app.test/testar?k=X#d=Y", $current_url: "https://app.test/testar?k=X#d=Y", attribution: { urls: ["https://app.test/testar?k=X"] } },
+      },
+    });
+    expect(JSON.stringify(vitals.properties)).not.toMatch(/k=|#/);
+    expect(vitals.properties.$web_vitals_FCP_event).toMatchObject({ name: "FCP", value: 812, navigationURL: "https://app.test/testar", $current_url: "https://app.test/testar" });
+    const descartar = before_send as (e: unknown) => unknown;
+    expect(descartar({ event: "$$heatmap", properties: { $heatmap_data: { "https://app.test/questionario": [{ x: 180, y: 552 }] } } })).toBeNull();
+    expect(descartar({ event: "$dead_click", properties: { $current_url: "https://app.test/sessao" } })).toBeNull();
   });
 });

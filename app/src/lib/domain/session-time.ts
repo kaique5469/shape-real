@@ -138,10 +138,11 @@ export function registrarAtividade(t: TempoAtivo, nowMs: number, justificadoMs =
 }
 
 /**
- * Relógio do cabeçalho da sessão, em segundos: o tempo ativo acumulado mais o intervalo desde a última atividade, que
- * para de crescer em PAUSA_LONGA_MS (parado na tela por mais que isso, o relógio espera; na próxima atividade a pausa
- * sai inteira, com o aviso). Rascunho antigo, sem relógio: a duração desde o início, só até MAX_MINUTOS_BRUTOS (um
- * rascunho de ontem não mostra horas de treino). null = não mostrar o relógio.
+ * Relógio do cabeçalho da sessão, em segundos: o tempo ativo acumulado mais o intervalo desde a última atividade enquanto
+ * ele ainda contaria (até PAUSA_LONGA_MS). Parado na tela por mais que isso, o relógio volta ao tempo ativo gravado (o
+ * que `registrarAtividade` e `minutosAtivosAoFinalizar` contam: a pausa sai inteira, com o aviso), e o resumo nunca
+ * mostra menos do que o cabeçalho mostrava sem explicação. Rascunho antigo, sem relógio: a duração desde o início, só
+ * até MAX_MINUTOS_BRUTOS (um rascunho de ontem não mostra horas de treino). null = não mostrar o relógio.
  */
 export function segundosNaTela(t: TempoAtivo | undefined, startedAt: string, nowMs: number): number | null {
   if (!Number.isFinite(nowMs)) return null;
@@ -150,7 +151,7 @@ export function segundosNaTela(t: TempoAtivo | undefined, startedAt: string, now
     return Number.isFinite(bruto) && bruto <= MAX_MINUTOS_BRUTOS * 60 ? Math.max(0, Math.floor(bruto)) : null;
   }
   const gap = nowMs - Date.parse(t.lastActivityAt);
-  const extra = Number.isFinite(gap) && gap > 0 ? Math.min(gap, PAUSA_LONGA_MS) : 0;
+  const extra = Number.isFinite(gap) && gap > 0 && gap <= PAUSA_LONGA_MS ? gap : 0;
   return Math.floor((t.activeMs + extra) / 1000);
 }
 

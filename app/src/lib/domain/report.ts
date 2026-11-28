@@ -173,6 +173,25 @@ export function reportLabels(r: Pick<EvolutionReport, "base">): { treinos: strin
   return r.base === "recebidos" ? { treinos: "Treinos recebidos", frequencia: "Frequência pelos treinos recebidos" } : { treinos: "Treinos feitos", frequencia: "Frequência" };
 }
 
+/** Textos do calendário da folha: título, nome da tabela e o estado de cada dia (leitor de tela). */
+export interface ReportCalendarLabels {
+  titulo: string;
+  tabela: string;
+  comTreino: string;
+  semTreino: string;
+}
+
+/**
+ * Calendário da folha (correção da revisão, R3-15): no modo local do personal, "Treinos recebidos por dia", "treino
+ * recebido" e "nada recebido" no lugar de "Presença" e "sem treino" (o treino que o aluno não mandou não é falta). O
+ * relatório do aluno não muda.
+ */
+export function reportCalendarLabels(r: Pick<EvolutionReport, "base">): ReportCalendarLabels {
+  return r.base === "recebidos"
+    ? { titulo: "Treinos recebidos por dia", tabela: "Dias com treino recebido no período", comTreino: "treino recebido", semTreino: "nada recebido" }
+    : { titulo: "Presença", tabela: "Dias treinados no período", comTreino: "treinou", semTreino: "sem treino" };
+}
+
 /** Valor da linha de treinos do resumo: "4 de 13 combinados", "4 (1 parcial) de 13 combinados", "4". */
 export function reportSessionsValue(r: Pick<EvolutionReport, "sessions" | "partial" | "planned">): string {
   const p = r.partial > 0 ? ` (${r.partial} ${r.partial === 1 ? "parcial" : "parciais"})` : "";

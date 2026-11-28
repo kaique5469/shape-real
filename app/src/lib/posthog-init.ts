@@ -29,10 +29,40 @@ function cleanUrl(value: unknown): unknown {
   }
 }
 
-function cleanBag(bag: Record<string, unknown> | undefined) {
-  if (!bag) return;
-  for (const key of Object.keys(bag)) if (/url|referrer|href/i.test(key)) bag[key] = cleanUrl(bag[key]);
+const CHAVE_DE_URL = /url|referrer|href/i;
+
+/**
+ * Limpa as URLs de um objeto de propriedades (`cleanUrl` em todo texto sob chave que parece URL), também dentro de objetos
+ * e listas aninhados: o `$web_vitals` leva `$web_vitals_FCP_event.navigationURL` e `.$current_url` com o `?k=` do /testar
+ * (correção da revisão). Profundidade limitada: a medição nunca trava a página.
+ */
+function cleanBag(bag: unknown, urlDoPai = false, depth = 0): void {
+  if (!bag || typeof bag !== "object" || depth > 8) return;
+  if (Array.isArray(bag)) {
+    for (let i = 0; i < bag.length; i++) {
+      const v: unknown = bag[i];
+      if (typeof v === "string") {
+        if (urlDoPai) bag[i] = cleanUrl(v);
+      } else cleanBag(v, urlDoPai, depth + 1);
+    }
+    return;
+  }
+  const o = bag as Record<string, unknown>;
+  for (const key of Object.keys(o)) {
+    const v = o[key];
+    const ehUrl = CHAVE_DE_URL.test(key);
+    if (typeof v === "string") {
+      if (ehUrl) o[key] = cleanUrl(v);
+    } else cleanBag(v, ehUrl, depth + 1);
+  }
 }
+
+/**
+ * Eventos que nunca saem: o mapa de calor e o clique "morto" levam a posição de cada toque, inclusive nas telas de
+ * respostas de saúde (o `ph-no-capture` não vale para eles; pelo layout fixo de 360 px dá para inferir a resposta). O
+ * init já os desliga (`capture_heatmaps`, `capture_dead_clicks`); isto é a segunda trava, caso o painel ou o SDK mude.
+ */
+const EVENTOS_DESCARTADOS = new Set(["$$heatmap", "$dead_click"]);
 
 /**
  * Cliques nunca levam o destino do link: os links do WhatsApp (wa.me/<telefone>?text=...) carregam o telefone,
@@ -84,6 +114,11 @@ export function iniciarPosthog(token: string, abertura: LocalPagina, persistence
     // "memory" em /questionario sem perfil de personal (o aluno do link); "localStorage" no resto, inclusive o junto.
     persistence,
     disable_session_recording: true,
+    // Correção da revisão (DECISIONS): nada que dependa do painel. Web vitals (o app não usa; o peso é medido pelo kit) e
+    // mapa de calor e clique morto (ignoram `ph-no-capture` e levam a posição de cada toque nas telas de saúde).
+    capture_performance: false,
+    capture_heatmaps: false,
+    capture_dead_clicks: false,
     // Cliques entram na análise, mas sem o texto nem os rótulos dos elementos (podem conter nomes de alunos).
     mask_all_text: true,
     // Nenhum atributo de elemento (inclusive href: links do WhatsApp levam telefone, mensagem e a ficha codificada).
@@ -91,13 +126,13 @@ export function iniciarPosthog(token: string, abertura: LocalPagina, persistence
     autocapture: { element_attribute_ignorelist: ["href", "aria-label", "title", "placeholder", "alt", "value", "name"] },
     before_send: (event) => {
       if (!event) return event;
+      if (EVENTOS_DESCARTADOS.has(event.event)) return null;
       const props = event.properties as Record<string, unknown> | undefined;
       stripLinkTargets(props);
+      // Recursivo: alcança `$set`, `$set_once` e os objetos aninhados das propriedades.
       cleanBag(props);
-      cleanBag(props?.$set as Record<string, unknown> | undefined);
-      cleanBag(props?.$set_once as Record<string, unknown> | undefined);
-      cleanBag(event.$set as Record<string, unknown> | undefined);
-      cleanBag(event.$set_once as Record<string, unknown> | undefined);
+      cleanBag(event.$set);
+      cleanBag(event.$set_once);
       // Aluno do link: sem IP. Exceções em /questionario e /receber: só o tipo e o código (spec §11.3).
       const { pathname, hash } = window.location;
       return limparEventoPosthog(event, { pathname, hash, temPerfilPersonal: abertura.temPerfilPersonal, persistencia: persistence });

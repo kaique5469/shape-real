@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { alunoBase, anamneseBase } from "./anamnese-fixtures";
 import type { Liberacao } from "./anamnese-types";
 import { apagarRespostas, revogarSaude } from "./anamnese-perfil";
-import { buildBackup, mesclarRestauracao, parseBackup } from "./export";
+import { buildBackup } from "./export";
+import { mesclarRestauracao, parseBackup } from "./restauracao";
 import { consentConfirmed } from "./transfer";
 
 // Revisão da rodada 2 (LGPD): restaurar uma cópia de segurança de ANTES da revogação ou do "Apagar respostas" não

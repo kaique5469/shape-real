@@ -25,9 +25,11 @@ describe("segundosNaTela: relógio do cabeçalho pelo tempo ativo (R3-4)", () =>
     expect(segundosNaTela(t, T0, ms(12))).toBe(12 * 60);
   });
 
-  it("parado na tela além da pausa longa: o relógio espera em +30 min (não cresce para horas)", () => {
+  it("parado na tela além da pausa longa: o relógio volta ao tempo ativo gravado (não cresce para horas)", () => {
     const t = registrarAtividade(iniciarTempo(T0), ms(10)).tempo;
-    expect(segundosNaTela(t, T0, ms(10) + 8 * 3_600_000)).toBe((10 * 60_000 + PAUSA_LONGA_MS) / 1000);
+    // Correção da revisão: antes parava em +30 min, que `minutosAtivosAoFinalizar` nunca grava.
+    expect(segundosNaTela(t, T0, ms(10) + 8 * 3_600_000)).toBe(10 * 60);
+    expect(segundosNaTela(t, T0, ms(10) + PAUSA_LONGA_MS)).toBe((10 * 60_000 + PAUSA_LONGA_MS) / 1000);
   });
 
   it("aceite: 30 min ativos + 8 h parado e a volta (atividade) → o relógio volta a 30 min", () => {

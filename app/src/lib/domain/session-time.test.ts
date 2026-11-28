@@ -14,6 +14,7 @@ import {
   minutosAtivosAoFinalizar,
   PAUSA_LONGA_MS,
   registrarAtividade,
+  segundosNaTela,
   sessionCompleteness,
   tempoFromDraft,
   textoPausa,
@@ -234,5 +235,26 @@ describe("completude (R3-4 item 2: '{feitas} de {planejadas}' e o rótulo 'parci
   });
   it("singular", () => {
     expect(completude({ ...done(0, 0), plannedSets: 1 }).texto).toBe("0 de 1 série");
+  });
+});
+
+describe("cabeçalho e resumo contam o mesmo (correção da revisão, R3-4)", () => {
+  const T = Date.parse("2026-11-20T10:00:00.000Z");
+  const start = new Date(T - 25 * 60_000).toISOString();
+
+  it("25 min ativos + 8 h parado na tela: o cabeçalho mostra 25:00, igual ao que o Finalizar grava", () => {
+    const t: TempoAtivo = { lastActivityAt: new Date(T).toISOString(), activeMs: 25 * 60_000, pausedMs: 0 };
+    const fim = T + 8 * 3_600_000;
+    expect(segundosNaTela(t, start, fim)).toBe(25 * 60);
+    expect(minutosAtivosAoFinalizar(t, fim)).toBe(25);
+    // E o resumo explica a diferença com o aviso da pausa.
+    expect(textoPausa(registrarAtividade(t, fim).pausaMs)).toBe("Você ficou 8 h fora. Esse tempo não entra no treino.");
+  });
+
+  it("teste negativo: parado até 30 min, o intervalo conta no cabeçalho e no Finalizar", () => {
+    const t: TempoAtivo = { lastActivityAt: new Date(T).toISOString(), activeMs: 25 * 60_000, pausedMs: 0 };
+    expect(segundosNaTela(t, start, T + 20 * 60_000)).toBe(45 * 60);
+    expect(minutosAtivosAoFinalizar(t, T + 20 * 60_000)).toBe(45);
+    expect(registrarAtividade(t, T + 20 * 60_000).pausaMs).toBe(0);
   });
 });

@@ -186,6 +186,8 @@ function Sessao() {
   const headRef = useRef<HTMLElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   const footRef = useRef<HTMLDivElement>(null);
+  /** "OK" do aviso de fim do descanso: recebe o foco quando a barra que contava some com o foco nela (R3-20). */
+  const restOkRef = useRef<HTMLButtonElement>(null);
   const [footH, setFootH] = useState(0);
   const [headH, setHeadH] = useState(0);
   // Exercício reaberto na retomada (U8 §3.8): rola até o cabeçalho dele quando a seção já está aberta na tela.
@@ -200,6 +202,8 @@ function Sessao() {
   const tempoSeen = useRef<Session | null>(null);
   // Pausa longa percebida na última atividade: aviso "Você ficou {X} fora" no rodapé até a pessoa fechar.
   const [pausaMs, setPausaMs] = useState(0);
+  /** Pausa longa entre a última atividade e o "Finalizar" (R3-4): sai do treino e o resumo diz por quê. */
+  const [pausaNoFim, setPausaNoFim] = useState(0);
 
   // Carrega ficha + histórico; retoma rascunho salvo se for do mesmo treino.
   useEffect(() => {
@@ -368,6 +372,12 @@ function Sessao() {
     const late = !ph.justEnded;
     setRestEnd({ until: rest.until, late, announce: late ? restEndedAgoText(ph.overSec) : "Descanso acabou" });
     restEndedAt.current = rest.until;
+    // R3-20 (correção da revisão): o −15s que zera o descanso some com o foco nele, que cairia no <body>. Foco perdido ou
+    // ainda no rodapé: vai para o "OK" do aviso. Foco num campo da lista (digitando a carga) fica onde está.
+    requestAnimationFrame(() => {
+      const a = document.activeElement;
+      if (!a || a === document.body || footRef.current?.contains(a)) restOkRef.current?.focus();
+    });
     if (!late) {
       navigator.vibrate?.([180, 80, 180]);
       beep(2);
@@ -733,7 +743,8 @@ function Sessao() {
     try {
       // R3-4: séries planejadas contadas antes de tirar os exercícios sem série feita; minutos ativos pelo relógio do
       // rascunho; exercício com "Senti dor" fica mesmo sem série (R3-7). Volume pela convenção única (R3-6 B).
-      const s = sessaoParaSalvar(src, { agora: new Date(), tempo: tempo.current });
+      const agora = new Date();
+      const s = sessaoParaSalvar(src, { agora, tempo: tempo.current });
       if (!s) {
         setError("Marque pelo menos uma série como feita para salvar o treino.");
         setFinishing(false);
@@ -773,6 +784,8 @@ function Sessao() {
         const edit = suggestionEdit(e, draft.suggestions[e.uid]);
         if (edit) track("session_feature_used", { feature: "carga_sugerida_editada", tipo: edit.tipo, editada: edit.editada });
       }
+      // A mesma conta de `minutosAtivosAoFinalizar`: a pausa longa antes do toque não entra nos minutos (aviso no resumo).
+      setPausaNoFim(tempo.current ? registrarAtividade(tempo.current, agora.getTime()).pausaMs : 0);
       setSummary(saved);
       setRest(null);
       setHold(null);
@@ -786,6 +799,12 @@ function Sessao() {
 
   /** Volta o foco ao "Finalizar treino" quando um diálogo dele fecha sem finalizar. */
   const refocusFinish = () => requestAnimationFrame(() => finishBtn.current?.focus());
+  /**
+   * R3-20 (correção da revisão): "Pular" e "OK" do descanso somem com a barra, e o foco cairia no <body> (o leitor de tela
+   * perderia o lugar a cada série). Vai para a próxima série por marcar; sem nenhuma, para o "Finalizar treino".
+   */
+  const focarProximaSerie = () =>
+    requestAnimationFrame(() => (document.querySelector<HTMLElement>('main [role="checkbox"][aria-checked="false"][aria-label^="Série"]') ?? finishBtn.current)?.focus());
 
   /** Toque em "Finalizar": protege séries preenchidas sem ✓ antes de qualquer outra conferência. */
   function askFinish() {
@@ -861,7 +880,7 @@ function Sessao() {
     );
   }
   if (!draft) return <SessionSkeleton />;
-  if (summary) return <Summary session={summary} history={history} onDone={() => router.push("/hoje")} />;
+  if (summary) return <Summary session={summary} history={history} pausaMs={pausaNoFim} onDone={() => router.push("/hoje")} />;
 
   // Relógio do cabeçalho pelo tempo ativo (R3-4): o treino de ontem retomado não mostra horas de treino.
   const elapsed = segundosNaTela(tempo.current, draft.session.startedAt, now);
@@ -1024,6 +1043,7 @@ function Sessao() {
                   aria-label="Pular descanso"
                   onClick={() => {
                     setRest(null);
+                    focarProximaSerie();
                     track("session_feature_used", { feature: "descanso_pular" });
                   }}
                 >
@@ -1050,10 +1070,12 @@ function Sessao() {
                 </span>
               ) : null}
               <Button
+                ref={restOkRef}
                 className="shrink-0 px-5"
                 aria-label="OK, fechar aviso de descanso"
                 onClick={() => {
                   setRest(null);
+                  focarProximaSerie();
                   track("session_feature_used", { feature: "descanso_ok" });
                 }}
               >
@@ -1266,7 +1288,7 @@ interface BlockProps {
   onDone: (i: number) => void;
   onAddSet: () => void;
   onNotes: (n: string) => void;
-  /** "Senti dor" (R3-7): explícito e opcional; desmarcar tira a marca. Nunca vai para o analytics. */
+  /** "Senti dor" (R3-7): explícito e opcional; desmarcar tira a marca. Nunca vai para o analytics (o botão tem `ph-no-capture`). */
   onPain: (on: boolean) => void;
 }
 
@@ -1501,13 +1523,14 @@ function ExerciseBlock({ index, log, open, onToggle, suggestion, last, recordAt,
               <Textarea value={log.notes ?? ""} onChange={(e) => onNotes(e.target.value)} rows={2} className="mt-1 min-h-16" placeholder="Ex.: pegada mais aberta, banco na posição 4" />
             </details>
             {/* "Senti dor" (R3-7): opcional, nunca inferido da anotação. Caixa de marcar como a da série: marcada = ✓ e
-                texto escuro (nunca só cor) e a frase abaixo, anunciada pela região viva. */}
+                texto escuro (nunca só cor) e a frase abaixo, anunciada pela região viva. `ph-no-capture`: o toque é dado
+                derivado de saúde e não sai do aparelho nem pela captura automática de cliques (correção da revisão). */}
             <button
               type="button"
               role="checkbox"
               aria-checked={pain}
               onClick={() => onPain(!pain)}
-              className={cx("-mx-1 flex min-h-11 items-center gap-1.5 rounded px-1 text-sm font-semibold", pain ? "text-iron" : "text-steel hover:text-iron")}
+              className={cx("ph-no-capture -mx-1 flex min-h-11 items-center gap-1.5 rounded px-1 text-sm font-semibold", pain ? "text-iron" : "text-steel hover:text-iron")}
             >
               <span className={cx("grid size-5 place-items-center rounded-[4px] border-2", pain ? "border-iron bg-iron text-chalk" : "border-field")} aria-hidden>
                 {pain ? <Check className="size-3.5" strokeWidth={3} /> : null}
@@ -1651,7 +1674,7 @@ function CompareLine({ line }: { line: string }) {
 
 const FEELINGS = ["Péssimo", "Ruim", "Ok", "Bom", "Ótimo"] as const;
 
-function Summary({ session, history, onDone }: { session: Session; history: Session[]; onDone: () => void }) {
+function Summary({ session, history, pausaMs = 0, onDone }: { session: Session; history: Session[]; pausaMs?: number; onDone: () => void }) {
   const { repo, user, returnTo, mode } = useApp();
   const [feeling, setFeeling] = useState<Session["feeling"]>(session.feeling);
   const [note, setNote] = useState(session.note ?? "");
@@ -1768,7 +1791,8 @@ function Summary({ session, history, onDone }: { session: Session; history: Sess
   return (
     // Superfície escura: anel de foco chalk em tudo daqui; os diálogos (papel) voltam ao azul pelo data-surface="light".
     <div data-surface="dark" className="min-h-dvh bg-iron text-chalk">
-      <div className="mx-auto max-w-xl px-5 pt-6">
+      {/* R3-20 (correção da revisão): marco principal do resumo; o data-surface escuro fica no wrapper de fora. */}
+      <main className="mx-auto max-w-xl px-5 pt-6">
         <p className="text-sm font-semibold text-chalk/70">{summaryHeadline({ mode, hasCoach: Boolean(coach), viewingAsStudent: Boolean(returnTo) })}</p>
         <h1 className="plate-type mt-1 text-[2rem] leading-tight">{session.prs.length ? "Dia de recorde." : "Treino na conta."}</h1>
         <dl className="mt-5 grid grid-cols-3 divide-x divide-white/15 border-y border-white/15 py-3 text-center">
@@ -1807,6 +1831,8 @@ function Summary({ session, history, onDone }: { session: Session; history: Sess
             )}
           </div>
         </dl>
+        {/* R3-4: a pausa longa antes do "Finalizar" ficou fora dos minutos; o resumo diz por que o número é menor. */}
+        {textoPausa(pausaMs) ? <p className="mt-2 text-sm text-chalk/80">{textoPausa(pausaMs)}</p> : null}
         <button type="button" onClick={openMinAsk} className="-ml-2 mt-1 flex min-h-11 items-center px-2 text-sm font-semibold text-chalk/85 underline underline-offset-4 hover:text-chalk">
           {dur ? "Corrigir minutos" : "Informar minutos"}
         </button>
@@ -1880,8 +1906,9 @@ function Summary({ session, history, onDone }: { session: Session; history: Sess
         </div>
 
         {/* "Senti dor" (R3-7): opcional e recolhido; aberto se a dor já foi marcada no treino. Caixas de marcar com ✓
-            (nunca só cor); a frase do que muda sai numa região viva sempre montada. */}
-        <details className="group mt-4" open={painOpen}>
+            (nunca só cor); a frase do que muda sai numa região viva sempre montada. `ph-no-capture`: nada da dor sai
+            pela captura automática de cliques. */}
+        <details className="ph-no-capture group mt-4" open={painOpen}>
           <summary id={painId} className="flex min-h-11 cursor-pointer list-none items-center gap-2 text-sm font-semibold [&::-webkit-details-marker]:hidden">
             Senti dor em algum exercício
             <ChevronDown className="size-4 shrink-0 text-chalk/70 transition-transform group-open:rotate-180" aria-hidden />
@@ -1951,7 +1978,7 @@ function Summary({ session, history, onDone }: { session: Session; history: Sess
             </Button>
           )}
         </div>
-      </div>
+      </main>
 
       <Dialog open={minAsk.open} onClose={() => setMinAsk((a) => ({ ...a, open: false }))} title="Corrigir minutos ativos">
         <form

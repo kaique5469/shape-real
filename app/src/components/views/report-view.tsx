@@ -13,7 +13,7 @@ import { coachSignature, signerFor } from "@/lib/domain/program-share";
 import { firstName, waLink, waPhone } from "@/lib/domain/format";
 import { todayISO } from "@/lib/domain/ids";
 import { comparisonDates } from "@/lib/domain/evolution";
-import { buildReport, fmtDuration, markText, nameList, reportBase, reportGoal, reportGoalNote, reportLabels, reportSessionsValue, reportToText, strengthChange, strengthNotes, type EvolutionReport, type ReportDays } from "@/lib/domain/report";
+import { buildReport, fmtDuration, markText, nameList, reportBase, reportCalendarLabels, reportGoal, reportGoalNote, reportLabels, reportSessionsValue, reportToText, strengthChange, strengthNotes, type EvolutionReport, type ReportDays } from "@/lib/domain/report";
 import { fmtDate, fmtNum, useLoad } from "@/lib/hooks";
 import type { PhotoPose, Profile, ProgressPhoto } from "@/lib/domain/types";
 
@@ -222,6 +222,7 @@ function Sheet({
 
   const summary: [string, string][] = [];
   const labels = reportLabels(r);
+  const cal = reportCalendarLabels(r);
   summary.push([labels.treinos, reportSessionsValue(r)]);
   if (r.adherencePct !== null) summary.push([labels.frequencia, `${r.adherencePct}%`]);
   if (r.minutes) summary.push(["Tempo treinado", fmtDuration(r.minutes)]);
@@ -244,9 +245,9 @@ function Sheet({
       </header>
 
       <section className="px-4 py-5 sm:px-6" aria-label="Frequência">
-        <h3 className="col-head text-steel">Presença</h3>
+        <h3 className="col-head text-steel">{cal.titulo}</h3>
         <div className="mt-3 grid grid-cols-1 gap-5 sm:grid-cols-[auto_minmax(0,1fr)] sm:gap-8">
-          <table className="num w-max border-separate border-spacing-1 text-xs" aria-label="Dias treinados no período">
+          <table className="num w-max border-separate border-spacing-1 text-xs" aria-label={cal.tabela}>
             <thead>
               <tr>
                 <th className="w-11" />
@@ -270,7 +271,7 @@ function Sheet({
                         "size-7 rounded-[4px] p-0 text-center align-middle [print-color-adjust:exact]",
                         d.state === "treinou" ? "bg-plate-green text-white" : d.state === "livre" ? "border border-rule-strong" : "",
                       )}
-                      aria-label={d.state === "fora" ? undefined : `${short(d.date)}: ${d.state === "treinou" ? "treinou" : "sem treino"}`}
+                      aria-label={d.state === "fora" ? undefined : `${short(d.date)}: ${d.state === "treinou" ? cal.comTreino : cal.semTreino}`}
                     >
                       {d.state === "treinou" ? <Check className="mx-auto size-4" aria-hidden /> : null}
                     </td>

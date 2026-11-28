@@ -1,5 +1,5 @@
 import { getFood, type Food } from "./foods";
-import { dietTotals, sumItems } from "./nutrition";
+import { dietTotals, sumItems } from "./nutrition-base";
 import { coachSignature } from "./cref";
 import type { DietItem, DietPlan, MacroTargets, Sex } from "./types";
 

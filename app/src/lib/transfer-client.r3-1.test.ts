@@ -484,3 +484,45 @@ describe("Perfis neste aparelho (perfis de entrada lidos do aparelho)", () => {
     expect(storage.m.size).toBe(0);
   });
 });
+
+describe("correção da revisão: o contato do personal anterior continua contato depois de excluir a ficha dele", () => {
+  const linkDeOutro = (diet: DietPlan | null = null) => fichaDe(outroCoach, { ...sA, id: "sC", name: "Aluno A" }, prog("pC", "sC", "c9"), diet);
+  /** O que `continueAsLocal` (app-context) confere: perfil de entrada com os criadores e os contatos gravados. */
+  const entraComo = async (id: string) => {
+    const { criadoresEContatos, perfisDeEntrada, CONTATOS_KEY } = await import("@/lib/domain/perfis-de-entrada");
+    const todos = localRepo.listLocalProfiles();
+    const conteudo: { ownerId: string; createdBy: string }[] = [];
+    for (const a of todos) {
+      if (a.role !== "athlete" || a.managedBy) continue;
+      conteudo.push(...(await localRepo.listPrograms(a.id)));
+      const d = await localRepo.getDiet(a.id);
+      if (d) conteudo.push(d);
+    }
+    return perfisDeEntrada(todos, criadoresEContatos(todos, conteudo, storage.getItem(CONTATOS_KEY))).find((p) => p.id === id) ?? null;
+  };
+
+  it("trocar de personal + excluir a ficha antiga: a lista mostra só o aluno e o personal antigo não entra", async () => {
+    const a = await importFicha(fichaDe(coach, sA, prog("pA", "sA")), null, { consent: true });
+    await importFicha(linkDeOutro(), a, { target: "update", allowRelink: true, consent: true });
+    await localRepo.deleteProgram("pA");
+    expect((await localRepo.listPrograms(a.id)).map((f) => f.id)).toEqual(["pC"]);
+    expect((await perfisNesteAparelho()).map((p) => p.profile.id)).toEqual([a.id]);
+    expect(await entraComo("c1")).toBeNull();
+    expect((await entraComo(a.id))?.id).toBe(a.id);
+  });
+
+  it("trocar de personal com a dieta nova no lugar da antiga, sem ficha do anterior: o personal antigo não aparece", async () => {
+    const a = await importFicha(fichaDe(coach, sA, null, dieta("dA", "sA")), null, { consent: true });
+    await importFicha(linkDeOutro({ ...dieta("dC", "sC"), createdBy: "c9" }), a, { target: "update", allowRelink: true, consent: true });
+    expect((await localRepo.getDiet(a.id))?.id).toBe("dC");
+    expect((await perfisNesteAparelho()).map((p) => p.profile.id)).toEqual([a.id]);
+    expect(await entraComo("c1")).toBeNull();
+  });
+
+  it("teste negativo: o personal com aluno dele neste aparelho continua entrando, mesmo na lista de contatos", async () => {
+    await aparelhoDoPersonal();
+    storage.setItem("sr:v1:contatos", JSON.stringify(["c1"]));
+    expect((await entraComo("c1"))?.id).toBe("c1");
+    expect((await perfisNesteAparelho()).map((p) => p.profile.id)).toContain("c1");
+  });
+});

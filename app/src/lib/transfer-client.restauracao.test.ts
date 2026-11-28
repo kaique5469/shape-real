@@ -53,10 +53,12 @@ vi.mock("@/lib/analytics", () => ({ track: () => {}, reportError: () => {} }));
 const { localRepo } = await import("@/lib/app-context");
 const { ArmazenamentoIncompleto, TEXTO_COTA_LOCAL, TEXTO_RESTAURACAO_INCOMPLETA, lastBackupAt } = await import("@/lib/data/local");
 const { buildFichaPacket } = await import("@/lib/domain/transfer");
-const { CopiaRecusada, lerCopia, textoRodadasOmitidas } = await import("@/lib/domain/export");
+const { CopiaRecusada, lerCopia, textoRodadasOmitidas } = await import("@/lib/domain/restauracao");
 const { anamneseBase } = await import("@/lib/domain/anamnese-fixtures");
 const { collectBackup, declaracoesDeEnvio, importFicha, markFichaPrepared, markSessionsPrepared, planejarRestauracao, restoreBackup } = await import("./transfer-client");
-const { declareSessionsSent } = await import("./transfer-client");
+const { declareSessionsSent, fichaSendRecord, prepLog, recordFichaAck, fichaAckOf, sentSessionIds } = await import("./transfer-client");
+const { toProfilePatch } = await import("@/lib/domain/anamnese-ficha");
+const { HOJE } = await import("@/lib/domain/anamnese-fixtures");
 
 const coach: Profile = { id: "c1", name: "Rafael Nunes", role: "coach", plan: "coach", onboarded: true, createdAt: "2026-10-01T10:00:00Z", phone: "11999990000", cref: "012345-G/SP" };
 const sA: Profile = { id: "sA", name: "Marina Costa", role: "athlete", plan: "free", onboarded: true, createdAt: "2026-11-01T10:00:00Z", managedBy: "c1" };
@@ -372,5 +374,144 @@ describe("R3-1 na restauração: perfis não mudam de dono", () => {
     await localRepo.saveProfile({ ...c, phone: "11888887777" });
     await restoreBackup(backup);
     expect((await localRepo.getProfile("c1"))?.phone).toBe("11888887777");
+  });
+});
+
+describe("correção da revisão: restaurar uma cópia antiga não desfaz o registro de envio feito depois dela", () => {
+  const aluno: Profile = { id: "al1", name: "Marina Costa", role: "athlete", plan: "free", onboarded: true, createdAt: "2026-11-01T10:00:00Z", remoteCoach: { id: "c1", name: "Rafael Nunes", studentRef: "sA" } };
+  const treino = (id: string, startedAt: string): Session => ({ ...sess(id, "al1"), startedAt, finishedAt: startedAt });
+  const estado = () => ({ lista: [...sentSessionIds("al1")].sort(), log: prepLog("al1"), decl: declaracoesDeEnvio("al1") });
+
+  it("aluno: o 'Já enviei' e o toque de cópia feitos depois da cópia sobrevivem; o plano diz 'Nada novo para entrar'", async () => {
+    await localRepo.saveProfile(aluno);
+    await localRepo.saveSession(treino("t0", "2026-11-04T18:00:00Z"));
+    markSessionsPrepared("al1", ["t0"], "copy", "2026-11-04T19:00:00.000Z");
+    declareSessionsSent("al1", ["t0"], "2026-11-04T19:05:00.000Z");
+    const backup = ler(await collectBackup(localRepo, aluno, new Date("2026-11-05T10:00:00Z")));
+    // Depois da cópia: treino novo, copiado e declarado.
+    await localRepo.saveSession(treino("t1", "2026-11-06T18:00:00Z"));
+    markSessionsPrepared("al1", ["t1"], "copy", "2026-11-06T19:00:00.000Z");
+    declareSessionsSent("al1", ["t1"], "2026-11-06T19:05:00.000Z");
+    const antes = estado();
+    expect(planejarRestauracao(backup)).toMatchObject({ entram: 0, mantidos: 0 });
+    await restoreBackup(backup);
+    expect(estado()).toEqual(antes);
+    expect(declaracoesDeEnvio("al1").t1?.enviei).toBe("2026-11-06T19:05:00.000Z");
+  });
+
+  it("aluno: toque e declaração mais novos NA CÓPIA (outro aparelho) entram; os do aparelho ficam", async () => {
+    await localRepo.saveProfile(aluno);
+    markSessionsPrepared("al1", ["t0"], "copy", "2026-11-04T19:00:00.000Z");
+    const velho = ler(await collectBackup(localRepo, aluno, new Date("2026-11-05T10:00:00Z")));
+    markSessionsPrepared("al1", ["t0"], "whatsapp", "2026-11-08T19:00:00.000Z");
+    declareSessionsSent("al1", ["t0"], "2026-11-08T19:05:00.000Z");
+    const novo = ler(await collectBackup(localRepo, aluno, new Date("2026-11-09T10:00:00Z")));
+    storage.reset();
+    await localRepo.saveProfile(aluno);
+    markSessionsPrepared("al1", ["t9"], "copy", "2026-11-07T19:00:00.000Z");
+    await restoreBackup(novo);
+    await restoreBackup(velho);
+    expect(prepLog("al1")).toEqual({ t0: { via: "whatsapp", at: "2026-11-08T19:00:00.000Z" }, t9: { via: "copy", at: "2026-11-07T19:00:00.000Z" } });
+    expect(declaracoesDeEnvio("al1").t0?.enviei).toBe("2026-11-08T19:05:00.000Z");
+    expect([...sentSessionIds("al1")].sort()).toEqual(["t0", "t9"]);
+  });
+
+  it("personal: o registro de envio da ficha e o eco feitos depois da cópia sobrevivem", async () => {
+    await aparelhoDoPersonal();
+    recordFichaAck("sA", { programAt: "2026-11-01T10:00:00Z", treinosSentAt: "2026-11-03T10:00:00.000Z", registeredAt: "2026-11-03T11:00:00.000Z" });
+    const backup = ler(await collectBackup(localRepo, coach, new Date("2026-11-04T10:00:00Z")));
+    await localRepo.saveProgram(prog("pA", "sA", "ABC nova", "2026-11-10T10:00:00Z"), { keepUpdatedAt: true });
+    markFichaPrepared("sA", { at: "2026-11-10T11:00:00.000Z", via: "whatsapp", programAt: "2026-11-10T10:00:00Z", dietAt: null });
+    recordFichaAck("sA", { programAt: "2026-11-10T10:00:00Z", treinosSentAt: "2026-11-12T10:00:00.000Z", registeredAt: "2026-11-12T11:00:00.000Z" });
+    await restoreBackup(backup);
+    expect((await localRepo.getProgram("pA"))?.name).toBe("ABC nova");
+    expect(fichaSendRecord("sA")).toMatchObject({ at: "2026-11-10T11:00:00.000Z", programAt: "2026-11-10T10:00:00Z" });
+    expect(fichaAckOf("sA")?.treinosSentAt).toBe("2026-11-12T10:00:00.000Z");
+  });
+
+  it("teste negativo: num aparelho limpo, as chaves da cópia entram como vieram", async () => {
+    await aparelhoDoPersonal();
+    const backup = ler(await collectBackup(localRepo, coach, new Date("2026-11-04T10:00:00Z")));
+    storage.reset();
+    await restoreBackup(backup);
+    for (const [k, v] of Object.entries(backup.sent ?? {})) expect(storage.getItem(k)).toBe(v);
+    expect(fichaSendRecord("sA")).toMatchObject({ at: "2026-11-02T10:00:00.000Z", via: "copy" });
+  });
+});
+
+describe("correção da revisão (R3-13): 'Remover aluno' + restaurar não traz a saúde tirada do questionário", () => {
+  const tz = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = "America/Sao_Paulo";
+  });
+  afterAll(() => {
+    if (tz === undefined) delete process.env.TZ;
+    else process.env.TZ = tz;
+  });
+
+  async function alunaComQuestionario(extra: Partial<Profile> = {}) {
+    await aparelhoDoPersonal();
+    const an = anamneseBase({ dor: 1, dorOnde: [{ r: "joelho", l: "e" }], condicoes: ["osteoporose"] } as never, { id: "rodada-1", answeredAt: "2026-11-02T10:00:00Z" });
+    const patch = toProfilePatch(an, HOJE);
+    const p: Profile = { ...sA, ...patch, name: sA.name, managedBy: "c1", anamnese: an, passosFeitos: { liberacao: "2026-11-03T10:00:00Z", gerar_ficha: "2026-11-03T11:00:00Z" }, ...extra };
+    await localRepo.saveProfile(p);
+    return p;
+  }
+
+  it("sem tokens, sem as limitações do questionário, sem peso e altura das respostas e sem passo clínico; o aviso continua", async () => {
+    const antes = await alunaComQuestionario();
+    expect(antes.limitacoesDoQuestionario?.length).toBeGreaterThan(0);
+    expect([antes.weightKg, antes.heightCm]).toEqual([62, 165]);
+    const backup = await collectBackup(localRepo, coach, new Date(Date.now() - 60_000));
+    await localRepo.deleteAccount("sA");
+    const r = await restoreBackup(ler(backup));
+    const volta = (await localRepo.getProfile("sA"))!;
+    expect(volta.anamnese).toBeUndefined();
+    expect(volta.limitacoesDoQuestionario).toBeUndefined();
+    expect(volta.limitations).toBeUndefined();
+    expect(volta.weightKg).toBeUndefined();
+    expect(volta.heightCm).toBeUndefined();
+    expect(volta.passosFeitos).toEqual({ gerar_ficha: "2026-11-03T11:00:00Z" });
+    // O resto do cadastro volta (restaurar é ato explícito).
+    expect([volta.name, volta.managedBy, volta.goal]).toEqual([antes.name, "c1", antes.goal]);
+    expect(r.rodadasOmitidas).toHaveLength(1);
+    expect(textoRodadasOmitidas(r.rodadasOmitidas[0]!)).toMatch(/^As respostas de saúde de Marina apagadas neste aparelho em \d{2}\/\d{2} não voltaram com a cópia\.$/);
+  });
+
+  it("o texto do personal nas limitações e a medida registrada por ele com outro valor ficam", async () => {
+    const base = await alunaComQuestionario();
+    await localRepo.saveProfile({ ...base, limitations: `evitar agachamento livre; ${base.limitations}`, weightKg: 64 });
+    const backup = await collectBackup(localRepo, coach, new Date(Date.now() - 60_000));
+    await localRepo.deleteAccount("sA");
+    await restoreBackup(ler(backup));
+    const volta = (await localRepo.getProfile("sA"))!;
+    expect(volta.limitations).toBe("evitar agachamento livre");
+    expect(volta.weightKg).toBe(64);
+    expect(volta.heightCm).toBeUndefined();
+  });
+
+  it("teste negativo: aparelho limpo (sem marca) → tudo volta como veio, inclusive o cadastro tirado do questionário", async () => {
+    const antes = await alunaComQuestionario();
+    const backup = await collectBackup(localRepo, coach, new Date(Date.now() - 60_000));
+    storage.reset();
+    const r = await restoreBackup(ler(backup));
+    const volta = (await localRepo.getProfile("sA"))!;
+    expect(r.rodadasOmitidas).toEqual([]);
+    expect([volta.limitations, volta.limitacoesDoQuestionario, volta.weightKg, volta.heightCm]).toEqual([antes.limitations, antes.limitacoesDoQuestionario, 62, 165]);
+  });
+});
+
+describe("correção da revisão: a cópia de um aluno grava o contato do personal criado (sr:v1:contatos)", () => {
+  it("aparelho limpo: o personal da cópia vira contato gravado; a cópia do próprio personal tira o id da lista", async () => {
+    const aluna = await importFicha(buildFichaPacket({ coach, student: sA, program: prog("pA", "sA"), diet: null, customExercises: [remada], customFoods: [] }), null, { consent: true });
+    const backup = await collectBackup(localRepo, (await localRepo.getProfile(aluna.id))!, new Date("2026-11-07T12:00:00Z"));
+    storage.reset();
+    await restoreBackup(ler(backup));
+    expect(JSON.parse(storage.getItem("sr:v1:contatos") ?? "[]")).toEqual(["c1"]);
+    // Depois, a cópia do próprio personal restaurada aqui: ele é quem usa o aparelho, não um contato.
+    await aparelhoDoPersonal();
+    const doPersonal = await collectBackup(localRepo, coach, new Date("2026-11-20T12:00:00Z"));
+    await restoreBackup(ler(doPersonal));
+    expect(JSON.parse(storage.getItem("sr:v1:contatos") ?? "[]")).toEqual([]);
   });
 });

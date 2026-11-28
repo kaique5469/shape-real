@@ -17,7 +17,7 @@ import { fichaLinkMatch, perfilDoLinkNoAparelho, telaDoLink, telaDoLinkDeOutroPe
 import { LINK_VERSAO_NOVA_TEXTO, ehLinkDeVersaoNova, parsePacket, type FichaPacket } from "@/lib/domain/transfer";
 import type { DietPlan, Program } from "@/lib/domain/types";
 import { cameFromPaste, limparEndereco, packedFromHash, unpackData } from "@/lib/share-link";
-import { importFicha, type ImportFichaOpts } from "@/lib/transfer-client";
+import { importFicha, type ImportFichaOpts } from "@/lib/link-client";
 
 /** Botão com nome no rótulo: a altura fixa (h-11/h-14) do Button vira mínima e o texto quebra sem vazar a 360 px. */
 const ALTURA_LIVRE = { height: "auto" } as const;
@@ -197,7 +197,7 @@ export default function AbrirPage() {
   // LGPD: dados de saúde só ficam guardados com autorização; ela é dada pelo toque no botão logo abaixo deste texto.
   const consentLine = packet
     ? tela
-      ? `Ao salvar, você autoriza guardar neste celular os dados de treino e saúde deste link, enviados por ${packet.coach.name}.`
+      ? `Ao atualizar ou criar o perfil, você autoriza guardar neste celular os dados de treino e saúde deste link, enviados por ${packet.coach.name}.`
       : `Ao ${updating ? "atualizar" : "salvar"}, você autoriza guardar neste celular seus dados de treino e saúde enviados por ${packet.coach.name}.`
     : "";
   /** Telas novas da rodada 3 (escolha, "Ver como"): começam do topo, sem pular quando o texto cresce. */

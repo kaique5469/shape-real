@@ -38,7 +38,7 @@ import {
 import { lembreteDeCopia, type DeliveryIcon } from "@/lib/domain/delivery";
 import { weekStart, weekStreak } from "@/lib/domain/progression";
 import { parciaisNaSemana, textoParciais } from "@/lib/domain/session-time";
-import { targetsForProfile } from "@/lib/domain/nutrition";
+import { targetsForProfile } from "@/lib/domain/nutrition-base";
 import { firstName, programValidity } from "@/lib/domain/format";
 import { useAI } from "@/lib/ai/client";
 import { validityIcon, validityTone } from "@/lib/ui/tone";
@@ -194,7 +194,11 @@ function Hoje() {
       ) : null}
       {params.get("ficha") ? (
         <Alert tone="done">
-          <strong>Ficha salva neste celular.</strong> Toque em “Começar treino” quando chegar na academia. No fim, o app monta a mensagem para você mandar o treino a {user!.remoteCoach?.name.split(" ")[0] ?? "seu personal"}.
+          {/* Com o treino de hoje já registrado (R3-8), "Começar treino" fica recolhido no card: o aviso diz onde está
+              (correção da revisão). */}
+          <strong>Ficha salva neste celular.</strong>{" "}
+          {hojeReg && program && day?.exercises.length ? "O próximo treino já é desta ficha: veja em “Ver o próximo treino”." : "Toque em “Começar treino” quando chegar na academia."} No fim,
+          o app monta a mensagem para você mandar o treino a {user!.remoteCoach?.name.split(" ")[0] ?? "seu personal"}.
         </Alert>
       ) : null}
       {params.get("dieta") ? (
@@ -237,6 +241,13 @@ function Hoje() {
               <span className="min-w-0">{hojeReg.linha}</span>
             </h2>
             {hojeReg.proximo ? <p className="mt-1 text-sm text-steel">{hojeReg.proximo}</p> : null}
+            {/* O nome da ficha também aqui (correção da revisão): quem acabou de atualizar a ficha confirma no Hoje. */}
+            {program ? (
+              <p className="mt-1 text-sm text-steel">
+                {program.name}
+                {fromCoach ? ` · ${fromCoach}` : ""}
+              </p>
+            ) : null}
           </div>
           {program && day && day.exercises.length ? (
             <details className="group rounded-[6px] border border-rule">
@@ -409,7 +420,9 @@ function Hoje() {
             <SendToCoach
               sessions={copiados}
               where="hoje"
-              label="Copiar de novo"
+              // "Enviar de novo" (correção da revisão; a spec dizia "Copiar de novo"): o toque abre o diálogo de envio, com o
+              // ícone de envio, e só lá a pessoa escolhe copiar ou WhatsApp. O rótulo diz o que o toque faz.
+              label="Enviar de novo"
               variant="ghost"
               size="sm"
               onSent={() => {
@@ -512,9 +525,11 @@ function Hoje() {
                     "mt-1.5 grid h-10 place-items-center rounded-[6px] text-sm font-bold",
                     done ? "bg-plate-green text-white" : i === today ? "border-2 border-iron" : "border border-dashed border-rule-strong",
                   )}
-                  aria-label={done ? `${w}: treinou` : `${w}: sem treino`}
                 >
+                  {/* R3-20 (correção da revisão): o estado em texto para o leitor de tela (aria-label num <span> sem papel
+                      não é lido de forma confiável); o dia já está escrito logo acima. */}
                   {done ? <Check className="size-4" aria-hidden /> : null}
+                  <span className="sr-only">{done ? "treinou" : "sem treino"}</span>
                 </span>
               </li>
             );

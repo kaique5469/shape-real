@@ -1,10 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { alunoBase, anamneseBase } from "./anamnese-fixtures";
 import type { Liberacao } from "./anamnese-types";
+import { BACKUP_FORMAT, BACKUP_VERSION, buildBackup, SENT_KEY_RE, SENT_SUFFIXES, type Backup } from "./export";
 import {
-  BACKUP_FORMAT,
-  BACKUP_VERSION,
-  buildBackup,
   chaveDoRegistro,
   copiaDeVersaoNova,
   CopiaRecusada,
@@ -13,15 +11,12 @@ import {
   parseBackup,
   planoRestauracao,
   rodadasQueNaoVoltaram,
-  SENT_KEY_RE,
-  SENT_SUFFIXES,
   TEXTO_COPIA_INVALIDA,
   TEXTO_COPIA_VERSAO_NOVA,
   textoDoPlano,
   textoRodadasOmitidas,
   type AparelhoParaRestaurar,
-  type Backup,
-} from "./export";
+} from "./restauracao";
 import type { BodyMetric, DietPlan, Profile, Program, Session } from "./types";
 
 // Rodada 3: restaurar (R3-6 A: validação, versão futura, plano que não desfaz edição mais nova) e R3-13 (aluno

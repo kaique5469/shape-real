@@ -6,7 +6,7 @@ import { Alert, Button, Dialog, Field, Input, Select, Textarea, cx } from "@/com
 import { useApp } from "@/lib/app-context";
 import { GOAL_LABEL, LEVEL_LABEL } from "@/lib/domain/generator";
 import { maskPhone } from "@/lib/domain/format";
-import { ACTIVITY_LABEL } from "@/lib/domain/nutrition";
+import { ACTIVITY_LABEL } from "@/lib/domain/nutrition-base";
 import { consentFromCheckbox, consentMetric, hasHealthData } from "@/lib/domain/transfer";
 import { TEXTO_REVOGAR, idsDeRespostas, revogarSaude } from "@/lib/domain/anamnese-perfil";
 import { reportError, track } from "@/lib/analytics";

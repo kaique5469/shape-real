@@ -167,8 +167,9 @@ export function SendFichaLink({
       </div>
       {copyFailed ? <p className="mt-2 text-sm text-steel">Não consegui copiar automaticamente. Use “Enviar link no WhatsApp”.</p> : null}
       {status ? <StatusRegion className="mt-2" text={toque ? prepStatusText(toque.via, toque.at, first, "personal") : null} icon={toque?.via === "copy" ? "copia" : "whatsapp"} /> : null}
-      {/* R3-17: o que vai no link e quem consegue ler. Fora da barra compacta (uma linha só) e só com o link pronto. */}
-      {!compact && ready && estado ? <p className="mt-2 text-sm text-steel">{estado.aviso}</p> : null}
+      {/* R3-17: o que vai no link e quem consegue ler, só com o link pronto. Também na barra compacta (correção da revisão:
+          ela é o caminho principal do envio depois de salvar e esconde o painel que tinha o aviso), em letra menor. */}
+      {ready && estado ? <p className={cx("text-steel", compact ? "mt-1.5 text-xs" : "mt-2 text-sm")}>{estado.aviso}</p> : null}
     </div>
   );
 }

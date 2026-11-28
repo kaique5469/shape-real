@@ -18,15 +18,15 @@ export default function Privacidade() {
         <h2 id="neste-aparelho">Beta neste aparelho</h2>
         <p>No beta não há conta nem cadastro. O que você registra fica guardado no navegador deste aparelho:</p>
         <ul>
-          <li>Perfil: nome, papel (aluno ou personal) e o que você preencher no cadastro.</li>
+          <li>Perfil: nome, papel (aluno ou personal) e o que você preencher no seu perfil.</li>
           <li>Treino: fichas, séries, cargas, repetições e anotações.</li>
           <li>Dados de saúde (sensíveis): peso, medidas, percentual de gordura, fotos de evolução, dieta e limitações físicas que você informar.</li>
           <li>No aparelho do personal: os alunos, as fichas, os treinos que eles mandaram e as respostas do questionário.</li>
-          <li>
-            Uso do app: quais telas e recursos são usados e os erros técnicos que acontecem, para corrigir falhas e melhorar o produto. Esses registros não levam dados de
-            saúde, nomes de alunos, telefones nem o texto que você digita.
-          </li>
         </ul>
+        <p>
+          A medição de uso é a exceção: quais telas e recursos são usados e os erros técnicos que acontecem vão para o PostHog (veja Medição de uso e erros), para
+          corrigir falhas e melhorar o produto. Esses registros não levam dados de saúde, nomes de alunos, telefones nem o texto que você digita.
+        </p>
         <p>
           Os dados ficam neste aparelho até você apagar (Conta → Apagar dados deste aparelho) ou até o navegador limpar os dados do site. Não existe um prazo fixo de
           guarda: depende de você e do navegador. Quem usa este aparelho consegue ver o que está nele.

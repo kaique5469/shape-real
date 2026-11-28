@@ -37,7 +37,7 @@ import {
   type DecisoesRecepcao,
 } from "@/lib/questionario-receber";
 import { cameFromPaste, limparEndereco, packedFromHash, unpackData } from "@/lib/share-link";
-import { importTreinos, receivedFichaVersao } from "@/lib/transfer-client";
+import { importTreinos, receivedFichaVersao } from "@/lib/link-client";
 
 /** Botão com nome no rótulo: a altura fixa (h-11/h-14) do Button vira mínima e o texto quebra sem vazar. */
 const ALTURA_LIVRE = { height: "auto" } as const;

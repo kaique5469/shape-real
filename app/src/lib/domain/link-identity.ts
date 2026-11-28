@@ -111,14 +111,57 @@ export function textoUltimoUso(iso: string, agora: Date = new Date()): string {
   return `Último uso em ${d.getFullYear() === agora.getFullYear() ? dia : `${dia}/${d.getFullYear()}`}`;
 }
 
+/** Um perfil da lista "Perfis neste aparelho" como os textos o leem (sem nenhum dado de saúde). */
+export type PerfilDaLista = Pick<Profile, "id" | "name"> & Partial<Pick<Profile, "role" | "remoteCoach" | "createdAt">>;
+const nomeInteiro = (nome: string) => nome.trim().replace(/\s+/g, " ");
+const mesmoNome = (a: string, b: string) => nomeInteiro(a).toLocaleLowerCase("pt-BR") === nomeInteiro(b).toLocaleLowerCase("pt-BR");
+/** "dd/mm" da criação, no fuso do aparelho; "" com data ilegível. */
+function criadoEm(iso: string | undefined): string {
+  const d = iso && iso.length <= 40 ? new Date(iso) : null;
+  if (!d || !Number.isFinite(d.getTime())) return "";
+  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/** Vínculo do perfil para a lista: "Personal", "Aluno de Paulo Mendes" ou "Aluno sem personal". */
+export function vinculoDoPerfil(p: PerfilDaLista): string {
+  if (p.role === "coach") return "Personal";
+  const c = p.remoteCoach?.name ? nomeInteiro(p.remoteCoach.name) : "";
+  return c ? `Aluno de ${c}` : "Aluno sem personal";
+}
+
+/**
+ * Linha de apoio de cada perfil da lista (ligada ao botão por aria-describedby): o vínculo e, quando outro perfil tem o
+ * mesmo nome inteiro e o mesmo vínculo, "criado em dd/mm". Correção da revisão: o aluno solo que toca em "Criar outro
+ * perfil" no primeiro link fica com dois perfis de nome igual, e "Aluno · Último uso" não dizia qual tem o histórico.
+ */
+export function linhaDoPerfil(p: PerfilDaLista, lista: readonly PerfilDaLista[]): string {
+  const v = vinculoDoPerfil(p);
+  const empata = lista.some((o) => o.id !== p.id && mesmoNome(o.name, p.name) && vinculoDoPerfil(o) === v);
+  const c = empata ? criadoEm(p.createdAt) : "";
+  return c ? `${v} · criado em ${c}` : v;
+}
+
+/** O que separa dois perfis de nome inteiro igual no botão: "de Paulo", "sem personal", "personal". */
+function diferencial(p: PerfilDaLista): string {
+  if (p.role === "coach") return "personal";
+  return p.remoteCoach?.name ? `de ${primeiro(p.remoteCoach.name)}` : "sem personal";
+}
+
 /**
  * Botão de "Perfis neste aparelho": "Continuar como Ana"; com o nome inteiro quando outro perfil da lista tem o mesmo
- * primeiro nome (o nome não identifica ninguém, mas o botão precisa ser distinguível na tela e no leitor de tela).
+ * primeiro nome (o nome não identifica ninguém, mas o botão precisa ser distinguível na tela e no leitor de tela). Com o
+ * nome inteiro também igual, o vínculo entra no botão ("Continuar como Rafael Souza (de Paulo)") e, se ainda empatar, a
+ * data de criação ("(sem personal, criado em 20/11)").
  */
-export function rotuloContinuarComo(p: Pick<Profile, "id" | "name">, lista: readonly Pick<Profile, "id" | "name">[]): string {
+export function rotuloContinuarComo(p: PerfilDaLista, lista: readonly PerfilDaLista[]): string {
   const meu = primeiro(p.name).toLocaleLowerCase("pt-BR");
   const repete = lista.some((o) => o.id !== p.id && primeiro(o.name).toLocaleLowerCase("pt-BR") === meu);
-  return `Continuar como ${repete ? p.name.trim().replace(/\s+/g, " ") : primeiro(p.name)}`;
+  const base = `Continuar como ${repete ? nomeInteiro(p.name) : primeiro(p.name)}`;
+  const homonimos = lista.filter((o) => o.id !== p.id && mesmoNome(o.name, p.name));
+  if (!homonimos.length) return base;
+  const dif = diferencial(p);
+  const c = homonimos.some((o) => diferencial(o) === dif) ? criadoEm(p.createdAt) : "";
+  return `${base} (${c ? `${dif}, criado em ${c}` : dif})`;
 }
 
 /** Perfis de entrada do mais recente para o mais antigo (`ultimoUso`); sem data, no fim, na ordem em que vieram. */

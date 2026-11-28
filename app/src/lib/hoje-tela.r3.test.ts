@@ -15,9 +15,10 @@ const estado = vi.hoisted(() => ({
   data: null as unknown,
   pendencia: { toSend: [], prepared: [] } as unknown as Pendencia,
   user: null as unknown,
+  params: new URLSearchParams(),
 }));
 
-vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
+vi.mock("next/navigation", () => ({ useSearchParams: () => estado.params }));
 vi.mock("@/lib/app-context", () => ({ useApp: () => ({ user: estado.user, repo: { mode: "local" }, mode: "local", returnTo: null }) }));
 vi.mock("@/lib/hooks", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/hooks")>()),
@@ -108,6 +109,7 @@ beforeAll(() => {
 afterAll(() => vi.useRealTimers());
 beforeEach(() => {
   estado.user = aluno;
+  estado.params = new URLSearchParams();
 });
 
 describe("Hoje com treino já registrado hoje (R3-8)", () => {
@@ -207,13 +209,14 @@ describe("Pendência de envio no Hoje (R3-3)", () => {
     expect(h).not.toContain('aria-label="Treinos copiados"');
   });
 
-  it("copiados sem 'Já enviei': linha discreta com Já enviei, Copiar de novo e Dispensar (sem o banner forte)", () => {
+  it("copiados sem 'Já enviei': linha discreta com Já enviei, Enviar de novo e Dispensar (sem o banner forte)", () => {
     const h = tela([s2, s1], { pendencia: { toSend: [], prepared: [{ session: s1, via: "copy", at: local(25, 20) }] } });
     expect(h).not.toContain('aria-label="Treinos para enviar"');
     const linha = secao(h, 'aria-label="Treinos copiados"')!;
     expect(texto(linha)).toContain("Você copiou 1 treino. Já colou na conversa?");
-    expect(controles(linha)).toEqual(["Já enviei", "Copiar de novo", "Dispensar"]);
-    // "Copiar de novo" leva só os copiados.
+    // Correção da revisão: "Enviar de novo" (o toque abre o diálogo de envio; a spec dizia "Copiar de novo").
+    expect(controles(linha)).toEqual(["Já enviei", "Enviar de novo", "Dispensar"]);
+    // "Enviar de novo" leva só os copiados.
     expect(linha).toContain('data-envio="s1"');
     expect(linha).toContain('aria-label="Dispensar o lembrete"');
     // Ícone com o texto (nunca só cor) e nada de "recebido" ou "enviado para".
@@ -240,5 +243,29 @@ describe("Pendência de envio no Hoje (R3-3)", () => {
   it("a região de status fica sempre montada e vazia fora do fluxo até uma ação", () => {
     const h = tela([s1], { pendencia: { toSend: [], prepared: [{ session: s1, via: "copy", at: local(25, 20) }] } });
     expect(h).toMatch(/<div tabindex="-1" role="status" class="sr-only"><\/div>/);
+  });
+});
+
+describe("correção da revisão: ficha atualizada com o treino de hoje já registrado (R3-8)", () => {
+  const hojeB = sessao("hoje", local(27, 7), { dayKey: "B", plannedSets: 24 });
+  const ficha = { ...program, name: "Ficha Marina — ciclo 2" };
+
+  it("?ficha=1 + treino de hoje: o card mostra o nome da ficha e o aviso aponta para 'Ver o próximo treino'", () => {
+    estado.params = new URLSearchParams("ficha=1");
+    const h = tela([hojeB], { program: ficha });
+    const card = texto(secao(h, 'data-hoje="registrado"')!);
+    expect(card).toContain("Ficha Marina — ciclo 2");
+    const t = texto(h);
+    expect(t).toContain("O próximo treino já é desta ficha: veja em “Ver o próximo treino”.");
+    // "Começar treino" fora do "Ver o próximo treino" não existe nesta tela.
+    const semDetails = h.replace(/<details[\s\S]*?<\/details>/g, " ");
+    expect(texto(semDetails)).not.toContain("Começar treino");
+  });
+
+  it("teste negativo: ?ficha=1 sem treino hoje continua com 'Toque em “Começar treino”' e o botão no card", () => {
+    estado.params = new URLSearchParams("ficha=1");
+    const h = tela([sessao("ontem", local(26), { dayKey: "A" })], { program: ficha });
+    expect(texto(h)).toContain("Toque em “Começar treino” quando chegar na academia.");
+    expect(controles(h).some((c) => /^Começar treino/.test(c))).toBe(true);
   });
 });

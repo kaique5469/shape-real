@@ -82,3 +82,14 @@ export function comContatos(lista: readonly string[], ids: readonly string[]): s
   out.push(...new Set(ids));
   return out.slice(-CONTATOS_MAX);
 }
+
+/**
+ * `criadoresDeConteudo` mais os contatos gravados (`raw` = valor de CONTATOS_KEY): o conjunto que `perfisDeEntrada` e
+ * `contatoDoPersonal` recebem em `criadores`. A mesma conta em /entrar (`perfisNesteAparelho`), no `continueAsLocal`, no
+ * `importFicha` e no `restoreBackup`.
+ */
+export function criadoresEContatos(perfis: readonly Pick<Profile, "id" | "role" | "managedBy">[], conteudo: readonly { ownerId: string; createdBy: string }[], raw: string | null): Set<string> {
+  const out = criadoresDeConteudo(perfis, conteudo);
+  for (const id of parseContatos(raw)) out.add(id);
+  return out;
+}

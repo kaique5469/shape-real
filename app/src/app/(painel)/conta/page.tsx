@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Check, DatabaseBackup, FileSpreadsheet, IdCard, LogOut, MessageSquareText, RotateCcw, ShieldAlert, Trash2, TriangleAlert } from "lucide-react";
 import { Alert, Badge, Button, Dialog, Field, Input, PageHeader, Panel, Segmented, Select, Textarea } from "@/components/ui";
 import { useApp, localRepo } from "@/lib/app-context";
-import { ACTIVITY_LABEL } from "@/lib/domain/nutrition";
+import { ACTIVITY_LABEL } from "@/lib/domain/nutrition-base";
 import { GOAL_LABEL, LEVEL_LABEL } from "@/lib/domain/generator";
 import { SYSTEMS } from "@/lib/domain/systems";
 import { PLANS, brl } from "@/lib/domain/plans";
